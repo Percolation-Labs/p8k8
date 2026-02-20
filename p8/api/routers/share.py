@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,61 +17,67 @@ from p8.services.repository import Repository
 router = APIRouter()
 
 
-class ShareRequest(BaseModel):
+class ShareTarget(BaseModel):
+    """Identifies a moment + target user for share/unshare operations."""
+
     moment_id: str
     target_user_id: UUID
 
 
-class UnshareRequest(BaseModel):
-    moment_id: str
-    target_user_id: UUID
+def _share_key(user_id: UUID) -> str:
+    return f"user:{user_id}"
+
+
+async def _get_moment_or_404(
+    moment_id: str, db: Database, encryption: EncryptionService,
+) -> Moment:
+    repo = Repository(Moment, db, encryption)
+    moment = await repo.get(UUID(moment_id))
+    if not moment:
+        raise HTTPException(404, "Moment not found")
+    return moment
 
 
 @router.post("/")
 async def share_moment(
-    body: ShareRequest,
+    body: ShareTarget,
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
     """Share a moment with another user by adding a graph_edge."""
+    moment = await _get_moment_or_404(body.moment_id, db, encryption)
+    target_key = _share_key(body.target_user_id)
+
+    if any(
+        e.get("target") == target_key and e.get("relation") == "shared_with"
+        for e in moment.graph_edges
+    ):
+        return {"status": "already_shared", "moment_id": body.moment_id}
+
+    moment.graph_edges = [
+        *moment.graph_edges,
+        {"target": target_key, "relation": "shared_with", "weight": 1.0},
+    ]
     repo = Repository(Moment, db, encryption)
-    moment = await repo.get(UUID(body.moment_id))
-    if not moment:
-        raise HTTPException(status_code=404, detail="Moment not found")
-
-    # Check if already shared
-    target_key = f"user:{body.target_user_id}"
-    for edge in moment.graph_edges:
-        if edge.get("target") == target_key and edge.get("relation") == "shared_with":
-            return {"status": "already_shared", "moment_id": body.moment_id}
-
-    # Add share edge
-    edges = list(moment.graph_edges)
-    edges.append({"target": target_key, "relation": "shared_with", "weight": 1.0})
-    moment.graph_edges = edges
-
     await repo.upsert(moment)
     return {"status": "shared", "moment_id": body.moment_id, "target_user_id": body.target_user_id}
 
 
 @router.delete("/")
 async def unshare_moment(
-    body: UnshareRequest,
+    body: ShareTarget,
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
     """Remove a share edge from a moment."""
-    repo = Repository(Moment, db, encryption)
-    moment = await repo.get(UUID(body.moment_id))
-    if not moment:
-        raise HTTPException(status_code=404, detail="Moment not found")
+    moment = await _get_moment_or_404(body.moment_id, db, encryption)
+    target_key = _share_key(body.target_user_id)
 
-    target_key = f"user:{body.target_user_id}"
-    edges = [
+    moment.graph_edges = [
         e for e in moment.graph_edges
         if not (e.get("target") == target_key and e.get("relation") == "shared_with")
     ]
-    moment.graph_edges = edges
+    repo = Repository(Moment, db, encryption)
     await repo.upsert(moment)
     return {"status": "unshared", "moment_id": body.moment_id}
 
@@ -82,11 +89,7 @@ async def get_moment_shares(
     encryption: EncryptionService = Depends(get_encryption),
 ):
     """List users a moment is shared with."""
-    repo = Repository(Moment, db, encryption)
-    moment = await repo.get(moment_id)
-    if not moment:
-        raise HTTPException(status_code=404, detail="Moment not found")
-
+    moment = await _get_moment_or_404(str(moment_id), db, encryption)
     shared_with = [
         e.get("target", "").replace("user:", "")
         for e in moment.graph_edges
@@ -104,22 +107,13 @@ async def shared_with_me(
     encryption: EncryptionService = Depends(get_encryption),
 ):
     """List moments shared with the given user via graph_edges traversal."""
-    target_key = f"user:{user_id}"
-    rows = await db.pool.fetch(
-        """
-        SELECT * FROM moments
-        WHERE deleted_at IS NULL
-          AND graph_edges @> $1::jsonb
-        ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3
-        """,
-        f'[{{"target": "{target_key}", "relation": "shared_with"}}]',
-        limit,
-        offset,
+    # Build the JSONB containment filter as a properly serialized parameter
+    filter_json = json.dumps([{"target": _share_key(user_id), "relation": "shared_with"}])
+    rows = await db.fetch(
+        "SELECT * FROM moments"
+        " WHERE deleted_at IS NULL AND graph_edges @> $1::jsonb"
+        " ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        filter_json, limit, offset,
     )
     repo = Repository(Moment, db, encryption)
-    moments = []
-    for row in rows:
-        m = Moment(**dict(row))
-        moments.append(m.model_dump(mode="json"))
-    return moments
+    return [Moment(**dict(row)).model_dump(mode="json") for row in rows]

@@ -10,7 +10,7 @@ from uuid import UUID
 
 import typer
 
-import services.bootstrap as _svc
+import p8.services.bootstrap as _svc
 
 query_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 

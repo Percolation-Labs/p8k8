@@ -1,0 +1,23 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: p8-worker-small-scaler
+  labels:
+    app.kubernetes.io/name: p8-worker-small
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: p8-worker-small
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  pollingInterval: 15
+  cooldownPeriod: 60
+
+  triggers:
+    - type: postgresql
+      metadata:
+        query: "SELECT COALESCE(COUNT(*), 0) FROM task_queue WHERE status = 'pending' AND tier = 'small' AND scheduled_at <= CURRENT_TIMESTAMP"
+        targetQueryValue: "1"
+        activationTargetQueryValue: "1"
+      authenticationRef:
+        name: p8-keda-pg-auth

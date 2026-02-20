@@ -1,10 +1,11 @@
-"""Shared service bootstrap — single source of truth for Settings → DB → KMS → Encryption.
+"""Shared service bootstrap — Settings, DB, KMS, Encryption init.
 
 Used by both the API lifespan (api/main.py) and CLI commands (api/cli/).
 """
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from p8.services.content import ContentService
@@ -14,15 +15,16 @@ from p8.services.files import FileService
 from p8.services.kms import LocalFileKMS, VaultTransitKMS
 from p8.settings import Settings
 
+# Maps Settings attributes → env vars expected by third-party SDKs.
+_SDK_ENV_MAPPINGS = {"openai_api_key": "OPENAI_API_KEY"}
+
 
 def create_kms(settings: Settings, db: Database):
-    """KMS provider selection — single source of truth."""
+    """Select and return the configured KMS provider."""
     if settings.kms_provider == "vault":
         return VaultTransitKMS(
-            settings.kms_vault_url,
-            settings.kms_vault_token,
-            settings.kms_vault_transit_key,
-            db,
+            settings.kms_vault_url, settings.kms_vault_token,
+            settings.kms_vault_transit_key, db,
         )
     return LocalFileKMS(settings.kms_local_keyfile, db)
 
@@ -34,12 +36,17 @@ async def _ensure_system_key(
     try:
         await encryption.ensure_system_key()
     except Exception:
-        # Stale key from a different KMS provider — delete and recreate
-        await db.execute(
-            "DELETE FROM tenant_keys WHERE tenant_id = $1", settings.system_tenant_id
-        )
+        await db.execute("DELETE FROM tenant_keys WHERE tenant_id = $1", settings.system_tenant_id)
         encryption._dek_cache.pop(settings.system_tenant_id, None)
         await encryption.ensure_system_key()
+
+
+def _export_api_keys(settings: Settings) -> None:
+    """Bridge P8_-prefixed keys to standard env vars for SDKs (e.g. OPENAI_API_KEY)."""
+    for attr, env_name in _SDK_ENV_MAPPINGS.items():
+        value = getattr(settings, attr, "")
+        if value and not os.environ.get(env_name):
+            os.environ[env_name] = value
 
 
 @asynccontextmanager
@@ -52,6 +59,7 @@ async def bootstrap_services(*, include_embeddings: bool = False):
     embedding_service is None unless include_embeddings=True.
     """
     settings = Settings()
+    _export_api_keys(settings)
     db = Database(settings)
     await db.connect()
 

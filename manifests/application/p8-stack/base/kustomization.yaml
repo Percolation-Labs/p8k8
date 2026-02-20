@@ -2,8 +2,8 @@
 #
 # Components:
 # - p8 API (FastAPI + MCP server)
-# - Dreaming Worker (CronJob for background processing)
 # - PostgreSQL (CloudNativePG)
+# - Tiered Workers (QMS: micro/small/medium/large)
 #
 # Usage:
 #   kubectl apply -k manifests/application/p8-stack/overlays/hetzner
@@ -20,7 +20,11 @@ commonLabels:
 resources:
   - ../components/api
   - ../components/postgres
-  # - ../components/dreaming-worker  # Enable when ready
+  - ../components/worker-shared
+  - ../components/worker-micro
+  - ../components/worker-small
+  - ../components/worker-medium
+  - ../components/worker-large
 
 configMapGenerator:
   - name: p8-version-info

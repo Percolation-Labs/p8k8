@@ -1,0 +1,12 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: p8-keda-pg-auth
+  labels:
+    app.kubernetes.io/name: p8-worker
+    app.kubernetes.io/component: worker-shared
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: p8-keda-pg-connection
+      key: connection

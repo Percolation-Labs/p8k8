@@ -5,19 +5,14 @@
 # ==============================================================================
 #
 # Build and Push (Multi-Platform with buildx):
-#   VERSION=$(grep '^version' pyproject.toml | cut -d'"' -f2) && \
-#   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -t percolationlabs/p8:latest \
-#     -t percolationlabs/p8:$(git rev-parse --short HEAD) \
-#     -t percolationlabs/p8:$VERSION \
-#     --push \
-#     -f Dockerfile .
+#   docker buildx build --platform linux/amd64 \
+#     -t percolationlabs/p8k8:latest \
+#     --push .
 #
 #   # Load locally for testing (single platform):
 #   docker buildx build --platform linux/arm64 \
-#     -t percolationlabs/p8:latest \
-#     --load \
-#     -f Dockerfile .
+#     -t percolationlabs/p8k8:latest \
+#     --load .
 #
 # ==============================================================================
 

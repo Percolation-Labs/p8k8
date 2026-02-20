@@ -44,12 +44,15 @@ spec:
               containerPort: 8000
               protocol: TCP
 
+          # Config from configmap, secrets from unified secret
           envFrom:
           - configMapRef:
               name: p8-config
+          - secretRef:
+              name: p8-app-secrets
 
           env:
-            # Database connection string
+            # DATABASE_URL needs interpolation from CNPG-managed credentials
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
@@ -62,39 +65,6 @@ spec:
                   key: password
             - name: P8_DATABASE_URL
               value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@p8-postgres-rw.p8.svc.cluster.local:5432/p8db"
-
-            # LLM API keys
-            - name: P8_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: p8-llm-api-keys
-                  key: openai-api-key
-                  optional: true
-            - name: LLM__ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: p8-llm-api-keys
-                  key: anthropic-api-key
-                  optional: true
-
-            # Auth secrets
-            - name: P8_AUTH_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: p8-llm-api-keys
-                  key: auth-session-secret
-            - name: P8_GOOGLE_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: p8-llm-api-keys
-                  key: auth-google-client-id
-                  optional: true
-            - name: P8_GOOGLE_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: p8-llm-api-keys
-                  key: auth-google-client-secret
-                  optional: true
 
           resources:
             requests:

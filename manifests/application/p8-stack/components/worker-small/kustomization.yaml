@@ -1,0 +1,7 @@
+# p8 Small Worker — KEDA-scaled 0→5, handles file_processing (<1MB) + dreaming
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - keda-scaledobject.yaml

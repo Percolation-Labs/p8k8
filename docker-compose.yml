@@ -1,10 +1,9 @@
 services:
   db:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.pg18
+    # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)
+    image: percolationlabs/rem-pg:18
     ports:
-      - "5488:5432"
+      - "5489:5432"
     environment:
       POSTGRES_DB: p8
       POSTGRES_USER: p8

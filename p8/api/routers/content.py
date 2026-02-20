@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Form
 
-from p8.api.deps import CurrentUser, get_optional_user
+from p8.api.deps import CurrentUser, get_db, get_optional_user
+from p8.services.database import Database
+from p8.services.usage import check_quota, get_user_plan
 
 router = APIRouter()
 
@@ -14,6 +16,7 @@ async def upload_content(
     request: Request,
     file: UploadFile,
     user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
     category: str | None = Form(default=None),
     tags: str | None = Form(default=None),
     s3_key: str | None = Form(default=None),
@@ -26,6 +29,22 @@ async def upload_content(
     content_service = request.app.state.content_service
     data = await file.read()
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    # Storage quota check (only when user is identified)
+    if user:
+        plan_id = await get_user_plan(db, user.user_id, user.tenant_id)
+        status = await check_quota(db, user.user_id, "storage_bytes", plan_id)
+        if status.used + len(data) > status.limit:
+            raise HTTPException(
+                429,
+                detail={
+                    "error": "storage_quota_exceeded",
+                    "used": status.used,
+                    "limit": status.limit,
+                    "file_size": len(data),
+                    "message": "Storage limit reached. Upgrade your plan for more storage.",
+                },
+            )
 
     result = await content_service.ingest(
         data,

@@ -1,21 +1,8 @@
 """AgentAdapter — wraps a schema row (kind='agent') into a runnable pydantic-ai Agent.
 
-Loads the agent definition from the schemas table, extracts typed config,
-builds a pydantic-ai Agent with system prompt + context attributes + tools,
-converts DB message history to pydantic-ai ModelMessage format (including
-tool calls), and provides persistence via ModelMessagesTypeAdapter for
-faithful round-trip serialization.
-
-Agents are declarative: they are defined as YAML or JSON documents stored in
-the schemas table (kind='agent'). The content field holds the system prompt,
-and json_schema holds the runtime config (model, tools, resources, etc.).
-In a typical deployment, agents are authored as YAML files and loaded into
-the database via the CLI or API. The SampleAgent constant below demonstrates
-the schema structure.
-
-Caching: agents are reloaded from DB each time for now. A cache layer
-will be added once cache invalidation semantics are defined (TTL or
-event-driven via schema_timemachine triggers).
+Agents are declarative: YAML/JSON documents in the schemas table (kind='agent').
+The content field holds the system prompt; json_schema holds runtime config
+(model, tools, resources, limits). Adapters are cached with a 5-minute TTL.
 """
 
 from __future__ import annotations
@@ -52,90 +39,101 @@ from p8.services.repository import Repository
 
 
 # ---------------------------------------------------------------------------
-# Sample agent — demonstrates the declarative schema structure
+# Shared agent config — common tools/resources/settings for built-in agents
 # ---------------------------------------------------------------------------
 
-# Normally agents are authored as YAML files (or JSON documents) and loaded
-# into the schemas table via the CLI or API:
-#
-#     p8 schema register ./my-agent.yaml
-#     POST /schemas/ { "name": "my-agent", "kind": "agent", ... }
-#
-# The SampleAgent dict below is a Python representation of what would
-# normally be a YAML file. It references the tools and resources available
-# on the local MCP server (see api/mcp_server.py):
-#
-#     tools: search, action, ask_agent
-#     resources: user://profile/{user_id}
-#
-# To register it: await adapter.register_sample_agent(db, encryption)
+_REM_TOOLS = [
+    {"name": "search", "server": "rem", "protocol": "mcp"},
+    {"name": "action", "server": "rem", "protocol": "mcp"},
+    {"name": "ask_agent", "server": "rem", "protocol": "mcp"},
+]
+_REM_RESOURCES = [{"uri": "user://profile/{user_id}", "name": "User Profile"}]
+
+
+def _agent_config(
+    *, max_tokens: int = 2000, request_limit: int = 10, token_limit: int = 50000,
+) -> dict[str, Any]:
+    """Build a standard agent json_schema dict (model resolved at runtime from settings)."""
+    return {
+        "model_name": "",
+        "temperature": 0.3,
+        "max_tokens": max_tokens,
+        "tools": _REM_TOOLS,
+        "resources": _REM_RESOURCES,
+        "limits": {"request_limit": request_limit, "total_tokens_limit": token_limit},
+        "routing_enabled": True,
+        "routing_max_turns": 20,
+        "observation_mode": "sync",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Built-in agent definitions
+# ---------------------------------------------------------------------------
 
 SAMPLE_AGENT: dict[str, Any] = {
     "name": "sample-agent",
     "kind": "agent",
-    "description": "A sample agent demonstrating the declarative schema structure.",
+    "description": "Sample agent demonstrating the declarative schema structure.",
     "content": (
         "You are a helpful assistant with access to a knowledge base, "
         "user profiles, and the ability to delegate to other agents.\n\n"
         "Available capabilities:\n"
         "- search: Query the knowledge base using REM (LOOKUP, SEARCH, FUZZY, TRAVERSE, SQL)\n"
         "- action: Emit typed events (observation, elicit, delegate) for the UI\n"
-        "- ask_agent: Delegate tasks to other specialist agents by name\n"
-        "- user profile: Load user information by ID or email\n\n"
+        "- ask_agent: Delegate tasks to other specialist agents by name\n\n"
         "Always search the knowledge base before answering factual questions. "
-        "Use the action tool to record observations (confidence, sources). "
         "Delegate to specialist agents when the task is outside your expertise."
     ),
-    "json_schema": {
-        "model_name": "anthropic:claude-sonnet-4-5-20250929",
-        "temperature": 0.3,
-        "max_tokens": 2000,
-        "tools": [
-            {"name": "search", "server": "rem", "protocol": "mcp"},
-            {"name": "action", "server": "rem", "protocol": "mcp"},
-            {"name": "ask_agent", "server": "rem", "protocol": "mcp"},
-        ],
-        "resources": [
-            {"uri": "user://profile/{user_id}", "name": "User Profile"},
-        ],
-        "limits": {
-            "request_limit": 10,
-            "total_tokens_limit": 50000,
-        },
-        "routing_enabled": True,
-        "routing_max_turns": 20,
-        "observation_mode": "sync",
-    },
+    "json_schema": _agent_config(),
 }
 
+GENERAL_AGENT: dict[str, Any] = {
+    "name": "general",
+    "kind": "agent",
+    "description": "Default REM-aware assistant with full knowledge base access.",
+    "content": (
+        "You are a knowledgeable assistant with access to a personal knowledge base "
+        "powered by REM (Resource-Entity-Moment). You help users find, organize, and "
+        "reason about their stored knowledge.\n\n"
+        "## Your Tools\n\n"
+        "### search\n"
+        "Query the knowledge base using the REM dialect. Always search before answering "
+        "factual questions about the user's data.\n\n"
+        "**Query modes:**\n"
+        "- `LOOKUP <key>` — Exact entity lookup by key\n"
+        "- `SEARCH <text> FROM <table>` — Semantic vector search\n"
+        "- `FUZZY <text>` — Fuzzy text matching across all entities\n"
+        "- `TRAVERSE <key> DEPTH <n>` — Graph traversal from an entity\n"
+        "- `SQL <query>` — Direct SQL (SELECT only)\n\n"
+        "**Tables:** resources, moments, ontologies, files, sessions, users\n\n"
+        "### action\n"
+        "Emit structured events: `observation` (reasoning metadata) or `elicit` (clarification).\n\n"
+        "### ask_agent\n"
+        "Delegate to specialist agents for domain-specific tasks.\n\n"
+        "## Guidelines\n"
+        "- Search before making claims about the user's data\n"
+        "- When results are empty, try a broader query or different mode\n"
+        "- Cite sources by referencing entity names from search results\n"
+        "- Be concise but thorough"
+    ),
+    "json_schema": _agent_config(max_tokens=4000, request_limit=15, token_limit=80000),
+}
 
-async def register_sample_agent(
-    db: Database, encryption: EncryptionService,
-) -> Schema:
-    """Register the sample agent schema in the database.
+DEFAULT_AGENT_NAME = "general"
 
-    Convenience function for bootstrapping and testing.
-    Returns the persisted Schema row.
-    """
-    repo = Repository(Schema, db, encryption)
-    schema = Schema(**SAMPLE_AGENT)
-    [result] = await repo.upsert(schema)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Built-in agents — code-defined + YAML file agents, auto-registered on first load
-# ---------------------------------------------------------------------------
-
-# Static registry of code-defined agents. When from_schema_name() can't find
-# an agent in the DB, it checks here and auto-registers before returning.
-# Populated from two sources:
-#   1. Hard-coded dicts (SAMPLE_AGENT above)
-#   2. YAML files in settings.schema_dir (loaded lazily on first miss)
-
+# Registry of code-defined agents. Auto-registered on first DB miss.
 BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
     "sample-agent": SAMPLE_AGENT,
+    "general": GENERAL_AGENT,
 }
+
+
+async def register_sample_agent(db: Database, encryption: EncryptionService) -> Schema:
+    """Register the sample agent in the DB. Used by tests and bootstrapping."""
+    repo = Repository(Schema, db, encryption)
+    [result] = await repo.upsert(Schema(**SAMPLE_AGENT))
+    return result
 
 _yaml_loaded = False
 
@@ -228,24 +226,9 @@ DELEGATE_TOOL_NAMES = {"ask_agent"}
 
 
 class AgentAdapter:
-    """Wraps a Schema row into a runnable pydantic-ai Agent.
+    """Wraps a Schema row into a runnable pydantic-ai Agent."""
 
-    Responsibilities:
-    - Load schema from DB by name
-    - Extract typed AgentConfig from json_schema
-    - Build pydantic-ai Agent with system prompt, model, settings
-    - Resolve tools from MCP servers and register delegate tools
-    - Build context attributes (date, user, routing table)
-    - Convert DB messages ↔ pydantic-ai ModelMessage (including tool calls)
-    - Persist full message history via ModelMessagesTypeAdapter
-    """
-
-    def __init__(
-        self,
-        schema: Schema,
-        db: Database,
-        encryption: EncryptionService,
-    ):
+    def __init__(self, schema: Schema, db: Database, encryption: EncryptionService):
         self.schema = schema
         self.db = db
         self.encryption = encryption
@@ -290,12 +273,13 @@ class AgentAdapter:
     # ------------------------------------------------------------------
 
     def _get_model_string(self) -> str:
-        """Extract model string from config."""
+        """Extract model string from config, falling back to settings.default_model."""
         model = self.config.model_name
         if not model:
-            return "anthropic:claude-sonnet-4-5-20250929"
+            from p8.settings import Settings
+            return Settings().default_model
         if ":" not in model:
-            return f"anthropic:{model}"
+            return f"openai:{model}"
         return model
 
     def _get_model_settings(self) -> ModelSettings | None:
@@ -486,34 +470,13 @@ class AgentAdapter:
         mcp_url: str | None = None,
         extra_tools: list | None = None,
         extra_toolsets: list | None = None,
+        debug_llm: bool = False,
     ) -> Agent:
-        """Construct a pydantic-ai Agent from the schema.
-
-        Includes:
-        - Model selection (with provider prefix)
-        - System prompt (with optional prompt guidance for unstructured output)
-        - Model settings (temperature, max_tokens)
-        - Structured output type (dynamic Pydantic model from response_schema)
-        - Usage limits (request, token, tool call caps)
-        - MCP toolsets (FastMCPToolset from local server or remote URL)
-        - Delegate tools (ask_agent registered as direct functions)
-
-        Args:
-            model_override: Optional model override (e.g. TestModel for tests).
-            mcp_server: Local FastMCP server instance for in-process tool loading.
-            mcp_url: Remote MCP endpoint URL for tool loading.
-            extra_tools: Additional tool functions to register.
-            extra_toolsets: Additional toolsets to include.
-        """
+        """Construct a pydantic-ai Agent from the schema."""
         model = model_override if model_override is not None else self._get_model_string()
-        system_prompt = self._get_system_prompt()
-        model_settings = self._get_model_settings()
         output_type = self.config.to_output_model()
 
-        # Resolve tools from schema config
-        toolsets, tools = self.resolve_toolsets(
-            mcp_server=mcp_server, mcp_url=mcp_url,
-        )
+        toolsets, tools = self.resolve_toolsets(mcp_server=mcp_server, mcp_url=mcp_url)
         if extra_tools:
             tools.extend(extra_tools)
         if extra_toolsets:
@@ -521,10 +484,10 @@ class AgentAdapter:
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "system_prompt": system_prompt,
+            "system_prompt": self._get_system_prompt(),
         }
-        if model_settings:
-            kwargs["model_settings"] = model_settings
+        if ms := self._get_model_settings():
+            kwargs["model_settings"] = ms
         if output_type is not str:
             kwargs["output_type"] = output_type
         if tools:
@@ -532,26 +495,16 @@ class AgentAdapter:
         if toolsets:
             kwargs["toolsets"] = toolsets
 
-        # Instrument with OpenTelemetry when P8_DEBUG_LLM=true.
-        # This logs all LLM requests/responses to the configured OTel backend
-        # (or console if ConsoleSpanExporter is set up via bootstrap).
-        if model_override is None:
+        if debug_llm and model_override is None:
             try:
-                from p8.settings import Settings
-                if Settings().debug_llm:
-                    from pydantic_ai.models.instrumented import InstrumentationSettings
-                    kwargs["instrument"] = InstrumentationSettings(
-                        include_content=True,
-                    )
-            except Exception:
+                from pydantic_ai.models.instrumented import InstrumentationSettings
+                kwargs["instrument"] = InstrumentationSettings(include_content=True)
+            except ImportError:
                 pass
 
         agent = Agent(**kwargs)
-
-        # Store usage limits for run-time (passed to agent.run / agent.iter)
         if self.config.limits:
             agent._p8_usage_limits = self.config.limits.to_pydantic_ai()
-
         return agent
 
     # ------------------------------------------------------------------
@@ -564,60 +517,58 @@ class AgentAdapter:
         *,
         user_id: UUID | None = None,
         max_tokens: int | None = 8000,
+        moment_limit: int = 3,
     ) -> list[ModelMessage]:
-        """Load conversation history and convert to pydantic-ai format.
+        """Load conversation history as pydantic-ai ModelMessages.
 
-        Tries to load faithful pydantic-ai messages from session metadata
-        first (pai_messages). Falls back to reconstructing from DB rows.
-
-        Context attributes are NOT injected here — they are passed via
-        pydantic-ai's ``instructions`` parameter at run time (see
-        ``ContextInjector``). This keeps history pure and context separate.
+        Tries serialized pai_messages from session metadata first;
+        falls back to reconstructing from DB rows via MemoryService.
         """
-        # 1. Try loading serialized pydantic-ai messages from session metadata
-        session_row = await self.db.fetchrow(
+        messages = await self._load_pai_messages(session_id)
+        if messages is not None:
+            moments = await self._load_session_moments(session_id, limit=moment_limit)
+            return moments + messages
+
+        raw = await self.memory.load_context(session_id, max_tokens=max_tokens)
+        return self._rows_to_model_messages(raw)
+
+    async def _load_pai_messages(self, session_id: UUID) -> list[ModelMessage] | None:
+        """Deserialize pydantic-ai messages from session metadata, or None."""
+        row = await self.db.fetchrow(
             "SELECT metadata FROM sessions WHERE id = $1 AND deleted_at IS NULL",
             session_id,
         )
-        if session_row:
-            metadata = session_row["metadata"] or {}
-            pai_raw = metadata.get("pai_messages")
-            if pai_raw:
-                try:
-                    raw_bytes = pai_raw if isinstance(pai_raw, bytes) else pai_raw.encode()
-                    messages = ModelMessagesTypeAdapter.validate_json(raw_bytes)
-                    if messages:
-                        # Inject moments even when using pai_messages path,
-                        # so session context appears on every turn.
-                        from p8.settings import Settings
-                        settings = Settings()
-                        moment_rows = await self.db.fetch(
-                            "SELECT * FROM moments"
-                            " WHERE source_session_id = $1 AND deleted_at IS NULL"
-                            " ORDER BY created_at DESC LIMIT $2",
-                            session_id,
-                            settings.moment_max_inject,
-                        )
-                        if moment_rows:
-                            moment_msgs: list[ModelMessage] = []
-                            for mrow in reversed(moment_rows):
-                                md = dict(mrow)
-                                md = self.encryption.decrypt_fields(Moment, md, None)
-                                moment_msgs.append(
-                                    ModelRequest(parts=[SystemPromptPart(
-                                        content=f"[Session context]\n{md.get('summary', '')}"
-                                    )])
-                                )
-                            messages = moment_msgs + messages
-                        return messages
-                except Exception:
-                    pass  # Fall through to DB reconstruction
+        if not row:
+            return None
+        pai_raw = (row["metadata"] or {}).get("pai_messages")
+        if not pai_raw:
+            return None
+        try:
+            raw_bytes = pai_raw if isinstance(pai_raw, bytes) else pai_raw.encode()
+            messages = ModelMessagesTypeAdapter.validate_json(raw_bytes)
+            return messages or None
+        except Exception:
+            return None
 
-        # 2. Reconstruct from DB message rows via MemoryService
-        raw = await self.memory.load_context(
-            session_id, max_tokens=max_tokens,
+    async def _load_session_moments(
+        self, session_id: UUID, *, limit: int = 3,
+    ) -> list[ModelMessage]:
+        """Load recent moments for a session as SystemPromptPart messages."""
+        rows = await self.db.fetch(
+            "SELECT * FROM moments"
+            " WHERE source_session_id = $1 AND deleted_at IS NULL"
+            " ORDER BY created_at DESC LIMIT $2",
+            session_id, limit,
         )
-        return self._rows_to_model_messages(raw)
+        messages: list[ModelMessage] = []
+        for mrow in reversed(rows):
+            md = self.encryption.decrypt_fields(Moment, dict(mrow), None)
+            messages.append(
+                ModelRequest(parts=[SystemPromptPart(
+                    content=f"[Session context]\n{md.get('summary', '')}"
+                )])
+            )
+        return messages
 
     def _rows_to_model_messages(self, rows: list[dict]) -> list[ModelMessage]:
         """Convert DB message rows to pydantic-ai ModelMessage list.
@@ -697,42 +648,24 @@ class AgentAdapter:
         tool_calls_data: dict | None = None,
         all_messages: list[ModelMessage] | None = None,
         background_compaction: bool = True,
+        moment_threshold: int = 6000,
     ) -> None:
-        """Persist a conversation turn to the database.
-
-        Single DB round-trip via rem_persist_turn() which atomically:
-        1. Inserts user + assistant messages
-        2. Updates session token totals
-        3. Stores pydantic-ai message history in session metadata
-        4. Optionally triggers moment building if threshold exceeded
-        """
-        from p8.settings import Settings
-        settings = Settings()
-
+        """Persist a conversation turn via rem_persist_turn()."""
         pai_json: str | None = None
         if all_messages:
             pai_json = ModelMessagesTypeAdapter.dump_json(all_messages).decode()
 
         await self.db.rem_persist_turn(
-            session_id,
-            user_prompt,
-            assistant_text,
-            user_id=user_id,
-            tool_calls=tool_calls_data,
-            pai_messages=pai_json,
-            moment_threshold=settings.moment_token_threshold if not background_compaction else 0,
+            session_id, user_prompt, assistant_text,
+            user_id=user_id, tool_calls=tool_calls_data, pai_messages=pai_json,
+            moment_threshold=moment_threshold if not background_compaction else 0,
         )
 
-        # When background_compaction=True (API), fire moment check as a
-        # background task so it doesn't block the SSE response.
-        # When False (CLI), rem_persist_turn already handled it above.
         if background_compaction:
             import asyncio
             asyncio.create_task(
                 self.memory.maybe_build_moment(
-                    session_id,
-                    threshold=settings.moment_token_threshold,
-                    user_id=user_id,
+                    session_id, threshold=moment_threshold, user_id=user_id,
                 )
             )
 

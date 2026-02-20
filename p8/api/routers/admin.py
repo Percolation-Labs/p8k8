@@ -43,3 +43,15 @@ async def embedding_queue_status(db: Database = Depends(get_db)):
         " FROM embedding_queue GROUP BY table_name, status"
     )
     return [dict(r) for r in rows]
+
+
+@router.get("/queue/stats")
+async def task_queue_stats(db: Database = Depends(get_db)):
+    """Task queue stats — counts by tier and status."""
+    rows = await db.fetch(
+        "SELECT tier, status, COUNT(*) AS count"
+        " FROM task_queue"
+        " GROUP BY tier, status"
+        " ORDER BY tier, status"
+    )
+    return {f"{r['tier']}/{r['status']}": r["count"] for r in rows}

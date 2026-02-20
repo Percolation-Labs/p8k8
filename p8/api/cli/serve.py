@@ -20,7 +20,7 @@ def serve_command(
     import uvicorn
 
     uvicorn.run(
-        "api.main:app",
+        "p8.api.main:app",
         host=host,
         port=port,
         reload=reload,

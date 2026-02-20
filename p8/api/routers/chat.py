@@ -1,22 +1,10 @@
-"""POST /chat/{chat_id} — streaming chat with AG-UI protocol.
-
-Uses pydantic-ai's AGUIAdapter Option 2 (``run_stream`` + ``streaming_response``)
-with a multiplexer that interleaves child agent events from the ContextVar
-event sink queue. This enables real-time token-by-token streaming of child
-agent content during delegation via ``ask_agent``.
-
-Event flow::
-
-    Client ←SSE— StreamingResponse ← merged_event_stream()
-                                        ├── adapter.run_stream()  → AG-UI events (parent)
-                                        └── child_event_sink      → CustomEvent (child)
-                                            via asyncio.wait(FIRST_COMPLETED)
-"""
+"""POST /chat/{chat_id} — AG-UI streaming chat with child-event multiplexing."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -26,11 +14,15 @@ from starlette.responses import Response
 
 from ag_ui.core.events import CustomEvent
 
+from p8.agentic.adapter import DEFAULT_AGENT_NAME
 from p8.agentic.delegate import set_child_event_sink
 from p8.api.controllers.chat import ChatController
 from p8.api.deps import get_db, get_encryption
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
+from p8.services.usage import check_quota, get_user_plan, increment_usage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -170,9 +162,7 @@ async def chat(
 
     Body: AG-UI RunAgentInput (thread_id, run_id, messages, tools, context, state)
     """
-    agent_name = request.headers.get("x-agent-schema-name")
-    if not agent_name:
-        raise HTTPException(status_code=400, detail="x-agent-schema-name header is required")
+    agent_name = request.headers.get("x-agent-schema-name") or DEFAULT_AGENT_NAME
 
     raw_user_id = request.headers.get("x-user-id")
     user_id = UUID(raw_user_id) if raw_user_id else None
@@ -183,10 +173,16 @@ async def chat(
 
     controller = ChatController(db, encryption)
 
+    # Parse session ID — accept UUID or arbitrary string (auto-generates UUID)
+    try:
+        session_uuid = UUID(chat_id) if chat_id else None
+    except ValueError:
+        session_uuid = None
+
     try:
         ctx = await controller.prepare(
             agent_name,
-            session_id=UUID(chat_id) if chat_id else None,
+            session_id=session_uuid,
             user_id=user_id,
             user_email=user_email,
             user_name=user_name,
@@ -195,6 +191,22 @@ async def chat(
         )
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Pre-flight quota check (only when user is identified)
+    plan_id: str | None = None
+    if user_id:
+        plan_id = await get_user_plan(db, user_id)
+        status = await check_quota(db, user_id, "chat_tokens", plan_id)
+        if status.exceeded:
+            raise HTTPException(
+                429,
+                detail={
+                    "error": "chat_token_quota_exceeded",
+                    "used": status.used,
+                    "limit": status.limit,
+                    "message": "Monthly chat token limit reached. Purchase an add-on at /billing/addon or upgrade your plan.",
+                },
+            )
 
     # Parse body before AG-UI consumes the request stream
     raw_body = await request.body()
@@ -206,7 +218,7 @@ async def chat(
     previous_sink = set_child_event_sink(child_sink)
 
     async def on_complete(result):
-        """Persist messages after streaming completes."""
+        """Persist messages and track token usage after streaming completes."""
         try:
             assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
             all_messages = None
@@ -222,8 +234,13 @@ async def chat(
                 user_id=user_id,
                 all_messages=all_messages,
             )
+
+            # Post-flight: increment chat token usage
+            if user_id and plan_id:
+                token_estimate = (len(user_prompt) + len(assistant_text)) // 4
+                await increment_usage(db, user_id, "chat_tokens", max(token_estimate, 1), plan_id)
         except Exception:
-            pass  # Don't fail the response if persistence fails
+            logger.exception("Failed to persist turn or track usage")
         finally:
             # Restore previous event sink
             set_child_event_sink(previous_sink)

@@ -1096,6 +1096,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
+[package.optional-dependencies]
+http2 = [
+    { name = "h2" },
+]
+
 [[package]]
 name = "httpx-sse"
 version = "0.4.3"
@@ -1975,7 +1980,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "fastembed" },
     { name = "fastmcp" },
-    { name = "httpx" },
+    { name = "google-auth" },
+    { name = "httpx", extra = ["http2"] },
     { name = "hypercorn" },
     { name = "itsdangerous" },
     { name = "kreuzberg" },
@@ -1986,6 +1992,7 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
     { name = "sse-starlette" },
+    { name = "stripe" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -2005,7 +2012,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", specifier = ">=0.4" },
     { name = "fastmcp", specifier = ">=2.0" },
-    { name = "httpx", specifier = ">=0.28" },
+    { name = "google-auth", specifier = ">=2.28" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.28" },
     { name = "hypercorn", specifier = ">=0.17" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "kreuzberg", specifier = ">=3.0" },
@@ -2016,6 +2024,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sse-starlette", specifier = ">=2.0" },
+    { name = "stripe", specifier = ">=11.0" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
@@ -3072,6 +3081,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "stripe"
+version = "14.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/67/8a38222a57fc2ba359c4dcb66528d94c00d803c7fde8f8d8470ad6bdccbb/stripe-14.3.0.tar.gz", hash = "sha256:4c76137d741bd43e8bb433a596c198ca20f4cdf17a8fe04604faf37c74b01978", size = 1463618, upload-time = "2026-01-28T21:20:29.856Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/4b/0b7d5920f2be5e42d72bdfc44a9fae57b422668bfc8dacdf2f74886f6daa/stripe-14.3.0-py3-none-any.whl", hash = "sha256:3e36b68b256c8970e99b703e195d947e2a2919095758788c7074ac4485ac255e", size = 2106980, upload-time = "2026-01-28T21:20:27.566Z" },
 ]
 
 [[package]]

@@ -1,0 +1,6 @@
+# p8 Micro Worker — always-on (1 replica), handles scheduled + lightweight tasks
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml

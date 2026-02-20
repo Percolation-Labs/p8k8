@@ -1,0 +1,7 @@
+# p8 Medium Worker — KEDA-scaled 0→3, handles file_processing (1–50MB)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - keda-scaledobject.yaml

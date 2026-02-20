@@ -1,0 +1,7 @@
+# p8 Large Worker — KEDA-scaled 0→2, handles file_processing (>=50MB)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - keda-scaledobject.yaml

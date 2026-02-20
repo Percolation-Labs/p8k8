@@ -11,11 +11,11 @@ from pathlib import Path
 
 import typer
 
-import services.bootstrap as _svc
+import p8.services.bootstrap as _svc
 
 migrate_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
-_SQL_DIR = Path(__file__).resolve().parent.parent.parent / "sql"
+_SQL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "sql"
 
 
 async def _run_migrate():
@@ -23,6 +23,7 @@ async def _run_migrate():
         scripts = [
             _SQL_DIR / "install_entities.sql",
             _SQL_DIR / "install.sql",
+            _SQL_DIR / "payments.sql",
         ]
 
         for script in scripts:

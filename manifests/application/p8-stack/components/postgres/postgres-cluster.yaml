@@ -7,7 +7,8 @@ spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
 
-  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)
+  imageName: percolationlabs/rem-pg:18
 
   bootstrap:
     initdb:
@@ -30,8 +31,11 @@ spec:
 
   # PostgreSQL configuration
   postgresql:
+    shared_preload_libraries:
+      - pg_cron
     parameters:
       max_connections: "200"
+      cron.database_name: "p8db"
       shared_buffers: "1GB"
       effective_cache_size: "3GB"
       maintenance_work_mem: "256MB"

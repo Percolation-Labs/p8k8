@@ -88,14 +88,35 @@ p8 moments timeline SESSION_ID
 - `kms_provider` — `local` | `vault` | `aws`
 - `context_token_budget` / `always_include_last_messages` — memory compaction config
 
+## Architecture: AWS vs Hetzner Recipe
+
+Two deployment recipes exist for the p8 stack:
+
+- **AWS recipe** (`reminiscent/` repo): SQS queue + KEDA SQS trigger + ExternalSecrets from AWS Parameter Store + S3 native events. Full CDK setup.
+- **Hetzner recipe** (this repo): PostgreSQL queue (`files.processing_status`) + KEDA postgresql trigger + plain K8s Secrets from `.env`. Lighter weight, no NATS.
+
+**Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled file worker (2GB RAM) + optional dreaming CronJob.
+
 ## Deployment (Hetzner p8-w-1)
 
 ```bash
 # Build and push container image
 docker buildx build --platform linux/amd64 \
-  -t percolationlabs/p8:latest --push -f Dockerfile .
+  -t percolationlabs/p8k8:latest --push .
 
-# Deploy to Hetzner cluster
+# Create namespace + SQL init configmap
+kubectl --context=p8-w-1 create namespace p8 --dry-run=client -o yaml | kubectl apply -f -
+kubectl --context=p8-w-1 -n p8 create configmap p8-postgres-init-sql \
+  --from-file=install_entities.sql=sql/install_entities.sql \
+  --from-file=install.sql=sql/install.sql \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Create secrets from .env (or edit overlays/hetzner/secrets.yaml)
+kubectl --context=p8-w-1 -n p8 create secret generic p8-database-credentials \
+  --from-literal=username=p8user --from-literal=password=REAL_PASSWORD \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Deploy the full stack
 kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
 
 # Local dev

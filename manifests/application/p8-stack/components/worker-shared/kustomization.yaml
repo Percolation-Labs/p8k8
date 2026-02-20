@@ -1,0 +1,6 @@
+# Shared KEDA TriggerAuthentication for all tiered workers
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - triggerauthentication.yaml

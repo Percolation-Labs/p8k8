@@ -2,7 +2,6 @@
 
 Both the FastAPI router and the CLI REPL delegate to this controller
 for agent resolution, session management, history loading, and persistence.
-The transport layer (AG-UI streaming vs terminal I/O) stays in the caller.
 """
 
 from __future__ import annotations
@@ -48,16 +47,9 @@ class ChatController:
         self.db = db
         self.encryption = encryption
 
-    async def resolve_agent(
-        self,
-        agent_name: str,
-        *,
-        user_id: UUID | None = None,
-    ) -> AgentAdapter:
+    async def resolve_agent(self, agent_name: str, *, user_id: UUID | None = None) -> AgentAdapter:
         """Load an agent by schema name. Raises ValueError if not found."""
-        return await AgentAdapter.from_schema_name(
-            agent_name, self.db, self.encryption, user_id=user_id,
-        )
+        return await AgentAdapter.from_schema_name(agent_name, self.db, self.encryption, user_id=user_id)
 
     async def get_or_create_session(
         self,
@@ -69,11 +61,7 @@ class ChatController:
         session_name: str | None = None,
         session_type: str | None = None,
     ) -> tuple[UUID, Session]:
-        """Return (session_id, session). Creates if it doesn't exist.
-
-        If *session_name* or *session_type* are provided they are upserted —
-        applied on both new and existing sessions.
-        """
+        """Return (session_id, session). Creates if needed; upserts name/type if provided."""
         repo = Repository(Session, self.db, self.encryption)
         sid = session_id or uuid4()
 
@@ -112,41 +100,27 @@ class ChatController:
         session_name: str | None = None,
         session_type: str | None = None,
     ) -> ChatContext:
-        """Resolve agent, session, context, history, build agent — everything before the run."""
+        """Resolve agent, session, history, and build the agent — everything before the run."""
         adapter = await self.resolve_agent(agent_name, user_id=user_id)
 
         sid, session = await self.get_or_create_session(
             session_id,
-            agent_name=agent_name,
-            user_id=user_id,
-            name_prefix=name_prefix,
-            session_name=session_name,
-            session_type=session_type,
+            agent_name=agent_name, user_id=user_id,
+            name_prefix=name_prefix, session_name=session_name, session_type=session_type,
         )
-
-        # Extract session context for injection
-        session_name = session.name if session else None
-        session_metadata = session.metadata if session else None
 
         injector = adapter.build_injector(
-            user_id=user_id,
-            user_email=user_email,
-            user_name=user_name,
+            user_id=user_id, user_email=user_email, user_name=user_name,
             session_id=str(sid),
-            session_name=session_name,
-            session_metadata=session_metadata,
+            session_name=session.name,
+            session_metadata=session.metadata,
         )
-
         message_history = await adapter.load_history(sid, user_id=user_id)
-
         agent = adapter.build_agent()
 
         return ChatContext(
-            adapter=adapter,
-            session_id=sid,
-            agent=agent,
-            injector=injector,
-            message_history=message_history,
+            adapter=adapter, session_id=sid, agent=agent,
+            injector=injector, message_history=message_history,
         )
 
     async def run_turn(
@@ -165,26 +139,19 @@ class ChatController:
                 instructions=ctx.injector.instructions,
             )
             assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
-
-            all_messages = None
-            if hasattr(result, "all_messages"):
-                all_messages = result.all_messages()
-            elif hasattr(result, "_all_messages"):
-                all_messages = result._all_messages
-
+            all_messages = (
+                result.all_messages() if hasattr(result, "all_messages")
+                else getattr(result, "_all_messages", None)
+            )
         except Exception as e:
             assistant_text = f"[error] {e}"
             all_messages = None
 
         await ctx.adapter.persist_turn(
-            ctx.session_id,
-            user_prompt,
-            assistant_text,
-            user_id=user_id,
-            all_messages=all_messages,
+            ctx.session_id, user_prompt, assistant_text,
+            user_id=user_id, all_messages=all_messages,
             background_compaction=background_compaction,
         )
-
         return ChatTurn(assistant_text=assistant_text, all_messages=all_messages)
 
     async def persist_turn(
@@ -198,9 +165,6 @@ class ChatController:
     ) -> None:
         """Persist a turn without running the agent (used by API streaming)."""
         await ctx.adapter.persist_turn(
-            ctx.session_id,
-            user_prompt,
-            assistant_text,
-            user_id=user_id,
-            all_messages=all_messages,
+            ctx.session_id, user_prompt, assistant_text,
+            user_id=user_id, all_messages=all_messages,
         )

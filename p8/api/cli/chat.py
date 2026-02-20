@@ -8,7 +8,7 @@ from uuid import UUID
 
 import typer
 
-import services.bootstrap as _svc
+import p8.services.bootstrap as _svc
 from p8.api.controllers.chat import ChatController
 from p8.api.tools import init_tools
 

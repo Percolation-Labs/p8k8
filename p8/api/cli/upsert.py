@@ -23,7 +23,7 @@ from uuid import UUID
 
 import typer
 
-import services.bootstrap as _svc
+import p8.services.bootstrap as _svc
 from p8.ontology.base import CoreModel
 from p8.ontology.types import TABLE_MAP
 from p8.services.content import load_structured

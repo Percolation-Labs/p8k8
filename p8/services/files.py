@@ -88,6 +88,9 @@ class FileService:
                 kwargs["region_name"] = self.settings.s3_region
             if self.settings.s3_endpoint_url:
                 kwargs["endpoint_url"] = self.settings.s3_endpoint_url
+            if self.settings.s3_access_key_id:
+                kwargs["aws_access_key_id"] = self.settings.s3_access_key_id
+                kwargs["aws_secret_access_key"] = self.settings.s3_secret_access_key
             self._s3_client = boto3.client("s3", **kwargs)
 
     @staticmethod

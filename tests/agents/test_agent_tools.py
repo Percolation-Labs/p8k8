@@ -131,7 +131,7 @@ def test_load_yaml_agents_from_dir(tmp_path):
     try:
         adapter._yaml_loaded = False
         from unittest.mock import patch
-        with patch("settings.Settings") as MockSettings:
+        with patch("p8.settings.Settings") as MockSettings:
             MockSettings.return_value.schema_dir = str(tmp_path)
             adapter._load_yaml_agents()
 
@@ -154,7 +154,7 @@ def test_load_yaml_agents_missing_dir():
     try:
         adapter._yaml_loaded = False
         from unittest.mock import patch
-        with patch("settings.Settings") as MockSettings:
+        with patch("p8.settings.Settings") as MockSettings:
             MockSettings.return_value.schema_dir = "/nonexistent/path"
             adapter._load_yaml_agents()
 
@@ -184,7 +184,7 @@ def test_load_yaml_agents_skips_invalid(tmp_path):
     try:
         adapter._yaml_loaded = False
         from unittest.mock import patch
-        with patch("settings.Settings") as MockSettings:
+        with patch("p8.settings.Settings") as MockSettings:
             MockSettings.return_value.schema_dir = str(tmp_path)
             adapter._load_yaml_agents()
 
@@ -214,7 +214,7 @@ def test_load_yaml_does_not_overwrite_code_agents(tmp_path):
     try:
         adapter._yaml_loaded = False
         from unittest.mock import patch
-        with patch("settings.Settings") as MockSettings:
+        with patch("p8.settings.Settings") as MockSettings:
             MockSettings.return_value.schema_dir = str(tmp_path)
             adapter._load_yaml_agents()
 
@@ -246,7 +246,7 @@ async def test_yaml_agent_auto_registers(db, encryption, tmp_path):
     try:
         adapter._yaml_loaded = False
         from unittest.mock import patch
-        with patch("settings.Settings") as MockSettings:
+        with patch("p8.settings.Settings") as MockSettings:
             MockSettings.return_value.schema_dir = str(tmp_path)
 
             agent_adapter = await AgentAdapter.from_schema_name("yaml-bot", db, encryption)
