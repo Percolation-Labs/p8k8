@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     dek_cache_ttl: int = 300
 
     # Agents
+    default_model: str = "openai:gpt-4.1"  # fallback model when agent schema omits model_name
     schema_dir: str = "./schema"  # folder of YAML agent/schema definitions (may not exist)
 
     # Memory
@@ -55,6 +56,13 @@ class Settings(BaseSettings):
     s3_region: str = ""
     s3_endpoint_url: str = ""  # e.g. http://localhost:9000 for MinIO/localstack
     s3_bucket: str = ""  # default bucket for content uploads
+    s3_access_key_id: str = ""      # explicit S3 credentials (Hetzner, MinIO)
+    s3_secret_access_key: str = ""  # falls back to boto3 default credential chain
+
+    # Worker (tiered QMS)
+    worker_tier: str = "small"
+    worker_poll_interval: float = 5.0
+    worker_batch_size: int = 1
 
     # Content ingestion (Kreuzberg chunking)
     content_chunk_max_chars: int = 1500  # ~half a page of text
@@ -64,6 +72,9 @@ class Settings(BaseSettings):
     audio_chunk_duration_ms: int = 30000  # 30s fallback chunk size
     audio_silence_thresh: int = -40       # dBFS
     audio_min_silence_len: int = 700      # ms
+
+    # API key (simple bearer token for service-to-service auth)
+    api_key: str = ""  # set P8_API_KEY to require Bearer token on all endpoints
 
     # Auth / JWT
     auth_secret_key: str = "changeme-in-production"
@@ -81,6 +92,14 @@ class Settings(BaseSettings):
     apple_key_id: str = ""
     apple_private_key_path: str = ""
 
+    # APNs (reuses apple_key_id / apple_team_id / apple_private_key_path above)
+    apns_bundle_id: str = ""  # enables APNs when set (e.g. "com.yourapp.bundle")
+    apns_environment: str = "production"  # "production" | "sandbox"
+
+    # FCM v1 (Google Firebase Cloud Messaging)
+    fcm_project_id: str = ""  # enables FCM when set
+    fcm_service_account_file: str = ""  # path to Google service account JSON
+
     # Magic link email
     magic_link_base_url: str = ""              # defaults to api_base_url
     email_provider: str = "console"            # console | smtp | resend
@@ -90,5 +109,10 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     resend_api_key: str = ""
+
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
 
     model_config = {"env_prefix": "P8_", "env_file": ".env", "extra": "ignore"}

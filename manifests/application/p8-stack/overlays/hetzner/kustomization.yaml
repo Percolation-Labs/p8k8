@@ -29,6 +29,7 @@ commonLabels:
 
 images:
   - name: percolationlabs/p8
+    newName: percolationlabs/p8k8
     newTag: latest
 
 configMapGenerator:
@@ -40,6 +41,12 @@ configMapGenerator:
       - OTEL__ENABLED=false
       - OTEL_SERVICE_NAME=p8-api
       - AUTH__ENABLED=true
+      - P8_S3_ENDPOINT_URL=https://fsn1.your-objectstorage.com
+      - P8_S3_BUCKET=p8-percolate
+      - P8_S3_REGION=fsn1
+      # APNs (push notifications)
+      - P8_APNS_BUNDLE_ID=ai.percolationlabs.remapp
+      - P8_APNS_ENVIRONMENT=production
 
   - name: p8-version-info
     behavior: merge

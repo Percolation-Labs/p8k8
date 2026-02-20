@@ -218,6 +218,9 @@ class User(CoreModel):
     interests: list[str] = Field(default_factory=list)
     activity_level: str | None = None
     content: str | None = None
+    devices: list[dict] = Field(default_factory=list)
+    # Each device: {"platform": "apns"|"fcm", "token": "...", "device_name": "...",
+    #               "bundle_id": "...", "app_version": "...", "active": true}
 
 
 class File(CoreModel):
@@ -236,6 +239,7 @@ class File(CoreModel):
     size_bytes: int | None = None
     parsed_content: str | None = None
     parsed_output: dict | None = None
+    processing_status: str = "pending"  # pending | processing | completed | failed
 
 
 class Feedback(CoreModel):

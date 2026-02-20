@@ -54,6 +54,7 @@ def _get_oauth(request: Request) -> OAuth:
             access_token_url="https://appleid.apple.com/auth/token",
             client_kwargs={"scope": "name email", "response_mode": "form_post"},
             jwks_uri="https://appleid.apple.com/auth/keys",
+            token_endpoint_auth_method="client_secret_post",
         )
 
     return _oauth
@@ -326,6 +327,7 @@ async def mobile_drive_callback(request: Request):
         raise HTTPException(400, "Google OAuth not configured")
 
     auth = request.app.state.auth
+    settings = request.app.state.settings
     token_data = await client.authorize_access_token(request)
 
     google_refresh = token_data.get("refresh_token")
@@ -389,7 +391,19 @@ async def mobile_oauth_callback(request: Request, provider: str):
         user, tenant_id = await auth.handle_google_callback(user_info)
 
     elif provider == "apple":
+        # Authlib may store decoded id_token claims under "userinfo" or as
+        # top-level keys in token_data; also try decoding id_token directly
         id_token_claims = token_data.get("userinfo") or {}
+        if not id_token_claims.get("sub"):
+            # Try extracting from the raw id_token JWT
+            raw_id_token = token_data.get("id_token")
+            if raw_id_token and isinstance(raw_id_token, str):
+                import jwt as pyjwt
+                id_token_claims = pyjwt.decode(raw_id_token, options={"verify_signature": False})
+        if not id_token_claims.get("sub"):
+            # Some Authlib versions put claims at top level
+            id_token_claims = {k: v for k, v in token_data.items()
+                               if k in ("sub", "email", "email_verified", "aud", "iss")}
         form = await request.form()
         user_json = form.get("user")
         user_info = json.loads(user_json) if user_json else None
@@ -566,6 +580,39 @@ async def me(request: Request):
         "tenant_id": current.tenant_id,
         "provider": current.provider,
     }
+
+
+class PatchUserRequest(BaseModel):
+    name: str | None = None
+    interests: list[str] | None = None
+    activity_level: str | None = None
+    content: str | None = None
+    devices: list[dict] | None = None
+
+
+@router.patch("/me")
+async def patch_me(request: Request, body: PatchUserRequest):
+    """Update the authenticated user's profile.
+
+    Use this to register/update device tokens, change settings, etc.
+    The mobile app should call this after obtaining a push token:
+
+        PATCH /auth/me
+        {"devices": [{"platform": "apns", "token": "...", "device_name": "iPhone"}]}
+    """
+    current = await get_current_user(request)
+    auth = request.app.state.auth
+    user = await auth.get_user(UUID(current.user_id), tenant_id=current.tenant_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    # Apply non-None fields from the patch body
+    updates = body.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(user, field, value)
+
+    [user] = await auth.users.upsert(user)
+    return {"user": user.model_dump(mode="json")}
 
 
 @router.post("/logout")

@@ -28,6 +28,9 @@ configMapGenerator:
       - ENVIRONMENT=local
       - OTEL__ENABLED=false
       - LOG_LEVEL=debug
+      # APNs (push notifications)
+      - P8_APNS_BUNDLE_ID=ai.percolationlabs.remapp
+      - P8_APNS_ENVIRONMENT=sandbox
 
   - name: p8-version-info
     behavior: create

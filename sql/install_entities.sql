@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS users (
     interests       TEXT[] DEFAULT '{}',
     activity_level  VARCHAR(50),
     content         TEXT,
+    devices         JSONB DEFAULT '[]'::jsonb,
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
@@ -232,6 +233,7 @@ CREATE TABLE IF NOT EXISTS files (
     size_bytes      BIGINT,
     parsed_content  TEXT,
     parsed_output   JSONB,
+    processing_status VARCHAR(20) DEFAULT 'pending',
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
@@ -243,6 +245,10 @@ CREATE TABLE IF NOT EXISTS files (
     deleted_at      TIMESTAMPTZ
 );
 
+
+-- Partial index for file processing queue (KEDA worker polls this)
+CREATE INDEX IF NOT EXISTS idx_files_processing_status
+    ON files(processing_status) WHERE processing_status = 'pending';
 
 -- feedback — user ratings on agent responses
 CREATE TABLE IF NOT EXISTS feedback (
@@ -555,6 +561,13 @@ CREATE TABLE IF NOT EXISTS schema_timemachine (
     checksum    VARCHAR(64),
     recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+
+-- ---------------------------------------------------------------------------
+-- Column migrations (safe to re-run — IF NOT EXISTS / IF EXISTS guards)
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS devices JSONB DEFAULT '[]'::jsonb;
 
 
 -- ---------------------------------------------------------------------------
