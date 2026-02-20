@@ -1422,7 +1422,7 @@ DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
         PERFORM cron.schedule('embed-process', '*/1 * * * *',
             'SELECT net.http_post(
-                url := ''http://localhost:8000/embeddings/process'',
+                url := ''http://p8-api.p8.svc:8000/embeddings/process'',
                 headers := ''{"Content-Type": "application/json"}''::jsonb,
                 body := ''{}''::jsonb
             )');
@@ -1438,7 +1438,7 @@ DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
         PERFORM cron.schedule('process-reminders', '*/1 * * * *',
             'SELECT net.http_post(
-                url := ''http://localhost:8000/notifications/process-reminders'',
+                url := ''http://p8-api.p8.svc:8000/notifications/process-reminders'',
                 headers := ''{"Content-Type": "application/json"}''::jsonb,
                 body := ''{}''::jsonb
             )');

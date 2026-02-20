@@ -7,7 +7,7 @@ spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
 
-  # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)
+  # Custom PG18 with pgvector + pg_cron + pg_net (built from docker/Dockerfile.pg18)
   imageName: percolationlabs/rem-pg:18
 
   bootstrap:
@@ -33,6 +33,7 @@ spec:
   postgresql:
     shared_preload_libraries:
       - pg_cron
+      - pg_net
     parameters:
       max_connections: "200"
       cron.database_name: "p8db"
