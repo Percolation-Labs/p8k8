@@ -1,0 +1,147 @@
+{
+  "description": "Seed data for rem_moments_feed tests. Three days of activity: today, yesterday, and 3 days ago. Two sessions, one spanning today+yesterday, another only 3 days ago. One content_upload moment 3 days ago.",
+  "sessions": [
+    {
+      "id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "name": "project-planning",
+      "agent_name": "sample-agent",
+      "mode": "chat",
+      "total_tokens": 400
+    },
+    {
+      "id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "name": "research-session",
+      "agent_name": "research-agent",
+      "mode": "chat",
+      "total_tokens": 250
+    }
+  ],
+  "messages": [
+    {
+      "_comment": "--- 3 days ago, session 2 ---",
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "message_type": "user",
+      "content": "What are the best practices for vector database indexing?",
+      "token_count": 30,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "message_type": "assistant",
+      "content": "For vector database indexing, consider HNSW for high recall and IVFFlat for faster builds. HNSW generally performs better for production workloads.",
+      "token_count": 45,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "message_type": "user",
+      "content": "How does pgvector compare to dedicated vector databases?",
+      "token_count": 25,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "message_type": "assistant",
+      "content": "pgvector keeps your vectors alongside relational data, avoiding sync issues. For under 10M vectors, it performs comparably to Pinecone or Weaviate.",
+      "token_count": 50,
+      "days_ago": 3
+    },
+    {
+      "_comment": "--- yesterday, session 1 ---",
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "Let's plan the migration to the new API.",
+      "token_count": 20,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "I'll outline the migration plan. First, we need to set up the new GraphQL schema and create resolvers for the existing REST endpoints.",
+      "token_count": 40,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "What about backward compatibility?",
+      "token_count": 15,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "We'll run both endpoints in parallel for 2 weeks. Feature flags control which clients use GraphQL. Rollback is instant.",
+      "token_count": 35,
+      "days_ago": 1
+    },
+    {
+      "_comment": "--- today, session 1 ---",
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "Let's continue with the migration. What's the status of the schema design?",
+      "token_count": 30,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "Schema design is 80% complete. The User and Project types are done. We still need to finalize the Task type and its subscriptions.",
+      "token_count": 40,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "Can you draft the Task type?",
+      "token_count": 15,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "Here's the Task type with status tracking and real-time subscriptions for updates.",
+      "token_count": 25,
+      "days_ago": 0
+    }
+  ],
+  "moments": [
+    {
+      "name": "upload-vector-paper",
+      "moment_type": "content_upload",
+      "summary": "Uploaded vector-indexing-paper.pdf (8 chunks, 12400 chars)",
+      "source_session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "metadata": {
+        "file_id": "bbbbbbbb-0000-0000-0000-000000000001",
+        "resource_keys": ["vector-paper-chunk-0000", "vector-paper-chunk-0001"],
+        "source": "upload",
+        "chunk_count": 8
+      },
+      "days_ago": 3
+    },
+    {
+      "name": "session-abc123-20250216-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Discussed vector database indexing strategies and pgvector comparison.",
+      "source_session_id": "aaaaaaaa-0000-0000-0000-000000000002",
+      "metadata": {
+        "message_count": 4,
+        "token_count": 150,
+        "chunk_index": 0
+      },
+      "days_ago": 3
+    },
+    {
+      "name": "session-def456-20250218-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Planned API migration from REST to GraphQL with backward compatibility.",
+      "source_session_id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "metadata": {
+        "message_count": 4,
+        "token_count": 110,
+        "chunk_index": 0
+      },
+      "days_ago": 1
+    }
+  ]
+}

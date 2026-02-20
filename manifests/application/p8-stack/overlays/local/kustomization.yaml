@@ -1,0 +1,102 @@
+# Kustomize Overlay: Local Development
+#
+# Usage:
+#   kubectl apply -k manifests/application/p8-stack/overlays/local
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: p8-local
+
+resources:
+  - ../../components/api
+  - secrets.yaml
+  - namespace.yaml
+
+commonLabels:
+  environment: local
+
+images:
+  - name: percolationlabs/p8
+    newName: p8-local
+    newTag: latest
+
+configMapGenerator:
+  - name: p8-config
+    behavior: create
+    literals:
+      - ENVIRONMENT=local
+      - OTEL__ENABLED=false
+      - LOG_LEVEL=debug
+
+  - name: p8-version-info
+    behavior: create
+    literals:
+      - VERSION=local-dev
+      - GIT_COMMIT=local
+      - BUILD_DATE=local
+      - ENVIRONMENT=local
+
+patches:
+  # Delete HPA (not needed locally)
+  - patch: |
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: p8-api
+    target:
+      kind: HorizontalPodAutoscaler
+      name: p8-api
+
+  # Delete PDB
+  - patch: |
+      $patch: delete
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: p8-api
+    target:
+      kind: PodDisruptionBudget
+      name: p8-api
+
+  # Delete NetworkPolicy
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: p8-api
+    target:
+      kind: NetworkPolicy
+      name: p8-api
+
+  # Delete Ingress (use port-forward locally)
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: p8-api
+    target:
+      kind: Ingress
+      name: p8-api
+
+  # Patch deployment for local
+  - target:
+      kind: Deployment
+      name: p8-api
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: remove
+        path: /spec/template/spec/initContainers
+      - op: remove
+        path: /spec/template/spec/affinity
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext
+      - op: remove
+        path: /spec/template/spec/volumes
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts

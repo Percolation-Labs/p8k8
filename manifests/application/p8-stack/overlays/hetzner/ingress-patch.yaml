@@ -1,0 +1,36 @@
+# Hetzner ingress patch — nginx + cert-manager + TLS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: p8-api
+  annotations:
+    load-balancer.hetzner.cloud/location: hel1
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://percolationlabs.ai,https://*.percolationlabs.ai"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Tenant-ID"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.percolationlabs.ai
+      secretName: p8-api-tls
+  rules:
+    - host: api.percolationlabs.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: p8-api
+                port:
+                  number: 8000

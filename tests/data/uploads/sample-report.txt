@@ -1,0 +1,15 @@
+Q4 2025 Engineering Report — Project Aurora
+
+Executive Summary: Project Aurora completed its API redesign milestone ahead of schedule.
+The migration from REST to GraphQL reduced average response latency by 34% and decreased
+total API calls from mobile clients by 41% due to query batching.
+
+Key Metrics:
+- API Response Time: 120ms → 79ms (p95)
+- Mobile API Calls: 2.3M/day → 1.35M/day
+- Error Rate: 0.8% → 0.3%
+- Developer Satisfaction: 7.2/10 → 8.9/10
+
+The dashboard v2 launch is on track for Week 8. Auth overhaul has been descoped to Q2
+pending security audit completion. Team velocity improved 15% after adopting trunk-based
+development with feature flags.

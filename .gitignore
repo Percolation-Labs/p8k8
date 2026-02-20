@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+.dev-master.key
+.venv/
+dist/
+*.egg-info/
+pgdata/
+.pytest_cache/
+.ruff_cache/
+.fs/
+recording-*.wav
+.claude/

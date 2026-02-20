@@ -1,0 +1,48 @@
+# Kustomize Base for p8 Stack
+#
+# Components:
+# - p8 API (FastAPI + MCP server)
+# - Dreaming Worker (CronJob for background processing)
+# - PostgreSQL (CloudNativePG)
+#
+# Usage:
+#   kubectl apply -k manifests/application/p8-stack/overlays/hetzner
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: p8
+
+commonLabels:
+  app.kubernetes.io/part-of: p8-stack
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - ../components/api
+  - ../components/postgres
+  # - ../components/dreaming-worker  # Enable when ready
+
+configMapGenerator:
+  - name: p8-version-info
+    literals:
+      - VERSION=unset
+      - GIT_COMMIT=unset
+      - BUILD_DATE=unset
+      - ENVIRONMENT=base
+
+  - name: p8-config
+    literals:
+      - ENVIRONMENT=base
+      - LOG_LEVEL=info
+      - POSTGRES__POOL_MIN_SIZE=2
+      - POSTGRES__POOL_MAX_SIZE=10
+      - OTEL__ENABLED=false
+      - OTEL_SERVICE_NAME=p8-api
+      - LLM__DEFAULT_MODEL=openai:gpt-4.1
+      - AUTH__ENABLED=false
+
+labels:
+  - pairs:
+      app.kubernetes.io/version: unset
+    includeSelectors: true
+    includeTemplates: true

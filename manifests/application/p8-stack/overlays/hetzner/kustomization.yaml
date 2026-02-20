@@ -1,0 +1,66 @@
+# Kustomize Overlay: Hetzner p8-w-1 Cluster
+#
+# Deploys the p8 stack to Hetzner with:
+# - nginx ingress + cert-manager TLS
+# - CloudNativePG PostgreSQL (single instance)
+# - Plain K8s Secrets (no ExternalSecrets)
+#
+# Usage:
+#   kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
+#
+# Generate postgres init ConfigMap first:
+#   kubectl create configmap p8-postgres-init-sql \
+#     --from-file=install_entities.sql=sql/install_entities.sql \
+#     --from-file=install.sql=sql/install.sql \
+#     -n p8 --dry-run=client -o yaml | kubectl apply -f -
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: p8
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - secrets.yaml
+
+commonLabels:
+  environment: hetzner
+
+images:
+  - name: percolationlabs/p8
+    newTag: latest
+
+configMapGenerator:
+  - name: p8-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=hetzner
+      - LOG_LEVEL=info
+      - OTEL__ENABLED=false
+      - OTEL_SERVICE_NAME=p8-api
+      - AUTH__ENABLED=true
+
+  - name: p8-version-info
+    behavior: merge
+    literals:
+      - ENVIRONMENT=hetzner
+
+patches:
+  # Ingress — replace ALB-style with nginx + cert-manager
+  - path: ingress-patch.yaml
+    target:
+      kind: Ingress
+      name: p8-api
+
+  # Postgres — single instance, no backups for now
+  - target:
+      kind: Cluster
+      name: p8-postgres
+    patch: |
+      - op: replace
+        path: /spec/instances
+        value: 1
+      - op: replace
+        path: /spec/storage/size
+        value: "20Gi"

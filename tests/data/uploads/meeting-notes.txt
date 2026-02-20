@@ -1,0 +1,16 @@
+Sprint Planning — 2025-12-02
+
+Attendees: Sarah Chen, James Wu, Emily Park, David Kim
+
+Decisions:
+1. Migrate analytics service to TiDB — approved unanimously
+2. Use Qdrant for vector embeddings (replaces pgvector experiment)
+3. Redis cluster upgrade scheduled for next sprint
+
+Action Items:
+- Sarah: Draft TiDB migration plan by Friday
+- James: Set up Qdrant staging environment
+- Emily: Update CI pipeline for dual-database testing
+- David: Benchmark TiDB write throughput vs PostgreSQL
+
+Next meeting: 2025-12-09 at 10:00 AM PST

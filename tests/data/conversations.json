@@ -1,0 +1,66 @@
+{
+  "conversations": [
+    {
+      "name": "project-planning",
+      "description": "Simulates a project planning session that exceeds token threshold, triggering moment creation",
+      "token_threshold": 200,
+      "messages": [
+        {"role": "user", "content": "Let's plan the Q1 roadmap for Project Aurora. We need to prioritize the API redesign and the new dashboard.", "tokens": 45},
+        {"role": "assistant", "content": "I'll help with the Q1 roadmap for Project Aurora. Here's what I suggest we prioritize:\n\n1. **API Redesign** (Weeks 1-4): Migrate from REST to GraphQL for the core endpoints. This unblocks the mobile team.\n2. **Dashboard v2** (Weeks 3-8): New analytics dashboard with real-time metrics. Depends on the new API.\n3. **Auth Overhaul** (Weeks 5-8): Move to OAuth 2.1 with PKCE. Can run parallel to dashboard work.\n\nShall I break these down into epics?", "tokens": 120},
+        {"role": "user", "content": "Yes, break down the API redesign epic. What are the key milestones?", "tokens": 30},
+        {"role": "assistant", "content": "Here's the API Redesign epic breakdown:\n\n**Epic: API Redesign (REST → GraphQL)**\n\nMilestone 1 — Schema Design (Week 1)\n- Define GraphQL schema for Users, Projects, and Tasks\n- Set up Apollo Server with TypeScript\n- Create resolver stubs\n\nMilestone 2 — Core Resolvers (Week 2)\n- Implement CRUD resolvers for all entities\n- Add DataLoader for N+1 query prevention\n- Wire up to existing PostgreSQL via Prisma\n\nMilestone 3 — Auth & Subscriptions (Week 3)\n- JWT validation middleware\n- Real-time subscriptions for task updates\n- Rate limiting per user\n\nMilestone 4 — Migration & Cutover (Week 4)\n- Dual-run REST + GraphQL\n- Client SDK generation\n- Deprecation notices on REST endpoints\n\nThe mobile team can start integrating after Milestone 2.", "tokens": 180},
+        {"role": "user", "content": "Good plan. What about testing strategy for the migration?", "tokens": 20},
+        {"role": "assistant", "content": "For the REST-to-GraphQL migration testing:\n\n1. **Contract tests**: Compare REST and GraphQL responses for identical queries — ensure parity.\n2. **Load testing**: Run k6 against both endpoints. GraphQL should reduce total requests by ~40% due to batching.\n3. **Shadow traffic**: Mirror 10% of production REST traffic to GraphQL and diff responses.\n4. **Integration suite**: Cypress E2E tests updated to use GraphQL client.\n5. **Rollback plan**: Feature flag to switch clients back to REST within 5 minutes.\n\nI recommend running shadow traffic for at least 1 week before cutover.", "tokens": 130},
+        {"role": "user", "content": "Let's also discuss the team allocation. We have 6 engineers.", "tokens": 25},
+        {"role": "assistant", "content": "With 6 engineers, here's my suggested allocation:\n\n**API Redesign (3 engineers, Weeks 1-4)**\n- Senior backend eng: Schema design + complex resolvers\n- Mid backend eng: CRUD resolvers + DataLoader\n- Full-stack eng: Client SDK + migration tooling\n\n**Dashboard v2 (2 engineers, Weeks 3-8)**\n- Senior frontend eng: Component architecture + real-time charts\n- Mid frontend eng: Data visualization + responsive layout\n\n**Auth Overhaul (1 engineer, Weeks 5-8)**\n- Security eng: OAuth 2.1 implementation + token rotation\n\nThe full-stack eng transitions from API to Dashboard in Week 5 to help with API integration. This gives us overlap coverage.", "tokens": 150}
+      ],
+      "expected_moments": 2,
+      "expected_total_tokens": 700
+    },
+    {
+      "name": "multi-session-memory",
+      "description": "Two sessions where the second should see moments from the first via load_context",
+      "token_threshold": 150,
+      "sessions": [
+        {
+          "name": "session-1-design-review",
+          "messages": [
+            {"role": "user", "content": "We decided to use TiDB instead of PostgreSQL for the analytics service.", "tokens": 30},
+            {"role": "assistant", "content": "Noted — TiDB for analytics. Key implications: MySQL-compatible wire protocol, horizontal scaling via TiKV, but we lose some PostgreSQL-specific features like JSONB operators and pgvector. For the vector search use case, we'll need a separate Milvus or Qdrant instance.", "tokens": 80},
+            {"role": "user", "content": "Right, we'll use Qdrant for embeddings. Can you summarize the architecture?", "tokens": 25},
+            {"role": "assistant", "content": "Architecture summary:\n- **API Layer**: FastAPI (unchanged)\n- **Primary DB**: PostgreSQL (users, sessions, auth)\n- **Analytics DB**: TiDB (events, metrics, aggregations)\n- **Vector Store**: Qdrant (embeddings, semantic search)\n- **Cache**: Redis (sessions, hot data)\n\nData flows: API → PostgreSQL for OLTP, API → TiDB for analytics writes, Qdrant for search. ETL pipeline syncs relevant PostgreSQL data to TiDB nightly.", "tokens": 120}
+          ],
+          "expected_moments": 1
+        },
+        {
+          "name": "session-2-followup",
+          "messages": [
+            {"role": "user", "content": "What database did we choose for analytics?", "tokens": 15},
+            {"role": "assistant", "content": "Based on our previous discussion, we chose TiDB for the analytics service, with Qdrant for vector embeddings.", "tokens": 30}
+          ],
+          "expects_moment_injection": true
+        }
+      ]
+    },
+    {
+      "name": "long-session-five-chunks",
+      "description": "Extended session that should produce 5 moments via repeated threshold triggers",
+      "token_threshold": 100,
+      "messages": [
+        {"role": "user", "content": "Let's start the code review for PR #342.", "tokens": 20},
+        {"role": "assistant", "content": "Looking at PR #342 — it adds a new caching layer for the user service. The implementation uses an LRU cache with TTL. I see a potential issue with cache invalidation on user profile updates.", "tokens": 60},
+        {"role": "user", "content": "Good catch. What's the invalidation strategy?", "tokens": 15},
+        {"role": "assistant", "content": "Currently there's no invalidation — it relies purely on TTL expiry (5 minutes). For user profiles that change rarely, this might be acceptable. But for active sessions, stale data could cause issues. I'd recommend adding a write-through invalidation pattern.", "tokens": 65},
+        {"role": "user", "content": "Let's also look at the error handling.", "tokens": 15},
+        {"role": "assistant", "content": "The error handling has gaps: cache misses fall through to the database correctly, but database connection errors aren't caught — they bubble up as 500s. We should add a circuit breaker pattern here, falling back to cached data (even stale) when the DB is unavailable.", "tokens": 70},
+        {"role": "user", "content": "What about the test coverage?", "tokens": 12},
+        {"role": "assistant", "content": "Test coverage is at 72% for the new code. Missing: concurrent access tests, TTL expiry behavior, and the cache miss → DB fallback path. The existing tests only cover the happy path with a warm cache. I'd add at least 5 more test cases.", "tokens": 65},
+        {"role": "user", "content": "Can you suggest the specific test cases?", "tokens": 15},
+        {"role": "assistant", "content": "Here are the 5 test cases I'd add:\n1. Concurrent reads during cache population (race condition)\n2. TTL expiry triggers fresh DB fetch\n3. Cache miss with DB timeout → graceful error\n4. Write-through invalidation on profile update\n5. Memory pressure eviction (LRU boundary)\nEach should use pytest-asyncio with controlled timing.", "tokens": 75},
+        {"role": "user", "content": "Great. Final thoughts on the PR?", "tokens": 12},
+        {"role": "assistant", "content": "Overall the PR is solid — the LRU cache will significantly reduce DB load. My recommendations: add write-through invalidation, improve error handling with circuit breaker, and expand test coverage to 90%+. Approve with changes requested.", "tokens": 55}
+      ],
+      "expected_moments": 5
+    }
+  ]
+}

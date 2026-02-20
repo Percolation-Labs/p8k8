@@ -1,0 +1,71 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: p8-postgres
+  namespace: p8
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+
+  bootstrap:
+    initdb:
+      database: p8db
+      owner: p8user
+      secret:
+        name: p8-database-credentials
+
+      postInitApplicationSQLRefs:
+        configMapRefs:
+          - name: p8-postgres-init-sql
+            key: install_entities.sql
+          - name: p8-postgres-init-sql
+            key: install.sql
+
+  # Storage — use cluster default storage class on Hetzner
+  storage:
+    size: 20Gi
+    resizeInUseVolumes: true
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "1GB"
+      effective_cache_size: "3GB"
+      maintenance_work_mem: "256MB"
+      work_mem: "8MB"
+      wal_buffers: "16MB"
+      checkpoint_completion_target: "0.9"
+      max_wal_size: "2GB"
+      min_wal_size: "512MB"
+      default_statistics_target: "500"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      max_parallel_workers_per_gather: "2"
+      max_parallel_workers: "4"
+      max_worker_processes: "4"
+      max_parallel_maintenance_workers: "2"
+      autovacuum_max_workers: "3"
+      autovacuum_naptime: "10s"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_temp_files: "0"
+      log_autovacuum_min_duration: "0"
+
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+  monitoring:
+    enablePodMonitor: false
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred

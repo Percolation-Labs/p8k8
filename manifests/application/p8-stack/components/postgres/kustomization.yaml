@@ -1,0 +1,11 @@
+# PostgreSQL Component (CloudNativePG)
+#
+# Deploy independently or as part of the stack.
+# SQL init scripts generated from sql/ directory.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - postgres-init-configmap.yaml
+  - postgres-cluster.yaml

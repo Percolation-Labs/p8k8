@@ -1,0 +1,91 @@
+# p8 Stack Cluster Configuration — Hetzner p8-w-1
+# ================================================
+# Adapted from reminiscent cluster-config for Hetzner deployment.
+# No AWS services — uses nginx ingress, cert-manager, local secrets.
+
+# =============================================================================
+# PROJECT CONFIGURATION
+# =============================================================================
+project:
+  name: p8
+  environment: production
+  namespace: p8
+
+# =============================================================================
+# GIT REPOSITORY
+# =============================================================================
+git:
+  repoURL: https://github.com/Percolation-Labs/p8k8.git
+  targetRevision: main
+  path: manifests/application/p8-stack/overlays/hetzner
+
+# =============================================================================
+# PLATFORM OPERATORS
+# =============================================================================
+platform:
+  cloudnativePg:
+    enabled: true
+    namespace: cnpg-system
+    chartVersion: "0.26.1"
+    chartRepo: https://cloudnative-pg.github.io/charts
+    podMonitorEnabled: false
+
+  certManager:
+    enabled: true
+    namespace: cert-manager
+    chartVersion: "v1.16.2"
+
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: "2.16.1"
+    chartRepo: https://kedacore.github.io/charts
+
+# =============================================================================
+# POSTGRESQL CONFIGURATION
+# =============================================================================
+postgres:
+  clusterName: p8-postgres
+  instances: 1  # Single instance for initial deployment
+  database: p8db
+  owner: p8user
+  storageClass: ""  # Use cluster default
+  storageSize: 20Gi
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: "1000m"
+    limits:
+      memory: 4Gi
+      cpu: "2000m"
+  backupEnabled: false  # No S3 on Hetzner yet
+
+# =============================================================================
+# APPLICATION CONFIGURATION
+# =============================================================================
+application:
+  imageRegistry: percolationlabs
+  imagePullPolicy: Always
+  api:
+    replicas: 1
+    image: percolationlabs/p8
+    tag: latest
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 2Gi
+        cpu: 2000m
+
+# =============================================================================
+# INGRESS CONFIGURATION — Hetzner nginx + cert-manager
+# =============================================================================
+ingress:
+  enabled: true
+  domain: api.percolationlabs.ai
+  className: nginx
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+    secretName: p8-api-tls

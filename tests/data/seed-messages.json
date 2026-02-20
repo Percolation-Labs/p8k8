@@ -1,0 +1,50 @@
+[
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "user",
+    "content": "Let's plan the Q1 roadmap for Project Aurora. We need to prioritize the API redesign and the new dashboard.",
+    "token_count": 45
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "assistant",
+    "content": "I'll help with the Q1 roadmap for Project Aurora. Here's what I suggest we prioritize:\n\n1. **API Redesign** (Weeks 1-4): Migrate from REST to GraphQL for the core endpoints. This unblocks the mobile team.\n2. **Dashboard v2** (Weeks 3-8): New analytics dashboard with real-time metrics. Depends on the new API.\n3. **Auth Overhaul** (Weeks 5-8): Move to OAuth 2.1 with PKCE. Can run parallel to dashboard work.\n\nShall I break these down into epics?",
+    "token_count": 120
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "user",
+    "content": "Yes, break down the API redesign epic. What are the key milestones?",
+    "token_count": 30
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "assistant",
+    "content": "Here's the API Redesign epic breakdown:\n\n**Epic: API Redesign (REST → GraphQL)**\n\nMilestone 1 — Schema Design (Week 1)\n- Define GraphQL schema for Users, Projects, and Tasks\n- Set up Apollo Server with TypeScript\n- Create resolver stubs\n\nMilestone 2 — Core Resolvers (Week 2)\n- Implement CRUD resolvers for all entities\n- Add DataLoader for N+1 query prevention\n- Wire up to existing PostgreSQL via Prisma\n\nMilestone 3 — Auth & Subscriptions (Week 3)\n- JWT validation middleware\n- Real-time subscriptions for task updates\n- Rate limiting per user\n\nMilestone 4 — Migration & Cutover (Week 4)\n- Dual-run REST + GraphQL\n- Client SDK generation\n- Deprecation notices on REST endpoints\n\nThe mobile team can start integrating after Milestone 2.",
+    "token_count": 180
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "user",
+    "content": "Good plan. What about testing strategy for the migration?",
+    "token_count": 20
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "assistant",
+    "content": "For the REST-to-GraphQL migration testing:\n\n1. **Contract tests**: Compare REST and GraphQL responses for identical queries — ensure parity.\n2. **Load testing**: Run k6 against both endpoints. GraphQL should reduce total requests by ~40% due to batching.\n3. **Shadow traffic**: Mirror 10% of production REST traffic to GraphQL and diff responses.\n4. **Integration suite**: Cypress E2E tests updated to use GraphQL client.\n5. **Rollback plan**: Feature flag to switch clients back to REST within 5 minutes.\n\nI recommend running shadow traffic for at least 1 week before cutover.",
+    "token_count": 130
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "user",
+    "content": "Let's also discuss the team allocation. We have 6 engineers.",
+    "token_count": 25
+  },
+  {
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "message_type": "assistant",
+    "content": "With 6 engineers, here's my suggested allocation:\n\n**API Redesign (3 engineers, Weeks 1-4)**\n- Senior backend eng: Schema design + complex resolvers\n- Mid backend eng: CRUD resolvers + DataLoader\n- Full-stack eng: Client SDK + migration tooling\n\n**Dashboard v2 (2 engineers, Weeks 3-8)**\n- Senior frontend eng: Component architecture + real-time charts\n- Mid frontend eng: Data visualization + responsive layout\n\n**Auth Overhaul (1 engineer, Weeks 5-8)**\n- Security eng: OAuth 2.1 implementation + token rotation\n\nThe full-stack eng transitions from API to Dashboard in Week 5 to help with API integration. This gives us overlap coverage.",
+    "token_count": 150
+  }
+]

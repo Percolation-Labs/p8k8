@@ -1,0 +1,24 @@
+# PostgreSQL init scripts — loaded from sql/ directory
+# Generate this ConfigMap from the SQL files:
+#   kubectl create configmap p8-postgres-init-sql \
+#     --from-file=install_entities.sql=sql/install_entities.sql \
+#     --from-file=install.sql=sql/install.sql \
+#     -n p8 --dry-run=client -o yaml > this-file.yaml
+#
+# Or use kustomize configMapGenerator (preferred — see overlays)
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: p8-postgres-init-sql
+  namespace: p8
+data:
+  # Placeholder — actual SQL content should be generated from sql/ directory
+  # Use: kubectl create configmap p8-postgres-init-sql --from-file=... --dry-run=client -o yaml
+  install_entities.sql: |
+    -- Generated from sql/install_entities.sql
+    -- Run: kubectl create configmap p8-postgres-init-sql --from-file=install_entities.sql=sql/install_entities.sql --from-file=install.sql=sql/install.sql -n p8
+
+  install.sql: |
+    -- Generated from sql/install.sql
+    -- Run: kubectl create configmap p8-postgres-init-sql --from-file=install_entities.sql=sql/install_entities.sql --from-file=install.sql=sql/install.sql -n p8

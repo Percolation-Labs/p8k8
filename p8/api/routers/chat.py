@@ -1,0 +1,248 @@
+"""POST /chat/{chat_id} — streaming chat with AG-UI protocol.
+
+Uses pydantic-ai's AGUIAdapter Option 2 (``run_stream`` + ``streaming_response``)
+with a multiplexer that interleaves child agent events from the ContextVar
+event sink queue. This enables real-time token-by-token streaming of child
+agent content during delegation via ``ask_agent``.
+
+Event flow::
+
+    Client ←SSE— StreamingResponse ← merged_event_stream()
+                                        ├── adapter.run_stream()  → AG-UI events (parent)
+                                        └── child_event_sink      → CustomEvent (child)
+                                            via asyncio.wait(FIRST_COMPLETED)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+from starlette.responses import Response
+
+from ag_ui.core.events import CustomEvent
+
+from p8.agentic.delegate import set_child_event_sink
+from p8.api.controllers.chat import ChatController
+from p8.api.deps import get_db, get_encryption
+from p8.services.database import Database
+from p8.services.encryption import EncryptionService
+
+router = APIRouter()
+
+
+def _extract_user_prompt(body: dict) -> str:
+    """Extract the last user message content from AG-UI request body."""
+    for msg in reversed(body.get("messages", [])):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                return " ".join(
+                    p.get("text", "") for p in content if p.get("type") == "text"
+                )
+            return content
+    return ""
+
+
+async def _get_child_event_with_timeout(
+    queue: asyncio.Queue,
+    timeout: float = 0.05,
+) -> dict | None:
+    """Read from the child event queue with a short timeout.
+
+    Returns None on timeout (no child event available).
+    """
+    try:
+        return await asyncio.wait_for(queue.get(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return None
+
+
+def _child_event_to_agui(event: dict) -> CustomEvent:
+    """Convert a child event dict to an AG-UI CustomEvent."""
+    return CustomEvent(
+        name=event.get("type", "child_content"),
+        value=event,
+    )
+
+
+async def _merged_event_stream(
+    agui_stream: AsyncIterator,
+    child_sink: asyncio.Queue,
+) -> AsyncIterator:
+    """Multiplex the parent's AG-UI event stream with child events.
+
+    Uses ``asyncio.wait(FIRST_COMPLETED)`` to race the next parent AG-UI
+    event against the next child event from the queue. Whichever arrives
+    first is yielded immediately, enabling real-time interleaving of
+    child agent content tokens during tool execution.
+
+    When the parent stream ends (StopAsyncIteration), drains any remaining
+    child events from the queue before returning.
+    """
+    parent_iter = agui_stream.__aiter__()
+    parent_done = False
+
+    # Start initial tasks
+    pending_parent = asyncio.ensure_future(_anext_or_sentinel(parent_iter))
+    pending_child = asyncio.ensure_future(
+        _get_child_event_with_timeout(child_sink, timeout=0.05)
+    )
+
+    while not parent_done:
+        # Race parent event vs child event
+        done, _ = await asyncio.wait(
+            {pending_parent, pending_child},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in done:
+            if task is pending_parent:
+                result = task.result()
+                if result is _SENTINEL:
+                    parent_done = True
+                else:
+                    yield result
+                    # Schedule next parent event
+                    pending_parent = asyncio.ensure_future(
+                        _anext_or_sentinel(parent_iter)
+                    )
+
+            elif task is pending_child:
+                child_event = task.result()
+                if child_event is not None:
+                    yield _child_event_to_agui(child_event)
+                # Schedule next child event (always, even on timeout)
+                pending_child = asyncio.ensure_future(
+                    _get_child_event_with_timeout(child_sink, timeout=0.05)
+                )
+
+    # Cancel pending child task
+    pending_child.cancel()
+    try:
+        await pending_child
+    except (asyncio.CancelledError, Exception):
+        pass
+
+    # Drain remaining child events
+    while True:
+        try:
+            event = child_sink.get_nowait()
+            yield _child_event_to_agui(event)
+        except asyncio.QueueEmpty:
+            break
+
+
+_SENTINEL = object()
+
+
+async def _anext_or_sentinel(aiter):
+    """Get next item from async iterator, returning _SENTINEL on StopAsyncIteration."""
+    try:
+        return await aiter.__anext__()
+    except StopAsyncIteration:
+        return _SENTINEL
+
+
+@router.post("/{chat_id}")
+async def chat(
+    chat_id: str,
+    request: Request,
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+) -> Response:
+    """Streaming chat endpoint with AG-UI protocol.
+
+    Uses AGUIAdapter Option 2 (``run_stream`` + ``streaming_response``)
+    with a multiplexer for real-time child agent streaming.
+
+    Headers:
+        x-agent-schema-name: Agent schema name (required)
+        x-user-id: User identity (optional)
+        x-user-email: User email (optional)
+        x-user-name: User display name (optional)
+        x-session-name: Session display name — upserted on create or update (optional)
+        x-session-type: Session mode (chat|workflow|eval) — upserted on create or update (optional)
+
+    Body: AG-UI RunAgentInput (thread_id, run_id, messages, tools, context, state)
+    """
+    agent_name = request.headers.get("x-agent-schema-name")
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="x-agent-schema-name header is required")
+
+    raw_user_id = request.headers.get("x-user-id")
+    user_id = UUID(raw_user_id) if raw_user_id else None
+    user_email = request.headers.get("x-user-email")
+    user_name = request.headers.get("x-user-name")
+    session_name = request.headers.get("x-session-name")
+    session_type = request.headers.get("x-session-type")
+
+    controller = ChatController(db, encryption)
+
+    try:
+        ctx = await controller.prepare(
+            agent_name,
+            session_id=UUID(chat_id) if chat_id else None,
+            user_id=user_id,
+            user_email=user_email,
+            user_name=user_name,
+            session_name=session_name,
+            session_type=session_type,
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Parse body before AG-UI consumes the request stream
+    raw_body = await request.body()
+    body = json.loads(raw_body)
+    user_prompt = _extract_user_prompt(body)
+
+    # Create child event sink for delegation streaming
+    child_sink: asyncio.Queue = asyncio.Queue()
+    previous_sink = set_child_event_sink(child_sink)
+
+    async def on_complete(result):
+        """Persist messages after streaming completes."""
+        try:
+            assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
+            all_messages = None
+            if hasattr(result, "all_messages"):
+                all_messages = result.all_messages()
+            elif hasattr(result, "_all_messages"):
+                all_messages = result._all_messages
+
+            await controller.persist_turn(
+                ctx,
+                user_prompt,
+                assistant_text,
+                user_id=user_id,
+                all_messages=all_messages,
+            )
+        except Exception:
+            pass  # Don't fail the response if persistence fails
+        finally:
+            # Restore previous event sink
+            set_child_event_sink(previous_sink)
+
+    try:
+        # Option 2: build adapter, run_stream, wrap with multiplexer
+        adapter = await AGUIAdapter.from_request(request, agent=ctx.agent)
+
+        agui_stream = adapter.run_stream(
+            message_history=ctx.message_history or None,
+            on_complete=on_complete,
+            instructions=ctx.injector.instructions,
+        )
+
+        # Wrap with multiplexer to interleave child events
+        merged_stream = _merged_event_stream(agui_stream, child_sink)
+
+        return adapter.streaming_response(merged_stream)
+    except Exception:
+        # Clean up event sink on error
+        set_child_event_sink(previous_sink)
+        raise
