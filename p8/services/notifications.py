@@ -1,396 +1,87 @@
 """Push notification relay — APNs (iOS) + FCM (Android).
 
 ===============================================================================
-CONFIGURATION GUIDE
+SETUP & ARCHITECTURE
 ===============================================================================
 
-
-1. OVERVIEW — HOW IT ALL FITS TOGETHER
----------------------------------------
-
-Device tokens live on the User record in a `devices` JSONB array. No
-separate tables. The flow is:
-
-    Mobile app                      p8 API                    Apple/Google
-    ──────────                      ──────                    ────────────
-    1. Login (OAuth/magic link) ──→ issue JWT
-    2. Request push permission
-       from OS (APNs/FCM SDK)
-    3. OS returns device token
-    4. PATCH /auth/me ────────────→ save token to user.devices
-       {"devices": [...]}
-                                              ...later...
-    5.                              pg_cron fires ──→ POST /notifications/send
-                                    reads user.devices
-                                    ──→ POST to APNs HTTP/2 ──→ Apple
-                                    ──→ POST to FCM v1 ───────→ Google
-    6. Push arrives on device
-
-The service auto-deactivates tokens when Apple returns 410 (Gone) or
-Google returns UNREGISTERED — sets {"active": false} on that device entry
-so future sends skip it.
-
-
-2. APPLE APNs SETUP (iOS)
---------------------------
-
-APNs reuses the same .p8 key you already have for Sign In with Apple.
-If you set up Apple Sign In, you already have everything — just add the
-bundle ID and make sure the key has push entitlements.
-
-Step-by-step:
-
-  a) Apple Developer portal → Certificates, Identifiers & Profiles → Keys
-     - You should already have a key for Sign In with Apple
-     - Click on it → confirm "Apple Push Notifications service (APNs)" is
-       checked. If not, enable it and download the new .p8 file.
-     - Note the Key ID (10-char alphanumeric, e.g. ABC123DEFG)
-
-  b) Note your Team ID — visible top-right of the portal, or in
-     Membership → Team ID (10-char, e.g. TEAM123456)
-
-  c) Note your app's Bundle ID — in Identifiers → App IDs, e.g.
-     com.percolationlabs.p8
-
-  d) Add to .env:
-
-       # Shared with Apple Sign In (you likely have these already):
-       P8_APPLE_KEY_ID=ABC123DEFG
-       P8_APPLE_TEAM_ID=TEAM123456
-       P8_APPLE_PRIVATE_KEY_PATH=./AuthKey_ABC123DEFG.p8
-
-       # New for push notifications:
-       P8_APNS_BUNDLE_ID=com.percolationlabs.p8
-       P8_APNS_ENVIRONMENT=production
-
-  e) That's it. The service constructs an ES256 "provider token" JWT
-     signed with the .p8 key and sends it in the authorization header
-     of every APNs request. The JWT is cached for 58 minutes (Apple
-     allows up to 60).
-
-Environment notes:
-  - Use "sandbox" during development / TestFlight
-  - Use "production" for App Store builds
-  - The endpoints are different:
-      sandbox:    https://api.sandbox.push.apple.com/3/device/{token}
-      production: https://api.push.apple.com/3/device/{token}
-
-APNs requires HTTP/2 — that's why pyproject.toml specifies httpx[http2].
-The h2 library is pulled in automatically.
-
-APNs payload format sent by this service:
-
-    {
-        "aps": {
-            "alert": {"title": "...", "body": "..."},
-            "sound": "default"
-        },
-        ...extra data keys merged at top level...
-    }
-
-Common APNs error codes:
-  - 200         → delivered successfully
-  - 400         → bad request (malformed payload, missing headers)
-  - 403         → wrong key/team/bundle combination
-  - 410         → device token is no longer valid (auto-deactivated)
-  - 429         → too many requests to this device
-
-
-3. GOOGLE FCM v1 SETUP (Android)
----------------------------------
-
-FCM v1 uses a Google service account for OAuth2 authentication. This is
-separate from any Google OAuth client you have for Sign In with Google.
-
-Step-by-step:
-
-  a) Firebase Console (https://console.firebase.google.com)
-     - Select your project (or create one)
-     - Project Settings → General → note "Project ID" (e.g. my-app-12345)
-
-  b) Project Settings → Service accounts
-     - Click "Generate new private key"
-     - This downloads a JSON file like:
-
-         {
-           "type": "service_account",
-           "project_id": "my-app-12345",
-           "private_key_id": "...",
-           "private_key": "-----BEGIN RSA PRIVATE KEY-----\n...",
-           "client_email": "firebase-adminsdk-xxxxx@my-app-12345.iam.gserviceaccount.com",
-           "client_id": "...",
-           ...
-         }
-
-     - Save this file securely (e.g. ./firebase-sa.json)
-     - NEVER commit it to git — add to .gitignore
-
-  c) Enable the FCM API:
-     - Google Cloud Console → APIs & Services → Library
-     - Search "Firebase Cloud Messaging API" (the v1 one, NOT legacy)
-     - Click Enable
-
-  d) Add to .env:
-
-       P8_FCM_PROJECT_ID=my-app-12345
-       P8_FCM_SERVICE_ACCOUNT_FILE=./firebase-sa.json
-
-  e) Done. The service loads the JSON once, obtains an OAuth2 access
-     token scoped to firebase.messaging, and auto-refreshes it when
-     expired (via google-auth library).
-
-FCM v1 message format sent by this service:
-
-    POST https://fcm.googleapis.com/v1/projects/{project_id}/messages:send
-
-    {
-        "message": {
-            "token": "device-registration-token",
-            "notification": {"title": "...", "body": "..."},
-            "data": {"key": "value"}   ← optional, values must be strings
-        }
-    }
-
-Common FCM error codes:
-  - 200             → delivered to FCM (not necessarily to device)
-  - 400             → invalid argument (bad token format, missing fields)
-  - 401             → OAuth token invalid or expired (auto-retried)
-  - 404             → UNREGISTERED — token no longer valid (auto-deactivated)
-  - 429             → quota exceeded (FCM has per-project rate limits)
-
-
-4. DEVICE REGISTRATION — MOBILE APP FLOW
-------------------------------------------
-
-After the user logs in and the OS grants a push token, the app registers
-it with p8 via PATCH /auth/me. The `devices` field is a JSON array:
-
-    PATCH /auth/me
-    Authorization: Bearer <user-jwt>
-    Content-Type: application/json
-
-    {
-        "devices": [
-            {
-                "platform": "apns",
-                "token": "a1b2c3d4e5f6...hex-encoded-64-bytes",
-                "device_name": "Cia's iPhone 15 Pro",
-                "bundle_id": "com.percolationlabs.p8",
-                "app_version": "1.2.0",
-                "active": true
-            }
-        ]
-    }
-
-Device dict fields:
-
-    platform     — "apns" or "fcm" (required)
-    token        — the raw token string from the OS push SDK (required)
-                   APNs: 64-char hex string from didRegisterForRemoteNotifications
-                   FCM:  ~150-char string from FirebaseMessaging.getInstance().token
-    device_name  — human label, e.g. "iPhone 15 Pro" (optional)
-    bundle_id    — iOS bundle ID, useful if you have multiple apps (optional)
-    app_version  — for filtering sends to specific versions (optional)
-    active       — defaults to true; set false to pause notifications (optional)
-
-Multiple devices per user are supported (e.g. iPhone + iPad + Android).
-The app should send ALL its active tokens in each PATCH — this is a
-full replacement of the devices array, not a merge. To add a second
-device, read current devices first and append.
-
-iOS (Swift) example:
-
-    func application(_ app: UIApplication,
-                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
-        // PATCH /auth/me with {"devices": [{"platform": "apns", "token": token, ...}]}
-    }
-
-Android (Kotlin) example:
-
-    FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-        // PATCH /auth/me with {"devices": [{"platform": "fcm", "token": token, ...}]}
-    }
-
-
-5. SENDING NOTIFICATIONS — API
---------------------------------
-
-Send to one or more users:
-
-    POST /notifications/send
-    Authorization: Bearer <api-key-or-jwt>
-    Content-Type: application/json
-
-    {
-        "user_ids": ["550e8400-e29b-41d4-a716-446655440000"],
-        "title": "New message",
-        "body": "You have a new message from Alice",
-        "data": {"screen": "chat", "session_id": "abc123"}
-    }
-
-The `data` dict is delivered as the notification payload — your app can
-read it to deep-link or navigate on tap. For APNs, data keys are merged
-into the top-level payload alongside "aps". For FCM, they go into the
-"data" field (values are stringified automatically).
-
-Response:
-
-    {
-        "results": [
-            {"token": "a1b2...", "platform": "apns", "status": "delivered", "apns_id": "..."},
-            {"token": "x9y8...", "platform": "fcm", "status": "delivered", "fcm_message_id": "..."},
-            {"token": "dead...", "platform": "apns", "status": "error", "deactivated": true, ...}
-        ]
-    }
-
-
-6. pg_cron + pg_net — SCHEDULED NOTIFICATIONS FROM POSTGRES
--------------------------------------------------------------
-
-pg_cron and pg_net are Postgres extensions that let you schedule HTTP
-calls directly from SQL. This is how you trigger notifications without
-an external scheduler — the database IS the scheduler.
-
-Prerequisites:
-  - pg_cron and pg_net extensions installed (CloudNativePG supports both)
-  - The API must be reachable from the Postgres pod
-  - An API key set so pg_net can authenticate
-
-a) Install extensions (add to install.sql or run manually):
-
-    CREATE EXTENSION IF NOT EXISTS pg_cron;
-    CREATE EXTENSION IF NOT EXISTS pg_net;
-
-b) Store the API key as a Postgres GUC so SQL jobs can reference it:
-
-    ALTER DATABASE p8 SET p8.api_key = 'your-P8_API_KEY-value';
-
-   (Persists across restarts. The job reads it via current_setting().)
-
-c) Example: Daily digest at 9 AM UTC to all opted-in users
-
-    SELECT cron.schedule('daily-digest', '0 9 * * *', $$
-        SELECT net.http_post(
-            url := 'http://p8-api.p8.svc:8000/notifications/send',
-            headers := jsonb_build_object(
-                'Authorization', 'Bearer ' || current_setting('p8.api_key'),
-                'Content-Type', 'application/json'
-            ),
-            body := jsonb_build_object(
-                'user_ids', (
-                    SELECT jsonb_agg(id::text)
-                    FROM users
-                    WHERE deleted_at IS NULL
-                      AND metadata->>'digest_enabled' = 'true'
-                      AND devices != '[]'::jsonb
-                ),
-                'title', 'Your Daily Digest',
-                'body', 'Here is what happened yesterday...'
-            )
-        );
-    $$);
-
-d) Example: Reminder 5 minutes after a moment is created (one-shot)
-
-    -- Call this from a trigger or application code:
-    SELECT cron.schedule(
-        'reminder-' || NEW.id::text,
-        (EXTRACT(EPOCH FROM NEW.starts_timestamp + interval '5 minutes'))::text,
-        format($$
-            SELECT net.http_post(
-                url := 'http://p8-api.p8.svc:8000/notifications/send',
-                headers := '{"Authorization": "Bearer %s", "Content-Type": "application/json"}'::jsonb,
-                body := '{"user_ids": ["%s"], "title": "Reminder", "body": "%s"}'::jsonb
-            );
-            SELECT cron.unschedule('reminder-%s');
-        $$, current_setting('p8.api_key'), NEW.user_id, NEW.name, NEW.id)
-    );
-
-e) Manage jobs:
-
-    SELECT * FROM cron.job;                    -- list all scheduled jobs
-    SELECT cron.unschedule('daily-digest');     -- remove a job
-    SELECT * FROM cron.job_run_details          -- check execution history
-        ORDER BY start_time DESC LIMIT 10;
-
-f) URL for the API inside the cluster:
-   - Same namespace: http://p8-api:8000/notifications/send
-   - Cross-namespace: http://p8-api.p8.svc:8000/notifications/send
-   - From outside: https://your-domain.com/notifications/send
-
-g) Cron schedule syntax (standard 5-field):
-   ┌───────── minute (0-59)
-   │ ┌─────── hour (0-23)
-   │ │ ┌───── day of month (1-31)
-   │ │ │ ┌─── month (1-12)
-   │ │ │ │ ┌─ day of week (0-6, 0=Sunday)
-   │ │ │ │ │
-   * * * * *
-
-   '0 9 * * *'      → every day at 09:00 UTC
-   '*/5 * * * *'    → every 5 minutes
-   '0 9 * * 1'      → every Monday at 09:00
-   '0 0 1 * *'      → first day of each month at midnight
-
-
-7. TESTING WITHOUT REAL CREDENTIALS
--------------------------------------
-
-If APNs/FCM credentials are not configured, the service returns
-{"status": "skipped", "error": "APNs not configured"} per device —
-it won't crash. This lets you test the full registration → send flow
-locally.
-
-    # Start with push env vars unset
-    p8 serve
-
-    # Register a fake device token
-    curl -X PATCH http://localhost:8000/auth/me \\
-      -H "Authorization: Bearer $JWT" \\
-      -H "Content-Type: application/json" \\
-      -d '{"devices": [{"platform": "apns", "token": "fake-token-123"}]}'
-
-    # Send (will return "skipped" per device, but exercises the full path)
-    curl -X POST http://localhost:8000/notifications/send \\
-      -H "Authorization: Bearer $P8_API_KEY" \\
-      -H "Content-Type: application/json" \\
-      -d '{"user_ids": ["<user-uuid>"], "title": "Test", "body": "Hello"}'
-
-    # Check the user's devices field
-    curl http://localhost:8000/auth/me -H "Authorization: Bearer $JWT"
-
-
-8. ENVIRONMENT VARIABLE SUMMARY
----------------------------------
-
-    # APNs (reuses Apple Sign In credentials):
-    P8_APPLE_KEY_ID=ABC123DEFG                 # from Apple Developer → Keys
-    P8_APPLE_TEAM_ID=TEAM123456                # from Apple Developer → Membership
-    P8_APPLE_PRIVATE_KEY_PATH=./AuthKey.p8     # downloaded .p8 key file
-    P8_APNS_BUNDLE_ID=com.percolationlabs.p8   # your iOS app bundle ID
-    P8_APNS_ENVIRONMENT=production             # "production" or "sandbox"
-
-    # FCM (separate service account):
-    P8_FCM_PROJECT_ID=my-firebase-project      # from Firebase Console
-    P8_FCM_SERVICE_ACCOUNT_FILE=./sa.json      # downloaded service account JSON
-
-    # API key (needed for pg_cron to call /notifications/send):
-    P8_API_KEY=your-secret-api-key
-
-Both platforms are optional and independent — you can configure just APNs,
-just FCM, or both. The service only attempts delivery for configured
-platforms. If neither is set, NotificationService is not initialized at
-all (the lifespan gate checks apns_bundle_id or fcm_project_id).
+Both APNs and FCM are free and unlimited.
+
+1. APNs (iOS)
+   We enabled "Apple Push Notifications service (APNs)" on the existing
+   Sign In with Apple key in Apple Developer Console. Same .p8 key, same
+   key ID, same team ID — no new credentials. Just added:
+
+       P8_APNS_BUNDLE_ID=ai.percolationlabs.remapp
+       P8_APNS_ENVIRONMENT=production          # sandbox for dev/TestFlight
+
+2. FCM (Android)
+   We enabled Firebase Cloud Messaging API on the existing Google Cloud
+   project, then downloaded a service account JSON from
+   IAM → Service Accounts → Keys → Create new key → JSON. Added:
+
+       P8_FCM_PROJECT_ID=percolate-452917
+       P8_FCM_SERVICE_ACCOUNT_FILE=/secrets/fcm/fcm-service-account.json
+
+   On K8s the JSON is mounted as a secret volume at /secrets/fcm/.
+
+3. Device registration
+   The Flutter app uses firebase_messaging to get push tokens from both
+   platforms. After login, it calls PATCH /auth/me with the token:
+
+       {"devices": [{"platform": "apns", "token": "...", "device_name": "..."}]}
+
+   Tokens are stored in User.devices JSONB. The app merges new tokens
+   with existing ones so multiple devices per user work.
+
+4. Sending & notification moments
+   POST /notifications/send reads user.devices and delivers to APNs/FCM.
+   Each send also creates a Moment with moment_type='notification' so
+   the notification appears in the user's feed.
+
+   Auto-deactivation: APNs 410 or FCM UNREGISTERED → token marked
+   {"active": false} on the user record.
+
+5. pg_cron scheduled sends
+   pg_cron + pg_net call POST /notifications/send on a schedule.
+   The API is network-locked inside the K8s cluster (ClusterIP service).
+
+       -- Store API key as Postgres GUC
+       ALTER DATABASE p8 SET p8.api_key = 'your-key';
+
+       -- Daily digest at 9 AM UTC
+       SELECT cron.schedule('daily-digest', '0 9 * * *', $$
+           SELECT net.http_post(
+               url := 'http://p8-api.p8.svc:8000/notifications/send',
+               headers := jsonb_build_object(
+                   'Authorization', 'Bearer ' || current_setting('p8.api_key'),
+                   'Content-Type', 'application/json'
+               ),
+               body := jsonb_build_object(
+                   'user_ids', (SELECT jsonb_agg(id::text) FROM users
+                                WHERE deleted_at IS NULL AND devices != '[]'::jsonb),
+                   'title', 'Your Daily Digest',
+                   'body', 'Here is what happened yesterday...'
+               )
+           );
+       $$);
+
+   Manage: SELECT * FROM cron.job; / SELECT cron.unschedule('daily-digest');
+
+6. App refresh
+   The Flutter app polls the feed every 60 seconds when in the foreground
+   so new notification moments appear without manual pull-to-refresh.
+   Push notifications also trigger an immediate refresh.
 
 ===============================================================================
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from uuid import UUID
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -415,6 +106,9 @@ class NotificationService:
 
     Device tokens live on User.devices (JSONB array). This service reads
     them directly — no separate device_tokens table.
+
+    Each send creates a Moment with moment_type='notification' so the
+    notification appears in the user's feed alongside other moments.
     """
 
     def __init__(self, db: Database, settings: Settings) -> None:
@@ -448,18 +142,27 @@ class NotificationService:
     ) -> list[dict]:
         """Send a push notification to all active devices for a user.
 
-        Reads devices from user.devices JSONB. Returns result per device.
-        Auto-deactivates tokens that return 410/UNREGISTERED.
+        Also creates a Moment with moment_type='notification' so the
+        notification appears in the user's feed.
+
+        Returns result per device. Auto-deactivates tokens on 410/UNREGISTERED.
         """
         row = await self._db.fetchrow(
-            "SELECT devices FROM users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT devices, tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL",
             user_id,
         )
-        if not row or not row["devices"]:
+        if not row:
             return []
 
-        import json
-        devices = json.loads(row["devices"]) if isinstance(row["devices"], str) else row["devices"]
+        # Create a notification moment in the user's feed
+        await self._create_notification_moment(user_id, title, body, data, row.get("tenant_id"))
+
+        devices = row["devices"] or []
+        if isinstance(devices, str):
+            devices = json.loads(devices)
+
+        if not devices:
+            return []
 
         results = []
         deactivated_tokens: list[str] = []
@@ -508,6 +211,36 @@ class NotificationService:
             await self._apns_client.aclose()
         if self._fcm_client:
             await self._fcm_client.aclose()
+
+    # ------------------------------------------------------------------
+    # Notification moments
+    # ------------------------------------------------------------------
+
+    async def _create_notification_moment(
+        self,
+        user_id: UUID,
+        title: str,
+        body: str,
+        data: dict | None,
+        tenant_id: str | None,
+    ) -> None:
+        """Create a Moment with moment_type='notification' so it shows in the feed."""
+        moment_id = uuid4()
+        now = datetime.now(timezone.utc)
+        await self._db.execute(
+            """
+            INSERT INTO moments (id, name, moment_type, summary, starts_timestamp,
+                                 ends_timestamp, user_id, tenant_id, metadata)
+            VALUES ($1, $2, 'notification', $3, $4, $4, $5, $6, $7)
+            """,
+            moment_id,
+            title,
+            body,
+            now,
+            user_id,
+            tenant_id,
+            json.dumps(data) if data else "{}",
+        )
 
     # ------------------------------------------------------------------
     # APNs transport
@@ -656,7 +389,6 @@ class NotificationService:
     async def _deactivate_tokens(self, user_id: UUID, tokens: list[str]) -> None:
         """Mark device tokens as inactive on the user record."""
         logger.info("Deactivating %d token(s) for user %s", len(tokens), user_id)
-        # Use jsonb_agg to rebuild the devices array with matching tokens deactivated
         await self._db.execute(
             """
             UPDATE users SET devices = (

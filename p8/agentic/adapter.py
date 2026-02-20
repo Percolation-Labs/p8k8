@@ -46,6 +46,7 @@ _REM_TOOLS = [
     {"name": "search", "server": "rem", "protocol": "mcp"},
     {"name": "action", "server": "rem", "protocol": "mcp"},
     {"name": "ask_agent", "server": "rem", "protocol": "mcp"},
+    {"name": "remind_me", "server": "rem", "protocol": "mcp"},
 ]
 _REM_RESOURCES = [{"uri": "user://profile/{user_id}", "name": "User Profile"}]
 
@@ -111,6 +112,10 @@ GENERAL_AGENT: dict[str, Any] = {
         "Emit structured events: `observation` (reasoning metadata) or `elicit` (clarification).\n\n"
         "### ask_agent\n"
         "Delegate to specialist agents for domain-specific tasks.\n\n"
+        "### remind_me\n"
+        "Create scheduled reminders that trigger push notifications.\n"
+        "Use a cron expression for recurring (e.g. `0 9 * * 1` for every Monday at 9am) "
+        "or an ISO datetime for one-time (e.g. `2025-03-01T09:00:00`).\n\n"
         "## Guidelines\n"
         "- Search before making claims about the user's data\n"
         "- When results are empty, try a broader query or different mode\n"

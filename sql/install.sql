@@ -1431,6 +1431,22 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- Reminder processor: pg_cron calls process-reminders endpoint every minute.
+-- Checks for due reminders and sends push notifications.
+-- Skipped when pg_net is not available (dev/test mode).
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
+        PERFORM cron.schedule('process-reminders', '*/1 * * * *',
+            'SELECT net.http_post(
+                url := ''http://localhost:8000/notifications/process-reminders'',
+                headers := ''{"Content-Type": "application/json"}''::jsonb,
+                body := ''{}''::jsonb
+            )');
+    ELSE
+        RAISE NOTICE 'pg_net not loaded — skipping process-reminders cron job';
+    END IF;
+END $$;
+
 -- Stale embedding retry: re-queue items stuck in 'processing' for > 5 minutes
 SELECT cron.schedule('embed-retry', '*/2 * * * *', $$
     UPDATE embedding_queue

@@ -18,6 +18,6 @@ spec:
       metadata:
         query: "SELECT COALESCE(COUNT(*), 0) FROM task_queue WHERE status = 'pending' AND tier = 'medium' AND scheduled_at <= CURRENT_TIMESTAMP"
         targetQueryValue: "1"
-        activationTargetQueryValue: "1"
+        activationTargetQueryValue: "0"
       authenticationRef:
         name: p8-keda-pg-auth
