@@ -104,10 +104,17 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: fcm-sa
+              mountPath: /secrets/fcm
+              readOnly: true
 
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: fcm-sa
+          secret:
+            secretName: p8-fcm-service-account
+            optional: true
 
       affinity:
         podAntiAffinity:

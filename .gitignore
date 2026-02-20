@@ -11,3 +11,5 @@ pgdata/
 .fs/
 recording-*.wav
 .claude/
+*-service-account.json
+*.p8
