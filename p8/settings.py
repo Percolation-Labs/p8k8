@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Encryption / KMS
     system_tenant_id: str = "__system__"
     kms_provider: str = "local"  # local | vault | aws
-    kms_local_keyfile: str = ".dev-master.key"
+    kms_local_keyfile: str = ".keys/.dev-master.key"
     kms_vault_url: str = "http://localhost:8200"
     kms_vault_token: str = ""
     kms_vault_transit_key: str = "p8-master"

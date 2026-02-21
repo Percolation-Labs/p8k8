@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 .env
-.dev-master.key
+.keys/
 .venv/
 dist/
 *.egg-info/
@@ -11,5 +11,4 @@ pgdata/
 .fs/
 recording-*.wav
 .claude/
-*-service-account.json
 *.p8

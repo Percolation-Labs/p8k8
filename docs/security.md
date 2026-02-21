@@ -225,7 +225,7 @@ P8_KMS_VAULT_TRANSIT_KEY=p8-master
 
 # Local dev (file)
 P8_KMS_PROVIDER=local
-P8_KMS_LOCAL_KEYFILE=.dev-master.key
+P8_KMS_LOCAL_KEYFILE=.keys/.dev-master.key
 
 # AWS
 P8_KMS_PROVIDER=aws
