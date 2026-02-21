@@ -125,12 +125,75 @@ GENERAL_AGENT: dict[str, Any] = {
     "json_schema": _agent_config(max_tokens=4000, request_limit=15, token_limit=80000),
 }
 
+_DREAMING_TOOLS = [
+    {"name": "search", "server": "rem", "protocol": "mcp"},
+    {"name": "save_moments", "server": "rem", "protocol": "mcp"},
+]
+
+DREAMING_AGENT: dict[str, Any] = {
+    "name": "dreaming-agent",
+    "kind": "agent",
+    "description": "Background reflective agent that generates dream moments from recent user activity.",
+    "content": (
+        "You are a reflective dreaming agent. You and the person share a collaborative "
+        "memory — you process recent conversations, moments, and resources together to "
+        "surface insights and connections.\n\n"
+        "## Voice\n\n"
+        "Write in first-person plural: \"We discovered…\", \"We've been exploring…\", "
+        "\"Our work on X connects to Y…\". Never say \"the user\" — this is a shared "
+        "journal between you and the person.\n\n"
+        "## Your Task\n\n"
+        "You receive a summary of recent shared activity (moments, messages, resources).\n\n"
+        "### Phase 1 — Reflect and draft dream moments\n"
+        "Look across sessions for patterns, themes, and connections we might not have "
+        "noticed in the moment.\n"
+        "Draft 1-3 dream moments. Each dream moment has:\n"
+        "- **name**: kebab-case identifier (e.g. `dream-ml-architecture-patterns`)\n"
+        "- **summary**: 2-4 sentences capturing the insight, written in our shared voice\n"
+        "- **topic_tags**: 3-5 relevant tags\n"
+        "- **emotion_tags**: 0-2 emotional tones detected\n"
+        "- **affinity_fragments**: links to entities from the context, each with:\n"
+        "  - `target`: entity key (moment or resource name from the context)\n"
+        "  - `relation`: relationship type (`thematic_link`, `builds_on`, `contrasts_with`, `elaborates`)\n"
+        "  - `weight`: 0.0-1.0 strength\n"
+        "  - `reason`: a short comment explaining why this connection matters\n\n"
+        "### Phase 2 — Semantic search for deeper connections\n"
+        "Propose 5 search questions based on the themes you found.\n"
+        "For each question, call `search` twice:\n"
+        "  - `SEARCH \"<question>\" FROM moments LIMIT 2`\n"
+        "  - `SEARCH \"<question>\" FROM resources LIMIT 2`\n\n"
+        "Add any newly discovered affinities to your dream moments.\n\n"
+        "### Phase 3 — Save\n"
+        "Call `save_moments` with your final collection of dream moments.\n"
+        "Pass the full list as the `moments` parameter.\n\n"
+        "## Guidelines\n"
+        "- Focus on cross-session themes and emerging patterns\n"
+        "- Surface connections we might not have noticed in the flow of conversation\n"
+        "- Keep summaries concise but insightful, always in our shared voice\n"
+        "- Every affinity_fragment must include a `reason` explaining the connection\n"
+        "- Only reference entities that appear in the provided context or search results\n"
+        "- Prefer depth over breadth: 1 insightful dream is better than 3 shallow ones\n"
+        "- You MUST call save_moments at the end to persist your work"
+    ),
+    "json_schema": {
+        "model_name": "openai:gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 4000,
+        "structured_output": False,
+        "tools": _DREAMING_TOOLS,
+        "limits": {"request_limit": 15, "total_tokens_limit": 115000},
+        "routing_enabled": False,
+        "observation_mode": "disabled",
+    },
+}
+
 DEFAULT_AGENT_NAME = "general"
 
 # Registry of code-defined agents. Auto-registered on first DB miss.
 BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
     "sample-agent": SAMPLE_AGENT,
     "general": GENERAL_AGENT,
+    "dreaming-agent": DREAMING_AGENT,
 }
 
 
@@ -475,7 +538,6 @@ class AgentAdapter:
         mcp_url: str | None = None,
         extra_tools: list | None = None,
         extra_toolsets: list | None = None,
-        debug_llm: bool = False,
     ) -> Agent:
         """Construct a pydantic-ai Agent from the schema."""
         model = model_override if model_override is not None else self._get_model_string()
@@ -490,6 +552,7 @@ class AgentAdapter:
         kwargs: dict[str, Any] = {
             "model": model,
             "system_prompt": self._get_system_prompt(),
+            "name": self.schema.name,
         }
         if ms := self._get_model_settings():
             kwargs["model_settings"] = ms
@@ -500,10 +563,12 @@ class AgentAdapter:
         if toolsets:
             kwargs["toolsets"] = toolsets
 
-        if debug_llm and model_override is None:
+        from p8.settings import Settings
+        s = Settings()
+        if s.otel_enabled:
             try:
                 from pydantic_ai.models.instrumented import InstrumentationSettings
-                kwargs["instrument"] = InstrumentationSettings(include_content=True)
+                kwargs["instrument"] = InstrumentationSettings(event_mode="logs")
             except ImportError:
                 pass
 
@@ -654,6 +719,11 @@ class AgentAdapter:
         all_messages: list[ModelMessage] | None = None,
         background_compaction: bool = True,
         moment_threshold: int = 6000,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        latency_ms: int | None = None,
+        model: str | None = None,
+        agent_name: str | None = None,
     ) -> None:
         """Persist a conversation turn via rem_persist_turn()."""
         pai_json: str | None = None
@@ -664,6 +734,8 @@ class AgentAdapter:
             session_id, user_prompt, assistant_text,
             user_id=user_id, tool_calls=tool_calls_data, pai_messages=pai_json,
             moment_threshold=moment_threshold if not background_compaction else 0,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            latency_ms=latency_ms, model=model, agent_name=agent_name,
         )
 
         if background_compaction:

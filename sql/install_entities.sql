@@ -149,6 +149,11 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls      JSONB,
     trace_id        VARCHAR(100),
     span_id         VARCHAR(100),
+    input_tokens    INT DEFAULT 0,
+    output_tokens   INT DEFAULT 0,
+    latency_ms      INT,
+    model           VARCHAR(100),
+    agent_name      VARCHAR(255),
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
@@ -568,6 +573,13 @@ CREATE TABLE IF NOT EXISTS schema_timemachine (
 -- ---------------------------------------------------------------------------
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS devices JSONB DEFAULT '[]'::jsonb;
+
+-- Usage metrics on messages (for cost/latency aggregation per agent/model)
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS input_tokens INT DEFAULT 0;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS output_tokens INT DEFAULT 0;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS latency_ms INT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS model VARCHAR(100);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_name VARCHAR(255);
 
 
 -- ---------------------------------------------------------------------------

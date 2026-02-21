@@ -84,7 +84,7 @@ class TestQueryCLI:
         mock.services[0].rem_query = AsyncMock(
             return_value=[{"entity_type": "schemas", "data": {"key": "test", "id": "abc"}}]
         )
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             result = runner.invoke(app, ["query", 'LOOKUP "test"'])
         assert result.exit_code == 0
         assert "test" in result.output
@@ -94,7 +94,7 @@ class TestQueryCLI:
         mock.services[0].rem_query = AsyncMock(
             return_value=[{"entity_type": "schemas", "similarity_score": 0.8, "data": {"key": "fuzzy-match"}}]
         )
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             result = runner.invoke(app, ["query", 'FUZZY "test"'])
         assert result.exit_code == 0
 
@@ -103,7 +103,7 @@ class TestQueryCLI:
         mock.services[0].rem_query = AsyncMock(
             return_value=[{"name": "agent-1"}, {"name": "agent-2"}]
         )
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             result = runner.invoke(app, ["query", "SELECT name FROM schemas LIMIT 3"])
         assert result.exit_code == 0
         assert "agent-1" in result.output
@@ -113,7 +113,7 @@ class TestQueryCLI:
         mock.services[0].rem_query = AsyncMock(
             return_value=[{"entity_type": "schemas", "data": {"key": "test-key", "type": "schemas"}}]
         )
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             result = runner.invoke(app, ["query", "--format", "table", 'LOOKUP "test"'])
         assert result.exit_code == 0
         assert "entity_type" in result.output
@@ -121,7 +121,7 @@ class TestQueryCLI:
     def test_query_error(self):
         mock = _MockAsyncServices()
         mock.services[0].rem_query = AsyncMock(side_effect=ValueError("Blocked SQL keyword: DROP"))
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             result = runner.invoke(app, ["query", "DROP TABLE schemas"])
         assert result.exit_code == 1
         assert "Error" in result.output
@@ -143,7 +143,7 @@ class TestUpsertCLI:
             return_value=BulkUpsertResult(count=1, table="schemas")
         )
 
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
                 json.dump(data, f)
                 f.flush()
@@ -162,7 +162,7 @@ class TestUpsertCLI:
             return_value=BulkUpsertResult(count=1, table="schemas")
         )
 
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
                 f.write(yaml_text)
                 f.flush()
@@ -179,7 +179,7 @@ class TestUpsertCLI:
             return_value=BulkUpsertResult(count=1, table="ontologies")
         )
 
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
                 f.write("# Architecture\n\nSome content here.")
                 f.flush()
@@ -203,7 +203,7 @@ class TestUpsertCLI:
                 return_value=BulkUpsertResult(count=2, table="ontologies")
             )
 
-            with patch("services.bootstrap.bootstrap_services", return_value=mock):
+            with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
                 result = runner.invoke(app, ["upsert", tmpdir])
         assert result.exit_code == 0
         assert "Upserted 2 rows into ontologies" in result.output
@@ -211,7 +211,7 @@ class TestUpsertCLI:
     def test_upsert_json_requires_table(self):
         """JSON/YAML without table arg should fail."""
         mock = _MockAsyncServices()
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
                 json.dump([{"name": "test"}], f)
                 f.flush()
@@ -233,7 +233,7 @@ class TestUpsertCLI:
                 file=mock_file, resources=[], chunk_count=2, total_chars=100
             )
         )
-        with patch("services.bootstrap.bootstrap_services", return_value=mock):
+        with patch("p8.services.bootstrap.bootstrap_services", return_value=mock):
             with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
                 f.write("# Test")
                 f.flush()
@@ -279,8 +279,8 @@ class TestChatCLI:
         mock_controller_cls.return_value = mock_controller
 
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.chat.ChatController", mock_controller_cls),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.chat.ChatController", mock_controller_cls),
         ):
             result = runner.invoke(app, ["chat"], input="hello\nexit\n")
         assert result.exit_code == 0
@@ -318,8 +318,8 @@ class TestChatCLI:
         mock_controller_cls.return_value = mock_controller
 
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.chat.ChatController", mock_controller_cls),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.chat.ChatController", mock_controller_cls),
         ):
             result = runner.invoke(app, ["chat", "--agent", "query-agent"], input="exit\n")
         assert result.exit_code == 0
@@ -334,8 +334,8 @@ class TestChatCLI:
         mock_controller_cls.return_value = mock_controller
 
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.chat.ChatController", mock_controller_cls),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.chat.ChatController", mock_controller_cls),
         ):
             result = runner.invoke(app, ["chat", "--agent", "nope"])
         assert result.exit_code == 1
@@ -376,8 +376,8 @@ class TestChatCLI:
         mock_controller_cls.return_value = mock_controller
 
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.chat.ChatController", mock_controller_cls),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.chat.ChatController", mock_controller_cls),
         ):
             result = runner.invoke(
                 app, ["chat", "--agent", "parent-agent"], input="delegate to child\nexit\n",

@@ -2,7 +2,7 @@
 
 p8k8 is a cloud native agentic framework with emphasis on building memory into AI systems. It leans heavily on Postgres to provide search, memory and other services and adds a declarative agent framework that wraps FastMCP and Pydantic-AI. It supports building custom ontologies and agent workflows through simple yaml and markdown documents.
 
-It includes a deployable K8s stack for either a Hetzner or AWS cluster.
+It includes a deployable K8s stack for either a Hetzner or AWS cloud.
 
 
 ## Quick Start (Local Dev)

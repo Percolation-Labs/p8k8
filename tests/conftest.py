@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Force test-safe settings before any module imports Settings()
 os.environ["P8_EMBEDDING_MODEL"] = "local"
 os.environ["P8_EMBEDDING_WORKER_ENABLED"] = "false"
+os.environ["P8_API_KEY"] = ""  # disable auth middleware in tests
+os.environ["P8_OTEL_ENABLED"] = "false"  # disable OTEL in tests
 
 from p8.ontology.base import deterministic_id  # noqa: E402
 from p8.services.database import Database  # noqa: E402

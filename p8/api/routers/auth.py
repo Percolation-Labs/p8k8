@@ -572,7 +572,8 @@ async def me(request: Request):
     """Return the authenticated user's profile."""
     current = await get_current_user(request)
     auth = request.app.state.auth
-    user = await auth.get_user(UUID(current.user_id), tenant_id=current.tenant_id)
+    uid = current.user_id if isinstance(current.user_id, UUID) else UUID(current.user_id)
+    user = await auth.get_user(uid, tenant_id=current.tenant_id)
     if not user:
         raise HTTPException(404, "User not found")
     return {
@@ -601,18 +602,36 @@ async def patch_me(request: Request, body: PatchUserRequest):
         {"devices": [{"platform": "apns", "token": "...", "device_name": "iPhone"}]}
     """
     current = await get_current_user(request)
-    auth = request.app.state.auth
-    user = await auth.get_user(UUID(current.user_id), tenant_id=current.tenant_id)
-    if not user:
+    uid = current.user_id if isinstance(current.user_id, UUID) else UUID(current.user_id)
+
+    # Build SQL SET clauses for non-None fields (direct SQL avoids encryption
+    # round-trip which can fail if the master key rotated between pod restarts).
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    db = request.app.state.db
+    import json as _json
+    set_clauses = []
+    params = [uid]  # $1 = user id
+    for i, (field, value) in enumerate(updates.items(), start=2):
+        if field == "devices":
+            set_clauses.append(f"{field} = ${i}::jsonb")
+            params.append(_json.dumps(value))
+        elif field == "interests":
+            set_clauses.append(f"{field} = ${i}::text[]")
+            params.append(value)
+        else:
+            set_clauses.append(f"{field} = ${i}")
+            params.append(value)
+    set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+    sql = f"UPDATE users SET {', '.join(set_clauses)} WHERE id = $1 AND deleted_at IS NULL RETURNING id, name, devices"
+    row = await db.fetchrow(sql, *params)
+    if not row:
         raise HTTPException(404, "User not found")
 
-    # Apply non-None fields from the patch body
-    updates = body.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(user, field, value)
-
-    [user] = await auth.users.upsert(user)
-    return {"user": user.model_dump(mode="json")}
+    return {"user": dict(row)}
 
 
 @router.post("/logout")

@@ -14,6 +14,7 @@ from p8.api.tools import get_db, get_encryption
 from p8.api.tools.action import action
 from p8.api.tools.ask_agent import ask_agent
 from p8.api.tools.remind_me import remind_me
+from p8.api.tools.save_moments import save_moments
 from p8.api.tools.search import search
 from p8.ontology.types import User
 from p8.services.repository import Repository
@@ -75,6 +76,7 @@ def create_mcp_server() -> FastMCP:
     mcp.tool(name="action")(action)
     mcp.tool(name="ask_agent")(ask_agent)
     mcp.tool(name="remind_me")(remind_me)
+    mcp.tool(name="save_moments")(save_moments)
 
     # Register resources
     mcp.resource("user://profile/{user_id}")(user_profile)

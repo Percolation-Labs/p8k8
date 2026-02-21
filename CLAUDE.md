@@ -97,6 +97,11 @@ Two deployment recipes exist for the p8 stack:
 
 **Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled file worker (2GB RAM) + optional dreaming CronJob.
 
+## Git Commits
+
+- NEVER add `Co-Authored-By` or any AI attribution lines to commit messages
+- Keep commit messages concise — summary line + optional body
+
 ## Deployment (Hetzner p8-w-1)
 
 ```bash

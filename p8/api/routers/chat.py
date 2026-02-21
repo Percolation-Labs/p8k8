@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -217,6 +218,8 @@ async def chat(
     child_sink: asyncio.Queue = asyncio.Queue()
     previous_sink = set_child_event_sink(child_sink)
 
+    stream_start = time.monotonic()
+
     async def on_complete(result):
         """Persist messages and track token usage after streaming completes."""
         try:
@@ -227,12 +230,25 @@ async def chat(
             elif hasattr(result, "_all_messages"):
                 all_messages = result._all_messages
 
+            # Extract usage from pydantic-ai result
+            usage = result.usage() if hasattr(result, "usage") else None
+            input_tokens = usage.input_tokens if usage and usage.input_tokens else 0
+            output_tokens = usage.output_tokens if usage and usage.output_tokens else 0
+            latency_ms = int((time.monotonic() - stream_start) * 1000)
+            model_name = ctx.adapter._get_model_string()
+            agent_name_val = ctx.adapter.schema.name
+
             await controller.persist_turn(
                 ctx,
                 user_prompt,
                 assistant_text,
                 user_id=user_id,
                 all_messages=all_messages,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                model=model_name,
+                agent_name=agent_name_val,
             )
 
             # Post-flight: increment chat token usage

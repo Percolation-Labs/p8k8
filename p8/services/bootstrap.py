@@ -86,37 +86,7 @@ async def bootstrap_services(*, include_embeddings: bool = False):
             db, provider, encryption, batch_size=settings.embedding_batch_size
         )
 
-    # Configure OTel console exporter when debug_llm is enabled
-    if settings.debug_llm:
-        _setup_debug_llm_tracing()
-
     try:
         yield db, encryption, settings, file_service, content_service, embedding_service, queue_service
     finally:
         await db.close()
-
-
-def _setup_debug_llm_tracing() -> None:
-    """Configure OpenTelemetry ConsoleSpanExporter for LLM request debugging.
-
-    When P8_DEBUG_LLM=true, this prints all OTel spans (including
-    pydantic-ai model requests) to stderr. Shows the full model input:
-    system prompt, instructions, messages, tools, and settings.
-    """
-    try:
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import (
-            ConsoleSpanExporter,
-            SimpleSpanProcessor,
-        )
-        from opentelemetry.trace import set_tracer_provider
-
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-        set_tracer_provider(provider)
-    except ImportError:
-        import logging
-        logging.getLogger(__name__).warning(
-            "P8_DEBUG_LLM=true but opentelemetry-sdk not installed. "
-            "Install with: uv add opentelemetry-sdk"
-        )

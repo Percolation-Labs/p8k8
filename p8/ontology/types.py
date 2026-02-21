@@ -168,6 +168,11 @@ class Message(CoreModel):
     tool_calls: dict | None = None
     trace_id: str | None = None
     span_id: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int | None = None
+    model: str | None = None
+    agent_name: str | None = None
 
 
 class Server(CoreModel):

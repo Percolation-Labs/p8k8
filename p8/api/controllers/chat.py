@@ -7,7 +7,6 @@ for agent resolution, session management, history loading, and persistence.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -162,9 +161,16 @@ class ChatController:
         *,
         user_id: UUID | None = None,
         all_messages: list[ModelMessage] | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        latency_ms: int | None = None,
+        model: str | None = None,
+        agent_name: str | None = None,
     ) -> None:
         """Persist a turn without running the agent (used by API streaming)."""
         await ctx.adapter.persist_turn(
             ctx.session_id, user_prompt, assistant_text,
             user_id=user_id, all_messages=all_messages,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            latency_ms=latency_ms, model=model, agent_name=agent_name,
         )

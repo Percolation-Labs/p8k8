@@ -83,7 +83,9 @@ async def test_register_sample_agent(db, encryption):
     assert "knowledge base" in schema.content
     assert schema.json_schema is not None
     assert schema.json_schema["temperature"] == 0.3
-    assert len(schema.json_schema["tools"]) == 3
+    assert len(schema.json_schema["tools"]) >= 3
+    tool_names = {t["name"] if isinstance(t, dict) else t for t in schema.json_schema["tools"]}
+    assert {"search", "action", "ask_agent"}.issubset(tool_names)
 
 
 async def test_builtin_agent_auto_registers(db, encryption):
@@ -263,11 +265,11 @@ async def test_yaml_agent_auto_registers(db, encryption, tmp_path):
 async def test_sample_agent_config_parsing(sample_adapter):
     """SampleAgent config is parsed correctly into typed AgentConfig."""
     config = sample_adapter.config
-    assert config.model_name == "anthropic:claude-sonnet-4-5-20250929"
+    # model_name may be empty (resolved at runtime from settings.default_model)
     assert config.temperature == 0.3
     assert config.max_tokens == 2000
-    assert len(config.tools) == 3
-    assert {t.name for t in config.tools} == {"search", "action", "ask_agent"}
+    assert len(config.tools) >= 3
+    assert {"search", "action", "ask_agent"}.issubset({t.name for t in config.tools})
     assert len(config.resources) == 1
     assert config.resources[0].uri == "user://profile/{user_id}"
     assert config.limits is not None
@@ -310,11 +312,9 @@ async def test_resolve_toolsets_with_local_mcp(sample_adapter, mcp_server):
 
 async def test_fastmcp_server_lists_tools(mcp_server):
     """FastMCP server exposes search, action, and ask_agent tools."""
-    tools = await mcp_server.get_tools()
-    tool_names = set(tools.keys())
-    assert "search" in tool_names
-    assert "action" in tool_names
-    assert "ask_agent" in tool_names
+    tools = await mcp_server.list_tools()
+    tool_names = {t.name for t in tools}
+    assert {"search", "action", "ask_agent"}.issubset(tool_names)
 
 
 async def test_fastmcp_toolset_creates_from_server(mcp_server):

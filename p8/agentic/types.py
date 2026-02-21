@@ -443,6 +443,12 @@ class MetadataEvent(BaseModel):
     confidence: float | None = None
     sources: list[str] | None = None
     extra: dict[str, Any] | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
+    model: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 class ProgressEvent(BaseModel):

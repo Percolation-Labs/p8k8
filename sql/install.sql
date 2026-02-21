@@ -614,6 +614,7 @@ $$ LANGUAGE sql;
 -- Drop old signatures if return type changed (safe — CREATE OR REPLACE follows)
 DROP FUNCTION IF EXISTS rem_build_moment(UUID, VARCHAR, UUID, INT);
 DROP FUNCTION IF EXISTS rem_persist_turn(UUID, TEXT, TEXT, UUID, VARCHAR, JSONB, JSONB, INT);
+DROP FUNCTION IF EXISTS rem_persist_turn(UUID, TEXT, TEXT, UUID, VARCHAR, JSONB, JSONB, INT, INT, INT, INT, VARCHAR, VARCHAR);
 
 -- rem_build_moment — atomically build a session_chunk moment from messages
 -- since the last moment.  Optionally checks a token threshold first (set
@@ -808,7 +809,12 @@ CREATE OR REPLACE FUNCTION rem_persist_turn(
     p_tenant_id        VARCHAR DEFAULT NULL,
     p_tool_calls       JSONB   DEFAULT NULL,
     p_pai_messages     JSONB   DEFAULT NULL,
-    p_moment_threshold INT     DEFAULT 0
+    p_moment_threshold INT     DEFAULT 0,
+    p_input_tokens     INT     DEFAULT 0,
+    p_output_tokens    INT     DEFAULT 0,
+    p_latency_ms       INT     DEFAULT NULL,
+    p_model            VARCHAR DEFAULT NULL,
+    p_agent_name       VARCHAR DEFAULT NULL
 ) RETURNS TABLE(
     user_message_id      UUID,
     assistant_message_id UUID,
@@ -833,9 +839,13 @@ BEGIN
     VALUES (p_session_id, 'user', p_user_content, v_user_tokens, p_tenant_id, p_user_id)
     RETURNING id INTO v_user_msg_id;
 
-    -- 2. Insert assistant message
-    INSERT INTO messages (session_id, message_type, content, token_count, tool_calls, tenant_id, user_id)
-    VALUES (p_session_id, 'assistant', p_assistant_content, v_asst_tokens, p_tool_calls, p_tenant_id, p_user_id)
+    -- 2. Insert assistant message (with usage metrics)
+    INSERT INTO messages (session_id, message_type, content, token_count, tool_calls,
+                          input_tokens, output_tokens, latency_ms, model, agent_name,
+                          tenant_id, user_id)
+    VALUES (p_session_id, 'assistant', p_assistant_content, v_asst_tokens, p_tool_calls,
+            p_input_tokens, p_output_tokens, p_latency_ms, p_model, p_agent_name,
+            p_tenant_id, p_user_id)
     RETURNING id INTO v_asst_msg_id;
 
     -- 3. Update session token total
@@ -907,6 +917,7 @@ BEGIN
     )
     INSERT INTO messages (id, session_id, message_type, content, token_count,
                           tool_calls, trace_id, span_id,
+                          input_tokens, output_tokens, latency_ms, model, agent_name,
                           tenant_id, user_id, graph_edges, metadata, tags)
     SELECT uuid_generate_v4(),
            v_new_id,
@@ -916,6 +927,11 @@ BEGIN
            r.tool_calls,
            r.trace_id,
            r.span_id,
+           r.input_tokens,
+           r.output_tokens,
+           r.latency_ms,
+           r.model,
+           r.agent_name,
            r.tenant_id,
            COALESCE(p_new_user_id, r.user_id),
            r.graph_edges,

@@ -138,7 +138,7 @@ class TestIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -189,7 +189,7 @@ class TestIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -233,7 +233,7 @@ class TestIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -273,7 +273,7 @@ class TestIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -316,7 +316,7 @@ class TestIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -376,7 +376,7 @@ class TestUpsertMarkdown:
 
         mock_ontology = Ontology(name="arch", content="# Architecture\n\nContent here.")
 
-        with patch("services.content.Repository") as MockRepo:
+        with patch("p8.services.content.Repository") as MockRepo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(return_value=[mock_ontology])
             MockRepo.return_value = mock_repo_instance
@@ -402,7 +402,7 @@ class TestUpsertStructured:
 
         mock_schema = Schema(name="test", kind="agent")
 
-        with patch("services.content.Repository") as MockRepo:
+        with patch("p8.services.content.Repository") as MockRepo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(return_value=[mock_schema])
             MockRepo.return_value = mock_repo_instance
@@ -428,7 +428,7 @@ class TestUpsertStructured:
             captured.extend(entities)
             return entities
 
-        with patch("services.content.Repository") as MockRepo:
+        with patch("p8.services.content.Repository") as MockRepo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
@@ -511,7 +511,7 @@ class TestAudioIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=rechunk_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -575,7 +575,7 @@ class TestAudioIngest:
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=rechunk_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
-            patch("services.content.Repository") as MockRepo,
+            patch("p8.services.content.Repository") as MockRepo,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
@@ -609,7 +609,7 @@ class TestAudioIngest:
                 return [mock_session]
             return [mock_file]
 
-        with patch("services.content.Repository") as MockRepo:
+        with patch("p8.services.content.Repository") as MockRepo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
@@ -648,7 +648,7 @@ class TestImageIngest:
                 return [mock_session]
             return [mock_file]
 
-        with patch("services.content.Repository") as MockRepo:
+        with patch("p8.services.content.Repository") as MockRepo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance

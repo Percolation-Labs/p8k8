@@ -43,12 +43,12 @@ def _agui_body(user_message: str = "Hello") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_chat_requires_agent_header(client):
-    """POST /chat/{id} without x-agent-schema-name returns 400."""
+def test_chat_defaults_agent_when_no_header(client):
+    """POST /chat/{id} without x-agent-schema-name uses the default agent."""
     chat_id = str(uuid4())
     resp = client.post(f"/chat/{chat_id}", json=_agui_body())
-    assert resp.status_code == 400
-    assert "x-agent-schema-name" in resp.json()["detail"]
+    # Should succeed with the default agent (not return 400)
+    assert resp.status_code == 200
 
 
 def test_chat_unknown_agent_returns_404(client):
@@ -147,7 +147,9 @@ async def test_build_agent_defaults(db, encryption):
 
     adapter = await AgentAdapter.from_schema_name("defaults-agent", db, encryption)
     assert adapter._get_system_prompt() == "Just a description"
-    assert "anthropic:" in adapter._get_model_string()
+    # Model string comes from settings.default_model when agent has no model_name
+    model_str = adapter._get_model_string()
+    assert ":" in model_str, f"Model string should be provider:model format, got {model_str}"
     assert adapter._get_model_settings() is None
 
 
@@ -732,7 +734,7 @@ def test_chat_creates_session(client):
 
     original_build = AgentAdapter.build_agent
 
-    def patched_build(self, *, model_override=None):
+    def patched_build(self, **kwargs):
         return original_build(self, model_override=TestModel(custom_output_text="OK"))
 
     with patch.object(AgentAdapter, "build_agent", patched_build):
@@ -777,7 +779,7 @@ def test_chat_streaming_produces_events(client):
 
     original_build = AgentAdapter.build_agent
 
-    def patched_build(self, *, model_override=None):
+    def patched_build(self, **kwargs):
         return original_build(
             self,
             model_override=TestModel(custom_output_text="Hello! I'm a test agent."),
@@ -818,7 +820,7 @@ def test_chat_persists_messages(client):
 
     original_build = AgentAdapter.build_agent
 
-    def patched_build(self, *, model_override=None):
+    def patched_build(self, **kwargs):
         return original_build(
             self,
             model_override=TestModel(custom_output_text="Echoed: hello world"),

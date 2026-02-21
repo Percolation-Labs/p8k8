@@ -275,7 +275,7 @@ class TestVerifyAll:
             checked_tables.append(model.__table_name__)
             return []
 
-        with patch("ontology.verify.verify_model", side_effect=mock_verify):
+        with patch("p8.ontology.verify.verify_model", side_effect=mock_verify):
             await verify_all(MagicMock())
 
         expected = [m.__table_name__ for m in ALL_ENTITY_TYPES]
@@ -314,8 +314,8 @@ class TestVerifyCLI:
     def test_verify_no_issues(self):
         mock = _MockAsyncServices()
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.schema.verify_all", new_callable=AsyncMock, return_value=[]),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.schema.verify_all", new_callable=AsyncMock, return_value=[]),
         ):
             result = runner.invoke(app, ["schema", "verify"])
         assert result.exit_code == 0
@@ -325,8 +325,8 @@ class TestVerifyCLI:
         mock = _MockAsyncServices()
         issues = [Issue("schemas", "error", "missing_column", "Column 'foo' missing")]
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.schema.verify_all", new_callable=AsyncMock, return_value=issues),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.schema.verify_all", new_callable=AsyncMock, return_value=issues),
         ):
             result = runner.invoke(app, ["schema", "verify"])
         assert result.exit_code == 1
@@ -337,8 +337,8 @@ class TestVerifyCLI:
         mock = _MockAsyncServices()
         issues = [Issue("servers", "warning", "stale_embedding_table", "stale table")]
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("api.cli.schema.verify_all", new_callable=AsyncMock, return_value=issues),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.api.cli.schema.verify_all", new_callable=AsyncMock, return_value=issues),
         ):
             result = runner.invoke(app, ["schema", "verify"])
         assert result.exit_code == 0
@@ -349,8 +349,8 @@ class TestRegisterCLI:
     def test_register_outputs_count(self):
         mock = _MockAsyncServices()
         with (
-            patch("services.bootstrap.bootstrap_services", return_value=mock),
-            patch("ontology.verify.register_models", new_callable=AsyncMock, return_value=13),
+            patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
+            patch("p8.ontology.verify.register_models", new_callable=AsyncMock, return_value=13),
         ):
             result = runner.invoke(app, ["schema", "register"])
         assert result.exit_code == 0

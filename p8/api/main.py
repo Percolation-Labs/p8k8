@@ -25,6 +25,10 @@ async def lifespan(app: FastAPI):
     async with bootstrap_services(include_embeddings=True) as (
         db, encryption, settings, file_service, content_service, embedding_service, queue_service,
     ):
+        if settings.otel_enabled:
+            from p8.agentic.otel import setup_instrumentation
+            setup_instrumentation()
+
         worker_task = None
         if settings.embedding_worker_enabled:
             worker = EmbeddingWorker(embedding_service, poll_interval=settings.embedding_poll_interval)

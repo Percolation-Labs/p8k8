@@ -146,15 +146,22 @@ class RemMixin:
         tool_calls: dict | None = None,
         pai_messages: str | None = None,
         moment_threshold: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        latency_ms: int | None = None,
+        model: str | None = None,
+        agent_name: str | None = None,
     ) -> dict:
         """Persist a user+assistant turn atomically. Returns IDs and optional moment name."""
         import json as _json
         tc_json = _json.dumps(tool_calls) if tool_calls else None
         pai_json = pai_messages  # already a JSON string from caller
         row = await self.pool.fetchrow(
-            "SELECT * FROM rem_persist_turn($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)",
+            "SELECT * FROM rem_persist_turn("
+            "$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13)",
             session_id, user_content, assistant_content,
             user_id, tenant_id, tc_json, pai_json, moment_threshold,
+            input_tokens, output_tokens, latency_ms, model, agent_name,
         )
         return dict(row) if row else {}
 

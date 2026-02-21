@@ -49,8 +49,13 @@ class Settings(BaseSettings):
     moment_token_threshold: int = 6000  # build moment when session tokens exceed this
     moment_max_inject: int = 3          # inject last N moments into context
 
-    # Debug — log raw LLM requests to console (OpenTelemetry console exporter)
-    debug_llm: bool = False
+    # OpenTelemetry (disabled by default)
+    otel_enabled: bool = False
+    otel_service_name: str = "p8-api"
+    otel_collector_endpoint: str = "http://localhost:4318"
+    otel_protocol: str = "http"           # http | grpc
+    otel_export_timeout: int = 10000      # ms
+    otel_insecure: bool = True            # non-TLS for local dev
 
     # S3 (optional, for FileService)
     s3_region: str = ""
