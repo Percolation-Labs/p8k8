@@ -54,14 +54,15 @@ async def lifespan(app: FastAPI):
             notification_service = NotificationService(db, settings)
         app.state.notification_service = notification_service
 
-        # Initialize MCP server's session manager (task group) so it can
-        # handle requests.  The mounted sub-app exposes a .lifespan property.
-        # Re-create the MCP app each lifespan cycle so the session manager
-        # is fresh (StreamableHTTPSessionManager.run() is single-use).
-        mcp_app = get_mcp_app()
-        app.state.mcp_app = mcp_app
-        app.mount("/mcp", mcp_app)
-        async with mcp_app.lifespan(mcp_app):
+        # StreamableHTTPSessionManager.run() is single-use, so create a fresh
+        # MCP ASGI app each lifespan cycle and swap it into the existing mount.
+        fresh_mcp = get_mcp_app()
+        for route in app.routes:
+            if hasattr(route, "path") and route.path == "/mcp":
+                route.app = fresh_mcp  # type: ignore[attr-defined]
+                break
+        app.state.mcp_app = fresh_mcp
+        async with fresh_mcp.router.lifespan_context(fresh_mcp):
             yield
 
         if notification_service:
@@ -146,8 +147,7 @@ def create_app() -> FastAPI:
     async def root_well_known(request: Request):
         return await auth.well_known_oauth(request)
 
-    # MCP server is mounted during lifespan (needs fresh session manager each cycle).
-    # Create an initial instance for route registration.
+    # MCP server — created and mounted once; lifespan initializes session manager.
     app.state.mcp_app = get_mcp_app()
     app.mount("/mcp", app.state.mcp_app)
 

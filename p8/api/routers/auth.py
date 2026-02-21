@@ -597,6 +597,15 @@ async def well_known_oauth(request: Request):
 # ---------------------------------------------------------------------------
 
 
+def _oauth_error(error: str, description: str, status: int = 400) -> JSONResponse:
+    """Return an RFC 6749 §5.2 compliant OAuth error response."""
+    return JSONResponse(
+        {"error": error, "error_description": description},
+        status_code=status,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
 @router.post("/token")
 async def token_endpoint(request: Request):
     """OAuth 2.1 token endpoint — supports authorization_code and refresh_token grants."""
@@ -605,17 +614,24 @@ async def token_endpoint(request: Request):
     # Parse form body (OAuth 2.1 token requests use application/x-www-form-urlencoded)
     # Also support JSON body for backwards compat with existing refresh flow
     content_type = request.headers.get("content-type", "")
+    raw_body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info("Token request: content_type=%s raw_body=%s", content_type, raw_body[:500])
+
     if "application/x-www-form-urlencoded" in content_type:
-        form = await request.form()
-        grant_type = form.get("grant_type", "refresh_token")
-        params = dict(form)
+        # Re-parse from raw body since request.body() consumed the stream
+        from urllib.parse import parse_qs
+        parsed = parse_qs(raw_body, keep_blank_values=True)
+        params = {k: v[0] for k, v in parsed.items()}
+        grant_type = params.get("grant_type", "refresh_token")
     else:
         try:
-            body = await request.json()
+            import json as _json
+            params = _json.loads(raw_body) if raw_body else {}
         except Exception:
-            body = {}
-        grant_type = body.get("grant_type", "refresh_token")
-        params = body
+            params = {}
+        grant_type = params.get("grant_type", "refresh_token")
+
+    logger.info("Token parsed: grant_type=%s keys=%s", grant_type, list(params.keys()))
 
     if grant_type == "authorization_code":
         code = params.get("code")
@@ -624,14 +640,26 @@ async def token_endpoint(request: Request):
         code_verifier = params.get("code_verifier")
         redirect_uri = params.get("redirect_uri")
 
-        if not all([code, client_id, code_verifier, redirect_uri]):
-            raise HTTPException(400, "Missing required parameters: code, client_id, code_verifier, redirect_uri")
+        # Also check Authorization header for client_secret_basic
+        auth_header = request.headers.get("authorization", "")
+        if not client_id and auth_header.startswith("Basic "):
+            import base64
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+                client_id, client_secret = decoded.split(":", 1)
+            except Exception:
+                pass
+
+        missing = [k for k, v in [("code", code), ("client_id", client_id), ("code_verifier", code_verifier), ("redirect_uri", redirect_uri)] if not v]
+        if missing:
+            logger.warning("Token exchange missing params: %s (got keys: %s)", missing, list(params.keys()))
+            return _oauth_error("invalid_request", f"Missing required parameters: {', '.join(missing)}")
 
         # Authenticate client if client_secret provided
         if client_secret:
             client_record = await auth.get_client(client_id)
             if not client_record or not auth.authenticate_client(client_id, client_secret, client_record):
-                raise HTTPException(401, "Invalid client credentials")
+                return _oauth_error("invalid_client", "Invalid client credentials", 401)
 
         try:
             tokens = await auth.exchange_authorization_code(
@@ -641,26 +669,26 @@ async def token_endpoint(request: Request):
                 redirect_uri=redirect_uri,
             )
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            return _oauth_error("invalid_grant", str(e))
 
         return JSONResponse(tokens)
 
     elif grant_type == "refresh_token":
         refresh_token = params.get("refresh_token") or request.cookies.get("refresh_token")
         if not refresh_token:
-            raise HTTPException(400, "No refresh token provided")
+            return _oauth_error("invalid_request", "No refresh token provided")
 
         try:
             tokens = await auth.refresh_tokens(refresh_token)
         except jwt.PyJWTError as e:
-            raise HTTPException(401, str(e))
+            return _oauth_error("invalid_grant", str(e), 401)
 
         response = JSONResponse(tokens)
         _set_token_cookies(response, tokens)
         return response
 
     else:
-        raise HTTPException(400, f"Unsupported grant_type: {grant_type}")
+        return _oauth_error("unsupported_grant_type", f"Unsupported grant_type: {grant_type}")
 
 
 @router.post("/revoke")
