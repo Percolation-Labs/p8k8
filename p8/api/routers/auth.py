@@ -617,7 +617,7 @@ async def token_endpoint(request: Request):
     # Also support JSON body for backwards compat with existing refresh flow
     content_type = request.headers.get("content-type", "")
     raw_body = (await request.body()).decode("utf-8", errors="replace")
-    logger.info("Token request: content_type=%s raw_body=%s", content_type, raw_body[:500])
+    logger.warning("Token request: content_type=%s raw_body=%s", content_type, raw_body[:500])
 
     if "application/x-www-form-urlencoded" in content_type:
         # Re-parse from raw body since request.body() consumed the stream
@@ -633,7 +633,7 @@ async def token_endpoint(request: Request):
             params = {}
         grant_type = params.get("grant_type", "refresh_token")
 
-    logger.info("Token parsed: grant_type=%s keys=%s", grant_type, list(params.keys()))
+    logger.warning("Token parsed: grant_type=%s keys=%s", grant_type, list(params.keys()))
 
     if grant_type == "authorization_code":
         code = params.get("code")
@@ -671,6 +671,7 @@ async def token_endpoint(request: Request):
                 redirect_uri=redirect_uri,
             )
         except ValueError as e:
+            logger.warning("Token exchange failed: %s", e)
             return _oauth_error("invalid_grant", str(e))
 
         return JSONResponse(tokens)
