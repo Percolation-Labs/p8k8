@@ -64,7 +64,7 @@ async def _run_query(
     user_id: UUID | None,
     fmt: str,
 ):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         if query:
             # One-shot mode
             try:

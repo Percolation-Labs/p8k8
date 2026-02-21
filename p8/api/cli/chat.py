@@ -20,7 +20,7 @@ async def _run_chat(
     session_id: str | None,
     user_id: UUID | None,
 ):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, *_rest):
         # Init tools so MCP toolsets work in-process
         init_tools(db, encryption)
 

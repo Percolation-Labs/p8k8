@@ -11,7 +11,7 @@ Both APNs and FCM are free and unlimited.
    Sign In with Apple key in Apple Developer Console. Same .p8 key, same
    key ID, same team ID — no new credentials. Just added:
 
-       P8_APNS_BUNDLE_ID=ai.percolationlabs.remapp
+       P8_APNS_BUNDLE_ID=com.co.app
        P8_APNS_ENVIRONMENT=production          # sandbox for dev/TestFlight
 
 2. FCM (Android)
@@ -19,10 +19,12 @@ Both APNs and FCM are free and unlimited.
    project, then downloaded a service account JSON from
    IAM → Service Accounts → Keys → Create new key → JSON. Added:
 
-       P8_FCM_PROJECT_ID=percolate-452917
+       P8_FCM_PROJECT_ID=XXXXXXX
        P8_FCM_SERVICE_ACCOUNT_FILE=/secrets/fcm/fcm-service-account.json
 
    On K8s the JSON is mounted as a secret volume at /secrets/fcm/.
+
+   also firebase andriod app downloaded google.json file for app in the project with that project id from google cloud console
 
 3. Device registration
    The Flutter app uses firebase_messaging to get push tokens from both

@@ -9,6 +9,7 @@ spec:
 
   # Custom PG18 with pgvector + pg_cron + pg_net (built from docker/Dockerfile.pg18)
   imageName: percolationlabs/rem-pg:18
+  imagePullPolicy: Always
 
   bootstrap:
     initdb:
@@ -34,9 +35,12 @@ spec:
     shared_preload_libraries:
       - pg_cron
       - pg_net
+    pg_hba:
+      - local all all trust
     parameters:
       max_connections: "200"
       cron.database_name: "p8db"
+      pg_net.database_name: "p8db"
       shared_buffers: "1GB"
       effective_cache_size: "3GB"
       maintenance_work_mem: "256MB"

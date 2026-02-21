@@ -19,7 +19,7 @@ _SQL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "sql"
 
 
 async def _run_migrate():
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         scripts = [
             _SQL_DIR / "install_entities.sql",
             _SQL_DIR / "install.sql",

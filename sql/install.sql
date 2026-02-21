@@ -27,6 +27,19 @@ EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'pg_net not available — embedding cron job will use Python worker instead';
 END $$;
 
+-- Grant app user access to pg_cron and pg_net schemas
+-- (remind_me tool schedules jobs, embed-process uses pg_net)
+DO $$ BEGIN
+    GRANT USAGE ON SCHEMA cron TO p8user;
+    GRANT USAGE ON SCHEMA net TO p8user;
+    GRANT ALL ON ALL TABLES IN SCHEMA cron TO p8user;
+    GRANT ALL ON ALL TABLES IN SCHEMA net TO p8user;
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA cron TO p8user;
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA net TO p8user;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Could not grant pg_cron/pg_net permissions: %', SQLERRM;
+END $$;
+
 
 -- ---------------------------------------------------------------------------
 -- UNLOGGED Tables (fast writes, rebuilt on crash)
@@ -1423,27 +1436,14 @@ DO $$ BEGIN
         PERFORM cron.schedule('embed-process', '*/1 * * * *',
             'SELECT net.http_post(
                 url := ''http://p8-api.p8.svc:8000/embeddings/process'',
-                headers := ''{"Content-Type": "application/json"}''::jsonb,
+                headers := jsonb_build_object(
+                    ''Authorization'', ''Bearer '' || current_setting(''p8.api_key'', true),
+                    ''Content-Type'', ''application/json''
+                ),
                 body := ''{}''::jsonb
             )');
     ELSE
         RAISE NOTICE 'pg_net not loaded — skipping embed-process cron job';
-    END IF;
-END $$;
-
--- Reminder processor: pg_cron calls process-reminders endpoint every minute.
--- Checks for due reminders and sends push notifications.
--- Skipped when pg_net is not available (dev/test mode).
-DO $$ BEGIN
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
-        PERFORM cron.schedule('process-reminders', '*/1 * * * *',
-            'SELECT net.http_post(
-                url := ''http://p8-api.p8.svc:8000/notifications/process-reminders'',
-                headers := ''{"Content-Type": "application/json"}''::jsonb,
-                body := ''{}''::jsonb
-            )');
-    ELSE
-        RAISE NOTICE 'pg_net not loaded — skipping process-reminders cron job';
     END IF;
 END $$;
 

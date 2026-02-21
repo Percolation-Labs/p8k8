@@ -13,6 +13,7 @@ from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.files import FileService
 from p8.services.kms import LocalFileKMS, VaultTransitKMS
+from p8.services.queue import QueueService
 from p8.settings import Settings
 
 # Maps Settings attributes → env vars expected by third-party SDKs.
@@ -53,8 +54,8 @@ def _export_api_keys(settings: Settings) -> None:
 async def bootstrap_services(*, include_embeddings: bool = False):
     """Shared service init for API lifespan and CLI commands.
 
-    Yields a 6-tuple:
-        (db, encryption, settings, file_service, content_service, embedding_service)
+    Yields a 7-tuple:
+        (db, encryption, settings, file_service, content_service, embedding_service, queue_service)
 
     embedding_service is None unless include_embeddings=True.
     """
@@ -74,6 +75,8 @@ async def bootstrap_services(*, include_embeddings: bool = False):
         db=db, encryption=encryption, file_service=file_service, settings=settings
     )
 
+    queue_service = QueueService(db)
+
     embedding_service = None
     if include_embeddings:
         from p8.services.embeddings import EmbeddingService, create_provider
@@ -88,7 +91,7 @@ async def bootstrap_services(*, include_embeddings: bool = False):
         _setup_debug_llm_tracing()
 
     try:
-        yield db, encryption, settings, file_service, content_service, embedding_service
+        yield db, encryption, settings, file_service, content_service, embedding_service, queue_service
     finally:
         await db.close()
 

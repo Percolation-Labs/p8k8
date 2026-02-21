@@ -44,7 +44,7 @@ async def _run_upsert(
     tenant_id: str | None,
     user_id: UUID | None,
 ):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, content_service, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, content_service, *_rest):
         p = Path(path)
         is_dir = p.is_dir()
         is_markdown = not is_dir and p.suffix.lower() == ".md"

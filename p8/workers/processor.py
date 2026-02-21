@@ -90,9 +90,8 @@ class TieredWorker:
         _register_default_handlers()
 
         async with bootstrap_services() as (
-            db, encryption, settings, file_service, content_service, _embedding_service,
+            db, encryption, settings, file_service, content_service, _embedding_service, queue,
         ):
-            queue = QueueService(db)
             ctx = WorkerContext(
                 db=db,
                 encryption=encryption,

@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     worker_tier: str = "small"
     worker_poll_interval: float = 5.0
     worker_batch_size: int = 1
+    file_processing_threshold_bytes: int = 5 * 1024 * 1024  # files above this queued to worker
 
     # Content ingestion (Kreuzberg chunking)
     content_chunk_max_chars: int = 1500  # ~half a page of text

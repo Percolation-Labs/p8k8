@@ -18,7 +18,7 @@ schema_app = typer.Typer(no_args_is_help=True)
 
 
 async def _list_schemas(kind: str | None, limit: int):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         repo = Repository(Schema, db, encryption)
         filters = {"kind": kind} if kind else None
         entities = await repo.find(filters=filters, limit=limit)
@@ -32,7 +32,7 @@ async def _list_schemas(kind: str | None, limit: int):
 
 
 async def _get_schema(schema_id: str):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         repo = Repository(Schema, db, encryption)
         result = await repo.get(UUID(schema_id))
         if not result:
@@ -42,7 +42,7 @@ async def _get_schema(schema_id: str):
 
 
 async def _delete_schema(schema_id: str):
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         repo = Repository(Schema, db, encryption)
         deleted = await repo.delete(UUID(schema_id))
         if not deleted:
@@ -82,7 +82,7 @@ def delete_command(
 
 
 async def _verify():
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         issues = await verify_all(db)
 
     errors = [i for i in issues if i.level == "error"]
@@ -98,7 +98,7 @@ async def _verify():
 
 
 async def _register():
-    async with _svc.bootstrap_services() as (db, encryption, settings, file_service, _content, _embed):
+    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
         count = await register_models(db)
 
     typer.echo(f"Registered {count} model(s) into schemas (kind='table')")

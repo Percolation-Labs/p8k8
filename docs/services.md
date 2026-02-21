@@ -93,3 +93,109 @@ Each ScaledObject polls every 15s with 60s cooldown:
 SELECT COALESCE(COUNT(*), 0) FROM task_queue
 WHERE status = 'pending' AND tier = '$TIER' AND scheduled_at <= CURRENT_TIMESTAMP
 ```
+
+## End-to-End Timeline
+
+### File Upload and Processing
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant S as S3
+    participant DB as PostgreSQL
+    participant KD as KEDA
+    participant W as Worker
+
+    rect rgb(240, 248, 255)
+    Note right of C: Upload and Enqueue
+    C->>A: POST /files/upload
+    A->>S: PUT object
+    S-->>A: OK
+    A->>DB: INSERT files row status=queued
+    A->>DB: enqueue_file_task
+    Note right of DB: task_queue: status=pending tier=small
+    A-->>C: file_id
+    end
+
+    rect rgb(245, 245, 220)
+    Note right of KD: KEDA Scaling
+    loop poll every 15s
+        KD->>DB: COUNT pending tasks for tier
+    end
+    DB-->>KD: 1 pending
+    KD->>W: scale deployment 0 to 1
+    end
+
+    rect rgb(240, 255, 240)
+    Note right of W: Claim and Process
+    W->>DB: claim_tasks FOR UPDATE SKIP LOCKED
+    Note right of DB: task_queue: status=processing
+    W->>DB: check quota
+    W->>S: download file
+    S-->>W: file bytes
+    W->>W: extract text and chunk
+    W->>DB: INSERT resource chunks
+    W->>DB: UPDATE files status=completed
+    W->>DB: complete_task
+    Note right of DB: task_queue: status=completed
+    W->>DB: track usage
+    end
+
+    rect rgb(255, 245, 238)
+    Note right of KD: Scale Down
+    loop poll every 15s
+        KD->>DB: COUNT pending = 0
+    end
+    Note right of KD: cooldown 60s
+    KD->>W: scale deployment 1 to 0
+    end
+```
+
+### Retry and Failure
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant DB as PostgreSQL
+
+    W->>DB: fail_task with error
+    alt retries remaining
+        Note right of DB: status=pending scheduled_at future
+        Note right of DB: backoff 30s then 2m then 8m
+        W->>DB: claim_tasks picks up retry
+        W->>DB: complete_task or fail_task
+    else max retries reached
+        Note right of DB: status=failed permanent
+    end
+```
+
+### pg_cron Housekeeping
+
+```mermaid
+sequenceDiagram
+    participant CR as pg_cron
+    participant DB as PostgreSQL
+
+    Note right of CR: runs every 5 minutes
+    CR->>DB: recover_stale_tasks
+    Note right of DB: reset stuck processing tasks to pending
+
+    Note right of CR: runs every hour
+    CR->>DB: enqueue_dreaming_tasks
+    Note right of DB: enqueue dreaming for active users
+```
+
+### Task State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: enqueue
+    pending --> processing: claim_tasks
+    processing --> completed: complete_task
+    processing --> pending: fail_task + retries left
+    processing --> failed: fail_task + max retries
+    processing --> pending: recover_stale_tasks
+    completed --> [*]
+    failed --> pending: admin reset
+```

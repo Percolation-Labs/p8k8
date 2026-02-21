@@ -23,7 +23,7 @@ from p8.services.stripe import StripeService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with bootstrap_services(include_embeddings=True) as (
-        db, encryption, settings, file_service, content_service, embedding_service,
+        db, encryption, settings, file_service, content_service, embedding_service, queue_service,
     ):
         worker_task = None
         if settings.embedding_worker_enabled:
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
         app.state.auth = auth
         app.state.file_service = file_service
         app.state.content_service = content_service
+        app.state.queue_service = queue_service
         app.state.stripe_service = StripeService(db, settings) if settings.stripe_secret_key else None
 
         # Push notifications (gated on at least one platform being configured)
