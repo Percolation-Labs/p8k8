@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -15,11 +16,31 @@ from p8.api.tools import init_tools
 chat_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
 
+def _enable_llm_debug_logging():
+    """Enable debug logging on the OpenAI client to see actual LLM payloads.
+
+    Logs the full json_data in "Request options" lines — system prompt,
+    tools array, messages, model settings. Pipe stderr to a file to capture:
+
+        uv run p8 chat --agent general --debug 2>payload.log
+    """
+    logging.basicConfig(level=logging.DEBUG, format="%(name)s %(message)s")
+    logging.getLogger("openai._base_client").setLevel(logging.DEBUG)
+    # Quiet noisy loggers that aren't the payload
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("asyncpg").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+
 async def _run_chat(
     agent: str | None,
     session_id: str | None,
     user_id: UUID | None,
+    debug: bool = False,
 ):
+    if debug:
+        _enable_llm_debug_logging()
     async with _svc.bootstrap_services() as (db, encryption, settings, file_service, *_rest):
         # Init tools so MCP toolsets work in-process
         init_tools(db, encryption)
@@ -84,13 +105,18 @@ def chat_command(
         None, "--user-id", "-u",
         help="User ID for context and message persistence.",
     ),
+    debug: bool = typer.Option(
+        False, "--debug", "-d",
+        help="Enable openai._base_client DEBUG logging to see actual LLM payloads.",
+    ),
 ):
     """Interactive chat with an agent.
 
     Start a new session:   p8 chat
     Resume a session:      p8 chat SESSION_ID
+    View LLM payload:      p8 chat --debug 2>payload.log
     """
     # Positional arg takes priority, --session is an alias
     sid = session_id or session
     uid = UUID(user_id) if user_id else None
-    asyncio.run(_run_chat(agent, sid, uid))
+    asyncio.run(_run_chat(agent, sid, uid, debug=debug))

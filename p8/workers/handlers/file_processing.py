@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
+
+from p8.utils.parsing import extract_payload
 
 log = logging.getLogger(__name__)
 
@@ -12,9 +13,7 @@ class FileProcessingHandler:
     """Process uploaded files: extract text, chunk, persist resources."""
 
     async def handle(self, task: dict, ctx) -> dict:
-        payload = task.get("payload", {})
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = extract_payload(task)
         file_id = payload.get("file_id")
         uri = payload.get("uri")
         name = payload.get("name", "unknown")

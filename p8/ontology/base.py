@@ -59,6 +59,7 @@ class CoreModel(BaseModel):
 
     tenant_id: str | None = None
     user_id: UUID | None = None
+    encryption_level: str | None = None  # set by Repository on write: platform|client|sealed|disabled|none
 
     graph_edges: list[dict] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)

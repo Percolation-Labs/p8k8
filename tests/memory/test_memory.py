@@ -9,6 +9,7 @@ import pytest
 from p8.ontology.types import Moment
 from p8.services.memory import MemoryService
 from p8.services.repository import Repository
+from p8.utils.tokens import estimate_tokens
 
 
 @pytest.mark.asyncio
@@ -128,8 +129,9 @@ async def test_token_count_auto(db, encryption, clean_db):
         "INSERT INTO sessions (id, name) VALUES ($1, $2)", session_id, "token-session"
     )
 
-    msg = await mem.persist_message(session_id, "user", "A" * 400)
-    assert msg.token_count == 100  # 400 chars / 4
+    text = "A" * 400
+    msg = await mem.persist_message(session_id, "user", text)
+    assert msg.token_count == estimate_tokens(text)
 
 
 @pytest.mark.asyncio

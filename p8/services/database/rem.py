@@ -151,6 +151,9 @@ class RemMixin:
         latency_ms: int | None = None,
         model: str | None = None,
         agent_name: str | None = None,
+        encryption_level: str | None = None,
+        user_msg_id: UUID | None = None,
+        asst_msg_id: UUID | None = None,
     ) -> dict:
         """Persist a user+assistant turn atomically. Returns IDs and optional moment name."""
         import json as _json
@@ -158,10 +161,11 @@ class RemMixin:
         pai_json = pai_messages  # already a JSON string from caller
         row = await self.pool.fetchrow(
             "SELECT * FROM rem_persist_turn("
-            "$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13)",
+            "$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
             session_id, user_content, assistant_content,
             user_id, tenant_id, tc_json, pai_json, moment_threshold,
             input_tokens, output_tokens, latency_ms, model, agent_name,
+            encryption_level, user_msg_id, asst_msg_id,
         )
         return dict(row) if row else {}
 

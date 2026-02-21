@@ -89,6 +89,7 @@ import httpx
 
 from p8.services.database import Database
 from p8.settings import Settings
+from p8.utils.parsing import ensure_parsed
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +160,7 @@ class NotificationService:
         # Create a notification moment in the user's feed
         await self._create_notification_moment(user_id, title, body, data, row.get("tenant_id"))
 
-        devices = row["devices"] or []
-        if isinstance(devices, str):
-            devices = json.loads(devices)
+        devices = ensure_parsed(row["devices"], default=[])
 
         if not devices:
             return []

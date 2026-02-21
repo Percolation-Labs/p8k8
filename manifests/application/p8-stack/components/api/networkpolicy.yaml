@@ -39,6 +39,24 @@ spec:
         - protocol: TCP
           port: 5432
 
+    # Allow OTEL collector
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+
+    # Allow OpenBao (KMS Transit API)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+      ports:
+        - protocol: TCP
+          port: 8200
+
     # Allow HTTPS egress (for LLM APIs, external services)
     - to:
         - namespaceSelector: {}

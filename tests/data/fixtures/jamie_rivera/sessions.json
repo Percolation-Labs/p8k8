@@ -1,0 +1,103 @@
+{
+  "description": "14 sessions (2/day x 7 days) for Jamie Rivera test profile. Session IDs are deterministic via uuid5(P8_NAMESPACE, 'seed-session:{name}').",
+  "sessions": [
+    {
+      "name": "jamie-standup-day1",
+      "description": "Morning standup — reviewed priorities, blockers, and sprint goals",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 0
+    },
+    {
+      "name": "jamie-voice-pdf-day1",
+      "description": "Voice note about onboarding ideas + uploaded quarterly report PDF",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 0
+    },
+    {
+      "name": "jamie-architecture-day2",
+      "description": "Architecture discussion on caching layer and Redis benchmarks",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 1
+    },
+    {
+      "name": "jamie-image-reminder-day2",
+      "description": "Captured whiteboard photo and set a follow-up reminder",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 1
+    },
+    {
+      "name": "jamie-sprint-retro-day3",
+      "description": "Sprint retrospective with full team — deployment frequency and test flakiness",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 2
+    },
+    {
+      "name": "jamie-api-note-day3",
+      "description": "Notes on API v2 migration plan and breaking changes",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 2
+    },
+    {
+      "name": "jamie-competitive-docx-day4",
+      "description": "Uploaded competitive analysis DOCX on Notion AI features",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 3
+    },
+    {
+      "name": "jamie-observation-day4",
+      "description": "Observed user onboarding drop-off patterns with Jordan",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 3
+    },
+    {
+      "name": "jamie-voice-mobile-day5",
+      "description": "Voice memo on mobile push notification strategy",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 4
+    },
+    {
+      "name": "jamie-investor-meeting-day5",
+      "description": "Investor meeting prep and Q&A practice session",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 4
+    },
+    {
+      "name": "jamie-code-review-day6",
+      "description": "Code review session — auth module refactor and test coverage",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 5
+    },
+    {
+      "name": "jamie-xlsx-metrics-day6",
+      "description": "Uploaded Q2 metrics spreadsheet with growth projections",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 5
+    },
+    {
+      "name": "jamie-team-planning-day7",
+      "description": "Team planning meeting — sprint goals, capacity, and OKR check-in",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 6
+    },
+    {
+      "name": "jamie-event-sourcing-day7",
+      "description": "Notes on event sourcing architecture for payments domain",
+      "agent_name": "rem-agent",
+      "mode": "chat",
+      "days_ago": 6
+    }
+  ]
+}

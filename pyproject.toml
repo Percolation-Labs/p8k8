@@ -29,6 +29,7 @@ dependencies = [
     "opentelemetry-sdk>=1.28.0",
     "opentelemetry-exporter-otlp-proto-http>=1.28.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.28.0",
+    "tiktoken>=0.7",
 ]
 
 [project.scripts]

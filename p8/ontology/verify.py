@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from p8.ontology.base import CoreModel
 from p8.ontology.types import ALL_ENTITY_TYPES, KV_TABLES
+from p8.utils.parsing import ensure_parsed
 
 
 # ---------------------------------------------------------------------------
@@ -167,9 +168,7 @@ async def verify_model(model: type[CoreModel], db) -> list[Issue]:
         issues.append(Issue(table, "error", "unregistered_schema", f"No schemas row with name='{table}' kind='table'"))
     else:
         # 5. Schema metadata matches
-        db_meta = schema_row["json_schema"]
-        if isinstance(db_meta, str):
-            db_meta = json.loads(db_meta)
+        db_meta = ensure_parsed(schema_row["json_schema"], default={})
         expected = _build_json_schema(model)
         for key, expected_val in expected.items():
             db_val = db_meta.get(key)

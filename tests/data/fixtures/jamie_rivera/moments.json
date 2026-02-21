@@ -1,0 +1,409 @@
+{
+  "description": "22 moments across 7 days covering all 8 types: session_chunk, voice_note, content_upload, image, meeting, note, file, observation. Each references a session by name (resolved to UUID by seed script).",
+  "moments": [
+    {
+      "_comment": "Day 1 (today) — standup session chunk",
+      "name": "jamie-standup-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Morning standup: Reviewed API v2 migration status (60% complete), discussed Sarah's iOS SDK deadline, and triaged blockers around auth endpoints and rate limiting.",
+      "source_session": "jamie-standup-day1",
+      "days_ago": 0,
+      "time": "0930",
+      "metadata": {
+        "message_count": 6,
+        "token_count": 450,
+        "chunk_index": 0
+      },
+      "topic_tags": ["standup", "api-migration"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 1 — voice note (gradient thumbnail + audio player)",
+      "name": "jamie-onboarding-voice",
+      "moment_type": "voice_note",
+      "summary": "Brainstormed onboarding improvements: progressive disclosure for permissions, 4-step guided tour, and value-first approach. Users who complete onboarding retain 3x better.",
+      "source_session": "jamie-voice-pdf-day1",
+      "days_ago": 0,
+      "time": "0845",
+      "image_uri": "$card_image:type-voice",
+      "metadata": {
+        "file_name": "onboarding-ideas-voice.m4a",
+        "media_url": "uploads/sample-voice.m4a",
+        "duration_seconds": 94
+      },
+      "topic_tags": ["onboarding", "UX"],
+      "present_persons": [
+        {"name": "Jamie Rivera"},
+        {"name": "Jordan Rivera"}
+      ],
+      "thumbnail_mode": "gradient"
+    },
+    {
+      "_comment": "Day 1 — PDF content upload (icon thumbnail + .PDF badge)",
+      "name": "jamie-quarterly-report-upload",
+      "moment_type": "content_upload",
+      "summary": "Uploaded Q1 quarterly report. Revenue $1.2M (+18% QoQ), MAU 50.2K (+32%), churn 3.2% (down from 3.7%), runway 14 months. Enterprise tier driving growth.",
+      "source_session": "jamie-voice-pdf-day1",
+      "days_ago": 0,
+      "time": "0815",
+      "image_uri": "$card_image:ext-pdf",
+      "metadata": {
+        "file_name": "quarterly-report-q1.pdf",
+        "file_type": "application/pdf",
+        "chunk_count": 4
+      },
+      "topic_tags": ["finance", "Q1-review"],
+      "present_persons": [],
+      "thumbnail_mode": "icon"
+    },
+    {
+      "_comment": "Day 2 (yesterday) — architecture session chunk",
+      "name": "jamie-architecture-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Deep dive on Redis caching for recommendation engine. Decided on TTL-based eviction (1hr), ~800MB memory budget on r6g.large. Expected 40% latency reduction from P95 340ms.",
+      "source_session": "jamie-architecture-day2",
+      "days_ago": 1,
+      "time": "1400",
+      "metadata": {
+        "message_count": 6,
+        "token_count": 520,
+        "chunk_index": 0
+      },
+      "topic_tags": ["architecture", "caching", "redis"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 2 — image (network image thumbnail)",
+      "name": "jamie-whiteboard-photo",
+      "moment_type": "image",
+      "summary": "Whiteboard sketch of microservices topology: API Gateway (Kong) → Auth Service, Core API, Event Bus (NATS). gRPC for sync, NATS for async events.",
+      "source_session": "jamie-image-reminder-day2",
+      "days_ago": 1,
+      "time": "1100",
+      "image_uri": "https://picsum.photos/seed/whiteboard-arch/800/480",
+      "metadata": {
+        "file_name": "whiteboard-architecture-v2.jpg"
+      },
+      "topic_tags": ["architecture", "whiteboard"],
+      "present_persons": [],
+      "thumbnail_mode": "image"
+    },
+    {
+      "_comment": "Day 3 — sprint retro meeting (image thumbnail, 4 persons)",
+      "name": "jamie-sprint-retro-meeting",
+      "moment_type": "meeting",
+      "summary": "Sprint retrospective: Deployment frequency tripled (2→6/week). Pain points: flaky integration tests (3 failures), slow PR reviews (2-day average). Action items: test quarantine, 24hr review SLA, staging parity, test dashboard.",
+      "source_session": "jamie-sprint-retro-day3",
+      "days_ago": 2,
+      "time": "1400",
+      "image_uri": "https://picsum.photos/seed/sprint-retro-jam/800/480",
+      "metadata": {
+        "message_count": 6,
+        "action_items": [
+          "Jordan + Priya: Fix flaky tests",
+          "Team: 24hr PR review SLA",
+          "Marcus: Staging parity",
+          "Sarah: Test dashboard"
+        ]
+      },
+      "topic_tags": ["retrospective", "sprint", "process"],
+      "present_persons": [
+        {"name": "Sarah Kim"},
+        {"name": "Marcus Lee"},
+        {"name": "Priya Patel"},
+        {"name": "Jordan Rivera"}
+      ],
+      "thumbnail_mode": "image"
+    },
+    {
+      "_comment": "Day 3 — API migration note (gradient thumbnail)",
+      "name": "jamie-api-migration-note",
+      "moment_type": "note",
+      "summary": "API v2 migration plan: 5 breaking changes — auth endpoint (PKCE), pagination (cursor-based), error format (RFC 7807), rate limits (per-tier), webhook payloads (CloudEvents). Estimated 6-week timeline.",
+      "source_session": "jamie-api-note-day3",
+      "days_ago": 2,
+      "time": "1030",
+      "image_uri": "$card_image:type-note",
+      "metadata": {
+        "breaking_changes": 5,
+        "timeline_weeks": 6
+      },
+      "topic_tags": ["api", "migration", "v2"],
+      "present_persons": [],
+      "thumbnail_mode": "gradient"
+    },
+    {
+      "_comment": "Day 4 — competitive DOCX file (icon thumbnail + .DOCX badge)",
+      "name": "jamie-competitive-docx",
+      "moment_type": "file",
+      "summary": "Competitive analysis of Notion AI: Strong in contextual suggestions and inline editing. Weak in voice input and integrations. Our opportunity: structured memory, voice-first interaction, cross-app context.",
+      "source_session": "jamie-competitive-docx-day4",
+      "days_ago": 3,
+      "time": "1500",
+      "image_uri": "$card_image:ext-docx",
+      "metadata": {
+        "file_name": "competitive-analysis-notion.docx",
+        "file_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "page_count": 12
+      },
+      "topic_tags": ["competitive", "product-strategy"],
+      "present_persons": [],
+      "thumbnail_mode": "icon"
+    },
+    {
+      "_comment": "Day 4 — onboarding observation (no thumbnail, 1 person)",
+      "name": "jamie-onboarding-observation",
+      "moment_type": "observation",
+      "summary": "Mobile onboarding drop-off is 47% at permissions step vs 28% on desktop. Root cause: simultaneous camera/mic/location permission requests. Recommendation: progressive permission requests, expected 40-60% improvement.",
+      "source_session": "jamie-observation-day4",
+      "days_ago": 3,
+      "time": "1100",
+      "metadata": {
+        "mobile_dropoff": "47%",
+        "desktop_dropoff": "28%"
+      },
+      "topic_tags": ["analytics", "onboarding", "mobile"],
+      "present_persons": [
+        {"name": "Jordan Rivera"}
+      ],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 4 — extra session chunk from competitive session",
+      "name": "jamie-competitive-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Reviewed Notion AI competitive landscape. Identified 3 strategic priorities: voice-to-structured-data pipeline, cross-app context integration, and proactive insights over reactive AI.",
+      "source_session": "jamie-competitive-docx-day4",
+      "days_ago": 3,
+      "time": "1530",
+      "metadata": {
+        "message_count": 4,
+        "token_count": 380,
+        "chunk_index": 0
+      },
+      "topic_tags": ["competitive", "strategy"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 5 — voice note on mobile (gradient thumbnail)",
+      "name": "jamie-push-strategy-voice",
+      "moment_type": "voice_note",
+      "summary": "Voice memo on mobile push notification strategy. Current opt-in rate 45%. A/B test: permission prompt at end of onboarding vs after first value moment. Hypothesis: post-value gets 60%+ opt-in.",
+      "source_session": "jamie-voice-mobile-day5",
+      "days_ago": 4,
+      "time": "0900",
+      "image_uri": "$card_image:type-voice",
+      "metadata": {
+        "file_name": "push-strategy-voice.m4a",
+        "media_url": "uploads/sample-voice.m4a",
+        "duration_seconds": 67
+      },
+      "topic_tags": ["mobile", "notifications"],
+      "present_persons": [],
+      "thumbnail_mode": "gradient"
+    },
+    {
+      "_comment": "Day 5 — investor meeting (image thumbnail, 2 persons)",
+      "name": "jamie-investor-meeting",
+      "moment_type": "meeting",
+      "summary": "Investor meeting prep: Key talking points — $1.2M revenue (+18% QoQ), 14-month runway, voice-first AI differentiation, 3x deployment velocity. Anticipated questions on retention, CAC/LTV, and hiring plan.",
+      "source_session": "jamie-investor-meeting-day5",
+      "days_ago": 4,
+      "time": "1400",
+      "image_uri": "https://picsum.photos/seed/investor-meeting/800/480",
+      "metadata": {
+        "message_count": 8,
+        "prep_topics": ["growth metrics", "technical differentiation", "team execution", "roadmap"]
+      },
+      "topic_tags": ["investor", "fundraising", "strategy"],
+      "present_persons": [
+        {"name": "Sarah Kim"},
+        {"name": "Priya Patel"}
+      ],
+      "thumbnail_mode": "image"
+    },
+    {
+      "_comment": "Day 5 — PPTX content upload (icon thumbnail + .PPTX badge)",
+      "name": "jamie-board-presentation",
+      "moment_type": "content_upload",
+      "summary": "Board presentation draft: Product milestones, user growth metrics, financial projections, and 2026 hiring plan. 12 slides. Needs finance review before finalizing.",
+      "source_session": "jamie-investor-meeting-day5",
+      "days_ago": 4,
+      "time": "1330",
+      "image_uri": "$card_image:ext-pptx",
+      "metadata": {
+        "file_name": "board-presentation-q1.pptx",
+        "file_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "slide_count": 12
+      },
+      "topic_tags": ["board", "presentation"],
+      "present_persons": [],
+      "thumbnail_mode": "icon"
+    },
+    {
+      "_comment": "Day 6 — code review session chunk (no thumbnail)",
+      "name": "jamie-code-review-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Reviewed Marcus's auth module refactor: session-based → JWT with refresh tokens. Approved architecture: 15-min access tokens, Redis blocklist, 82% test coverage. Requested concurrent refresh test and rate limiting.",
+      "source_session": "jamie-code-review-day6",
+      "days_ago": 5,
+      "time": "1500",
+      "metadata": {
+        "message_count": 6,
+        "token_count": 410,
+        "chunk_index": 0
+      },
+      "topic_tags": ["code-review", "auth", "security"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 6 — XLSX content upload (icon thumbnail + .XLSX badge)",
+      "name": "jamie-q2-metrics-upload",
+      "moment_type": "content_upload",
+      "summary": "Q2 metrics dashboard: DAU 12.4K (+23%), MRR $142K (+18%), enterprise tier 63% of revenue. Concerns: free-to-paid conversion 2.1% (below 3% benchmark), mobile DAU/WAU ratio 0.31.",
+      "source_session": "jamie-xlsx-metrics-day6",
+      "days_ago": 5,
+      "time": "1030",
+      "image_uri": "$card_image:ext-xlsx",
+      "metadata": {
+        "file_name": "q2-metrics-dashboard.xlsx",
+        "file_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "sheet_count": 3
+      },
+      "topic_tags": ["metrics", "Q2", "growth"],
+      "present_persons": [],
+      "thumbnail_mode": "icon"
+    },
+    {
+      "_comment": "Day 6 — extra observation from metrics analysis",
+      "name": "jamie-metrics-observation",
+      "moment_type": "observation",
+      "summary": "Two concerning trends in Q2 data: free-to-paid conversion at 2.1% (below 3% target) and mobile engagement lagging desktop (DAU/WAU 0.31 vs 0.48). Both directly addressed by onboarding v2 and push notification work.",
+      "source_session": "jamie-xlsx-metrics-day6",
+      "days_ago": 5,
+      "time": "1045",
+      "metadata": {
+        "conversion_rate": "2.1%",
+        "target_rate": "3.0%",
+        "mobile_dau_wau": "0.31",
+        "desktop_dau_wau": "0.48"
+      },
+      "topic_tags": ["analytics", "metrics", "growth"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 7 — team planning meeting (no thumbnail, 3 persons)",
+      "name": "jamie-team-planning-meeting",
+      "moment_type": "meeting",
+      "summary": "Sprint planning: Set 4 goals — Marcus JWT merge (2d), Sarah iOS SDK (5d), Priya progressive permissions (5d), Marcus Redis staging (3d). OKR check: deployment velocity ✅, PR review 🟡, mobile engagement 🔴.",
+      "source_session": "jamie-team-planning-day7",
+      "days_ago": 6,
+      "time": "1000",
+      "metadata": {
+        "message_count": 6,
+        "sprint_goals": 4,
+        "okr_status": {
+          "green": 1,
+          "yellow": 2,
+          "red": 2
+        }
+      },
+      "topic_tags": ["sprint-planning", "OKRs"],
+      "present_persons": [
+        {"name": "Sarah Kim"},
+        {"name": "Marcus Lee"},
+        {"name": "Priya Patel"}
+      ],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 7 — event sourcing note (no thumbnail)",
+      "name": "jamie-event-sourcing-note",
+      "moment_type": "note",
+      "summary": "ADR-008: Adopt event sourcing for payments domain only. Postgres-backed event store (no new infra). Benefits: audit trail (SOC 2), temporal queries, replay testing. Risk: eventual consistency mitigated by synchronous projections.",
+      "source_session": "jamie-event-sourcing-day7",
+      "days_ago": 6,
+      "time": "0830",
+      "metadata": {
+        "adr_number": "ADR-008",
+        "decision": "adopt",
+        "scope": "payments domain only"
+      },
+      "topic_tags": ["architecture", "payments", "event-sourcing"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 7 — extra session chunk from event sourcing discussion",
+      "name": "jamie-event-sourcing-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Evaluated CQRS vs traditional CRUD for payments. Decided on event sourcing with Postgres-backed store. Scoped to payment aggregates only — not system-wide. Marcus to review before implementation spike.",
+      "source_session": "jamie-event-sourcing-day7",
+      "days_ago": 6,
+      "time": "0900",
+      "metadata": {
+        "message_count": 4,
+        "token_count": 340,
+        "chunk_index": 0
+      },
+      "topic_tags": ["architecture", "event-sourcing"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 2 — extra note from architecture session",
+      "name": "jamie-caching-adr-note",
+      "moment_type": "note",
+      "summary": "ADR-007: Redis caching for recommendation engine. P95 latency target <200ms (from 340ms). TTL-based eviction at 1hr, ~800MB memory footprint. Approved — safe within current r6g.large budget.",
+      "source_session": "jamie-architecture-day2",
+      "days_ago": 1,
+      "time": "1430",
+      "metadata": {
+        "adr_number": "ADR-007",
+        "decision": "accepted"
+      },
+      "topic_tags": ["architecture", "caching", "redis"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 3 — extra session chunk from API note session",
+      "name": "jamie-api-note-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Documented API v2 breaking changes: auth (PKCE), pagination (cursor), errors (RFC 7807), rate limits (per-tier), webhooks (CloudEvents). Estimated 6-week migration timeline with SDK update as critical path.",
+      "source_session": "jamie-api-note-day3",
+      "days_ago": 2,
+      "time": "1100",
+      "metadata": {
+        "message_count": 4,
+        "token_count": 290,
+        "chunk_index": 0
+      },
+      "topic_tags": ["api", "migration"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    },
+    {
+      "_comment": "Day 1 — extra voice processing session chunk",
+      "name": "jamie-voice-pdf-chunk-0",
+      "moment_type": "session_chunk",
+      "summary": "Processed onboarding voice memo and quarterly report PDF. Key onboarding ideas: progressive disclosure, guided tour, value-first flow. Report highlights: $1.2M revenue, 50.2K MAU, 14-month runway.",
+      "source_session": "jamie-voice-pdf-day1",
+      "days_ago": 0,
+      "time": "0830",
+      "metadata": {
+        "message_count": 6,
+        "token_count": 380,
+        "chunk_index": 0
+      },
+      "topic_tags": ["onboarding", "finance"],
+      "present_persons": [],
+      "thumbnail_mode": "none"
+    }
+  ]
+}

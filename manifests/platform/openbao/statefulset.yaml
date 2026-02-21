@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/component: kms
+spec:
+  serviceName: openbao
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/component: kms
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openbao
+        app.kubernetes.io/component: kms
+    spec:
+      serviceAccountName: openbao
+      terminationGracePeriodSeconds: 10
+
+      containers:
+        - name: openbao
+          image: quay.io/openbao/openbao:2
+          command: ["bao", "server", "-dev"]
+
+          ports:
+            - name: api
+              containerPort: 8200
+              protocol: TCP
+
+          env:
+            - name: BAO_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: p8-app-secrets
+                  key: P8_KMS_VAULT_TOKEN
+            - name: BAO_DEV_LISTEN_ADDRESS
+              value: "0.0.0.0:8200"
+            # Skip mlock in container
+            - name: SKIP_SETCAP
+              value: "true"
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: api
+              # dev mode is always initialized+unsealed, so 200 is expected
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - IPC_LOCK
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: data
+              mountPath: /openbao/data
+            - name: config
+              mountPath: /openbao/config
+              readOnly: true
+
+      volumes:
+        - name: config
+          configMap:
+            name: openbao-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

@@ -37,6 +37,7 @@ class ChatContext:
     agent: Agent
     injector: ContextInjector
     message_history: list[ModelMessage] = field(default_factory=list)
+    tenant_id: str | None = None
 
 
 class ChatController:
@@ -95,6 +96,7 @@ class ChatController:
         user_id: UUID | None = None,
         user_email: str | None = None,
         user_name: str | None = None,
+        tenant_id: str | None = None,
         name_prefix: str = "chat",
         session_name: str | None = None,
         session_type: str | None = None,
@@ -114,12 +116,15 @@ class ChatController:
             session_name=session.name,
             session_metadata=session.metadata,
         )
-        message_history = await adapter.load_history(sid, user_id=user_id)
+        message_history = await adapter.load_history(
+            sid, user_id=user_id, tenant_id=tenant_id,
+        )
         agent = adapter.build_agent()
 
         return ChatContext(
             adapter=adapter, session_id=sid, agent=agent,
             injector=injector, message_history=message_history,
+            tenant_id=tenant_id,
         )
 
     async def run_turn(
@@ -148,7 +153,8 @@ class ChatController:
 
         await ctx.adapter.persist_turn(
             ctx.session_id, user_prompt, assistant_text,
-            user_id=user_id, all_messages=all_messages,
+            user_id=user_id, tenant_id=ctx.tenant_id,
+            all_messages=all_messages,
             background_compaction=background_compaction,
         )
         return ChatTurn(assistant_text=assistant_text, all_messages=all_messages)
@@ -170,7 +176,8 @@ class ChatController:
         """Persist a turn without running the agent (used by API streaming)."""
         await ctx.adapter.persist_turn(
             ctx.session_id, user_prompt, assistant_text,
-            user_id=user_id, all_messages=all_messages,
+            user_id=user_id, tenant_id=ctx.tenant_id,
+            all_messages=all_messages,
             input_tokens=input_tokens, output_tokens=output_tokens,
             latency_ms=latency_ms, model=model, agent_name=agent_name,
         )

@@ -199,7 +199,7 @@ BEGIN
     v_row := COALESCE(NEW, OLD);
     v_checksum := encode(
         sha256(
-            (COALESCE(v_row.content, '') || COALESCE(v_row.json_schema::text, ''))::bytea
+            convert_to(COALESCE(v_row.content, '') || COALESCE(v_row.json_schema::text, ''), 'UTF8')
         ),
         'hex'
     );
@@ -814,7 +814,10 @@ CREATE OR REPLACE FUNCTION rem_persist_turn(
     p_output_tokens    INT     DEFAULT 0,
     p_latency_ms       INT     DEFAULT NULL,
     p_model            VARCHAR DEFAULT NULL,
-    p_agent_name       VARCHAR DEFAULT NULL
+    p_agent_name       VARCHAR DEFAULT NULL,
+    p_encryption_level VARCHAR DEFAULT NULL,
+    p_user_msg_id      UUID    DEFAULT NULL,
+    p_asst_msg_id      UUID    DEFAULT NULL
 ) RETURNS TABLE(
     user_message_id      UUID,
     assistant_message_id UUID,
@@ -834,19 +837,21 @@ BEGIN
     v_user_tokens := GREATEST(COALESCE(LENGTH(p_user_content) / 4, 0), 0);
     v_asst_tokens := GREATEST(COALESCE(LENGTH(p_assistant_content) / 4, 0), 0);
 
+    -- Use pre-generated IDs if provided (needed for encryption AAD binding)
+    v_user_msg_id := COALESCE(p_user_msg_id, gen_random_uuid());
+    v_asst_msg_id := COALESCE(p_asst_msg_id, gen_random_uuid());
+
     -- 1. Insert user message
-    INSERT INTO messages (session_id, message_type, content, token_count, tenant_id, user_id)
-    VALUES (p_session_id, 'user', p_user_content, v_user_tokens, p_tenant_id, p_user_id)
-    RETURNING id INTO v_user_msg_id;
+    INSERT INTO messages (id, session_id, message_type, content, token_count, tenant_id, user_id, encryption_level)
+    VALUES (v_user_msg_id, p_session_id, 'user', p_user_content, v_user_tokens, p_tenant_id, p_user_id, p_encryption_level);
 
     -- 2. Insert assistant message (with usage metrics)
-    INSERT INTO messages (session_id, message_type, content, token_count, tool_calls,
+    INSERT INTO messages (id, session_id, message_type, content, token_count, tool_calls,
                           input_tokens, output_tokens, latency_ms, model, agent_name,
-                          tenant_id, user_id)
-    VALUES (p_session_id, 'assistant', p_assistant_content, v_asst_tokens, p_tool_calls,
+                          tenant_id, user_id, encryption_level)
+    VALUES (v_asst_msg_id, p_session_id, 'assistant', p_assistant_content, v_asst_tokens, p_tool_calls,
             p_input_tokens, p_output_tokens, p_latency_ms, p_model, p_agent_name,
-            p_tenant_id, p_user_id)
-    RETURNING id INTO v_asst_msg_id;
+            p_tenant_id, p_user_id, p_encryption_level);
 
     -- 3. Update session token total
     UPDATE sessions SET total_tokens = total_tokens + v_user_tokens + v_asst_tokens
@@ -1023,6 +1028,8 @@ $$ LANGUAGE sql;
 
 
 -- rem_session_timeline — interleaved messages + moments for a session
+-- DROP first because return-type changes are not allowed by CREATE OR REPLACE
+DROP FUNCTION IF EXISTS rem_session_timeline(UUID, INT);
 CREATE OR REPLACE FUNCTION rem_session_timeline(
     p_session_id UUID,
     p_limit INT DEFAULT 50
@@ -1032,15 +1039,17 @@ CREATE OR REPLACE FUNCTION rem_session_timeline(
     event_timestamp TIMESTAMPTZ,
     name_or_type VARCHAR,
     content_or_summary TEXT,
+    encryption_level VARCHAR,
     metadata JSONB
 ) AS $$
     SELECT 'message'::varchar, m.id, m.created_at, m.message_type::varchar,
-           m.content, jsonb_build_object('token_count', m.token_count, 'tool_calls', m.tool_calls)
+           m.content, m.encryption_level,
+           jsonb_build_object('token_count', m.token_count, 'tool_calls', m.tool_calls)
     FROM messages m
     WHERE m.session_id = p_session_id AND m.deleted_at IS NULL
     UNION ALL
     SELECT 'moment'::varchar, mo.id, COALESCE(mo.starts_timestamp, mo.created_at),
-           COALESCE(mo.moment_type, 'unknown')::varchar, mo.summary,
+           COALESCE(mo.moment_type, 'unknown')::varchar, mo.summary, mo.encryption_level,
            jsonb_build_object('name', mo.name, 'ends_timestamp', mo.ends_timestamp,
                               'previous_moment_keys', mo.previous_moment_keys,
                               'moment_metadata', mo.metadata)
@@ -1061,6 +1070,7 @@ $$ LANGUAGE sql;
 -- For each date with activity, a daily_summary row is synthesized with stats
 -- (message count, tokens, session count, moment count) and a deterministic
 -- session UUID derived from (user_id, date) so the client can chat with that day.
+DROP FUNCTION IF EXISTS rem_moments_feed(UUID, INT, DATE);
 CREATE OR REPLACE FUNCTION rem_moments_feed(
     p_user_id     UUID DEFAULT NULL,
     p_limit       INT  DEFAULT 20,
@@ -1074,6 +1084,7 @@ CREATE OR REPLACE FUNCTION rem_moments_feed(
     moment_type      VARCHAR,
     summary          TEXT,
     session_id       UUID,
+    encryption_level VARCHAR,
     metadata         JSONB
 ) AS $$
 WITH
@@ -1155,6 +1166,7 @@ daily_summaries AS (
             'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
             COALESCE(p_user_id::text, 'global') || '/' || ds.d::text
         )                                                              AS session_id,
+        NULL::varchar                                                  AS encryption_level,
         jsonb_build_object(
             'message_count', ds.msg_count,
             'total_tokens', ds.total_tokens,
@@ -1178,6 +1190,7 @@ real_moments AS (
         COALESCE(mo.moment_type, 'unknown')::varchar                   AS moment_type,
         mo.summary                                                     AS summary,
         mo.source_session_id                                           AS session_id,
+        mo.encryption_level                                            AS encryption_level,
         jsonb_build_object(
             'ends_timestamp', mo.ends_timestamp,
             'previous_moment_keys', mo.previous_moment_keys,
@@ -1199,7 +1212,7 @@ combined AS (
 )
 
 SELECT event_type, event_id, event_date, event_timestamp,
-       name, moment_type, summary, session_id, metadata
+       name, moment_type, summary, session_id, encryption_level, metadata
 FROM combined
 ORDER BY event_date DESC, sort_priority ASC, event_timestamp DESC;
 $$ LANGUAGE sql;

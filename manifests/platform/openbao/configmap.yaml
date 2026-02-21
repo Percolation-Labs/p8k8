@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  labels:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/component: kms
+data:
+  openbao.hcl: |
+    # OpenBao server configuration
+    #
+    # This runs a single-node server with file storage.
+    # In production, use Raft HA or an external OpenBao cluster.
+
+    storage "file" {
+      path = "/openbao/data"
+    }
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true  # TLS terminated at service mesh / internal only
+    }
+
+    api_addr = "http://0.0.0.0:8200"
+
+    # Disable mlock in containers (uses securityContext instead)
+    disable_mlock = true
+
+    ui = false

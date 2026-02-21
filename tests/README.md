@@ -37,7 +37,8 @@ tests/
 ├── agents/                  # Agents & chat
 │   ├── test_chat.py         # Chat endpoint, AgentAdapter, config, routing, streaming
 │   ├── test_agent_tools.py  # Agent construction, MCP tools, delegation, event sink
-│   └── test_tools.py        # MCP tool implementations (search, action, user_profile)
+│   ├── test_tools.py        # MCP tool implementations (search, action, user_profile)
+│   └── test_remind_me.py    # remind_me tool — pg_cron scheduling, one-time/recurring, validation
 ├── security/                # Encryption & auth
 │   ├── test_encryption.py   # Encryption modes, tenant isolation, deterministic, own-key
 │   ├── test_vault.py        # VaultTransitKMS (requires OpenBao on localhost:8200)
@@ -51,6 +52,11 @@ tests/
 └── ontology/                # Schema verification
     └── test_verify.py       # verify_model(), verify_all(), schema register, CLI
 
+├── dreaming/                # Dreaming agent
+│   ├── test_dreaming.py     # Dreaming handler — context building, agent invocation, moment persistence
+│   ├── test_dreaming_e2e.py # End-to-end dreaming with FunctionModel — phases 1-3
+│   ├── test_save_moments.py # save_moments tool — dream moments, graph edges, back-edges
+│   └── test_merge_graph_edges.py # Graph edge merging logic
 ├── .sims/                   # Simulations — demos, diagnostics, scripted workflows
 │   └── ...
 ```
@@ -85,9 +91,10 @@ Agent construction, tool resolution, chat endpoint, and streaming.
 
 | Test | What it covers |
 |------|----------------|
-| `test_chat` | Chat HTTP endpoint (headers, sessions, SSE streaming, persistence), `AgentAdapter` internals (schema loading, config parsing, structured output, routing state, message history conversion) |
-| `test_agent_tools` | Agent construction with MCP tools — schema registration, YAML loading, tool resolution (`FastMCPToolset` vs delegates), `search`/`action`/`ask_agent` tool invocation, delegation with event sink, `agent.run()` with `TestModel` |
+| `test_chat` | Chat HTTP endpoint (headers, sessions, SSE streaming, persistence), `AgentAdapter` internals (schema loading, structured output via `to_output_schema()`, thinking structure via `to_prompt()`, routing state, message history conversion, context injection, `FunctionModel` capture) |
+| `test_agent_tools` | AgentSchema `from_model_class` / `from_yaml_file` / `from_schema_row`, tool notes in system prompt, thinking aides in prompt, DB + YAML round-trips, TTL caching, MCP tool resolution (`FastMCPToolset` vs delegates), `search`/`action`/`ask_agent` tool invocation, delegation with event sink, legacy schema backward compat |
 | `test_tools` | MCP tool implementations — `search` (LOOKUP, FUZZY, SQL), `action` (observation), `user_profile` resource |
+| `test_remind_me` | `remind_me` tool — one-time ISO datetime scheduling, recurring cron expressions, invalid cron validation, missing user_id, pg_cron job creation + payload verification, auto-unschedule for one-time jobs |
 
 ### security/ — Encryption & Auth
 
@@ -116,6 +123,17 @@ HTTP endpoints and Typer CLI commands.
 |------|----------------|
 | `test_api` | FastAPI endpoints — health, schema CRUD, LOOKUP/FUZZY queries, KV rebuild, queue status, full upsert chain (deterministic ID → KV → embedding queue → verify) |
 | `test_cli` | Typer commands — `query` (one-shot modes, table format, errors), `upsert` (JSON/YAML/Markdown/directories), `chat` (session creation, agent selection, delegation). Mostly mocked, with live DB integration for query roundtrips |
+
+### dreaming/ — Dreaming Agent
+
+Background reflective agent that generates dream moments from recent activity.
+
+| Test | What it covers |
+|------|----------------|
+| `test_dreaming` | Dreaming handler — context building from recent sessions, agent invocation with mocked model, moment persistence |
+| `test_dreaming_e2e` | End-to-end dreaming with `FunctionModel` — all 3 phases (reflect, search, save), graph edge creation |
+| `test_save_moments` | `save_moments` MCP tool — dream moment creation, affinity→graph_edges, bidirectional back-edges on targets, graceful missing target |
+| `test_merge_graph_edges` | Graph edge merging — dedup, weight update, empty lists, field preservation, default relation |
 
 ### ontology/ — Schema Verification
 

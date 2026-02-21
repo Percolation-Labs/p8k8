@@ -8,6 +8,7 @@ from p8.ontology.types import Message, Moment
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.repository import Repository
+from p8.utils.tokens import estimate_tokens
 
 
 class MemoryService:
@@ -162,7 +163,7 @@ class MemoryService:
         tool_calls: dict | None = None,
     ) -> Message:
         if token_count is None:
-            token_count = len(content) // 4 if content else 0
+            token_count = estimate_tokens(content)
 
         msg = Message(
             session_id=session_id,

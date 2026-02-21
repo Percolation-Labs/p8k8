@@ -45,7 +45,7 @@ from p8.ontology.types import Tenant, User
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.repository import Repository
-from p8.settings import Settings
+from p8.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class AuthService:
     ):
         self.db = db
         self.encryption = encryption
-        self.settings = settings or Settings()
+        self.settings = settings or get_settings()
         self.tenants = Repository(Tenant, db, encryption)
         self.users = Repository(User, db, encryption)
 

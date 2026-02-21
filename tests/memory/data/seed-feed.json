@@ -1,0 +1,137 @@
+{
+  "sessions": [
+    {
+      "id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "name": "today-session",
+      "agent_name": "general",
+      "mode": "chat",
+      "total_tokens": 500
+    },
+    {
+      "id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "name": "yesterday-session",
+      "agent_name": "general",
+      "mode": "chat",
+      "total_tokens": 300
+    },
+    {
+      "id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "name": "three-days-ago-session",
+      "agent_name": "query-agent",
+      "mode": "chat",
+      "total_tokens": 400
+    }
+  ],
+  "messages": [
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "What is the architecture of our system?",
+      "token_count": 50,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "The system uses a microservices architecture with PostgreSQL as the primary database.",
+      "token_count": 80,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "message_type": "user",
+      "content": "How does the embedding pipeline work?",
+      "token_count": 40,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "message_type": "assistant",
+      "content": "Embeddings are generated via a queue-based pipeline using pgvector for storage.",
+      "token_count": 60,
+      "days_ago": 0
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "message_type": "user",
+      "content": "Tell me about TiDB migration.",
+      "token_count": 30,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "message_type": "assistant",
+      "content": "TiDB is a distributed SQL database that can be used as an alternative to PostgreSQL for scale-out workloads.",
+      "token_count": 90,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "message_type": "user",
+      "content": "What are the pros and cons?",
+      "token_count": 25,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "message_type": "assistant",
+      "content": "Pros: horizontal scaling, MySQL compatibility. Cons: operational complexity, less mature ecosystem.",
+      "token_count": 70,
+      "days_ago": 1
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "message_type": "user",
+      "content": "Show me recent project updates.",
+      "token_count": 35,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "message_type": "assistant",
+      "content": "Here are the recent updates: deployed new embedding worker, added OTEL tracing.",
+      "token_count": 75,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "message_type": "user",
+      "content": "What about the Qdrant integration?",
+      "token_count": 30,
+      "days_ago": 3
+    },
+    {
+      "session_id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "message_type": "assistant",
+      "content": "Qdrant integration is planned for phase 2, after the pgvector pipeline stabilizes.",
+      "token_count": 65,
+      "days_ago": 3
+    }
+  ],
+  "moments": [
+    {
+      "name": "feed-moment-today",
+      "moment_type": "session_chunk",
+      "summary": "Discussed system architecture and embedding pipeline design.",
+      "source_session_id": "aaaaaaaa-0001-0000-0000-000000000001",
+      "metadata": {"message_count": 4, "token_count": 230, "chunk_index": 0},
+      "days_ago": 0
+    },
+    {
+      "name": "feed-moment-yesterday",
+      "moment_type": "session_chunk",
+      "summary": "Explored TiDB migration strategy and trade-offs.",
+      "source_session_id": "aaaaaaaa-0001-0000-0000-000000000002",
+      "metadata": {"message_count": 4, "token_count": 215, "chunk_index": 0},
+      "days_ago": 1
+    },
+    {
+      "name": "feed-moment-3days",
+      "moment_type": "session_chunk",
+      "summary": "Reviewed project updates and Qdrant integration plans.",
+      "source_session_id": "aaaaaaaa-0001-0000-0000-000000000003",
+      "metadata": {"message_count": 4, "token_count": 205, "chunk_index": 0},
+      "days_ago": 3
+    }
+  ]
+}

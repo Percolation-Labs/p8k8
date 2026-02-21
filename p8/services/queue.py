@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import UUID
 
 from p8.services.database import Database
+from p8.utils.parsing import extract_payload
 
 log = logging.getLogger(__name__)
 
@@ -115,9 +116,7 @@ class QueueService:
         task_type = task["task_type"]
 
         if task_type == "file_processing":
-            payload = task.get("payload", {})
-            if isinstance(payload, str):
-                payload = json.loads(payload)
+            payload = extract_payload(task)
             size = payload.get("size_bytes", 0)
             from p8.services.usage import check_quota, get_user_plan
 

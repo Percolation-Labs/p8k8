@@ -26,9 +26,9 @@ from uuid import uuid4
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
+from p8.services.bootstrap import create_kms
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
-from p8.services.kms import LocalFileKMS
 from p8.services.repository import Repository
 from p8.ontology.types import Message, User
 from p8.settings import Settings
@@ -459,15 +459,18 @@ async def main() -> None:
     db = Database(settings)
     await db.connect()
 
-    kms = LocalFileKMS(settings.kms_local_keyfile, db)
+    kms = create_kms(settings, db)
+    print(f"  {GREEN}KMS: {settings.kms_provider} ({settings.kms_vault_url if settings.kms_provider == 'vault' else settings.kms_local_keyfile}){RESET}")
     enc = EncryptionService(kms, system_tenant_id=settings.system_tenant_id, cache_ttl=settings.dek_cache_ttl)
-    await enc.ensure_system_key()
 
-    # Clean slate for demo
+    # Clean slate for demo (delete ALL tenant keys so they're re-created
+    # with the current KMS provider — avoids format mismatch when switching
+    # between local and vault providers)
     await db.execute(
         "TRUNCATE messages, users, sessions, feedback CASCADE"
     )
-    await db.execute("DELETE FROM tenant_keys WHERE tenant_id != $1", settings.system_tenant_id)
+    await db.execute("DELETE FROM tenant_keys")
+    await enc.ensure_system_key()
 
     try:
         await demo_platform_mode(db, enc)

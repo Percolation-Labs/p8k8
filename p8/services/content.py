@@ -143,7 +143,24 @@ class ContentService:
     async def _process_document(
         self, data: bytes, mime_type: str, chunk_max: int, chunk_overlap: int,
     ) -> tuple[str, list[str]]:
-        """Extract and chunk text from documents via Kreuzberg."""
+        """Extract and chunk text from documents via Kreuzberg.
+
+        Uses subprocess workaround when running in a daemon process (e.g. under
+        Hypercorn/Uvicorn) because Kreuzberg's ProcessPoolExecutor cannot fork
+        from daemon processes.
+        """
+        import multiprocessing
+        is_daemon = False
+        try:
+            is_daemon = multiprocessing.current_process().daemon
+        except Exception:
+            pass
+
+        if is_daemon:
+            return await self._process_document_subprocess(
+                data, mime_type, chunk_max, chunk_overlap,
+            )
+
         from kreuzberg import ChunkingConfig, ExtractionConfig, extract_bytes
 
         chunking = ChunkingConfig(max_chars=chunk_max, max_overlap=chunk_overlap)
@@ -155,6 +172,70 @@ class ContentService:
         if not chunks and full_text:
             chunks = [full_text]
         return full_text, chunks
+
+    async def _process_document_subprocess(
+        self, data: bytes, mime_type: str, chunk_max: int, chunk_overlap: int,
+    ) -> tuple[str, list[str]]:
+        """Run Kreuzberg in a separate subprocess to bypass daemon restrictions."""
+        import asyncio
+        import subprocess
+        import sys
+        import tempfile
+
+        # Write data to temp file for the subprocess
+        suffix = self._extension_for_mime(mime_type)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+
+        script = f"""
+import json, sys
+from pathlib import Path
+from kreuzberg import ChunkingConfig, ExtractionConfig, extract_file_sync
+
+chunking = ChunkingConfig(max_chars={chunk_max}, max_overlap={chunk_overlap})
+config = ExtractionConfig(chunking=chunking)
+result = extract_file_sync(Path(sys.argv[1]), config=config)
+
+chunks = [c.content for c in result.chunks] if result.chunks else []
+if not chunks and result.content:
+    chunks = [result.content]
+
+output = {{"content": result.content, "chunks": chunks}}
+print(json.dumps(output))
+"""
+        try:
+            loop = asyncio.get_event_loop()
+            proc_result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    [sys.executable, "-c", script, tmp_path],
+                    capture_output=True, text=True, timeout=300,
+                ),
+            )
+            if proc_result.returncode != 0:
+                logger.error("Kreuzberg subprocess failed: %s", proc_result.stderr)
+                raise RuntimeError(f"Document extraction failed: {proc_result.stderr[-500:]}")
+
+            import json as _json
+            parsed = _json.loads(proc_result.stdout)
+            return parsed["content"], parsed["chunks"]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def _extension_for_mime(mime_type: str) -> str:
+        """Map common MIME types to file extensions for temp files."""
+        _map = {
+            "application/pdf": ".pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+            "text/plain": ".txt",
+            "text/markdown": ".md",
+            "text/html": ".html",
+        }
+        return _map.get(mime_type, ".bin")
 
     async def _persist_file(
         self, stem: str, uri: str | None, mime_type: str, data: bytes, full_text: str,
@@ -181,11 +262,11 @@ class ContentService:
             return []
         resources = [
             Resource(
-                name=f"{stem}-chunk-{i:04d}", uri=uri, ordinal=i,
+                name=f"{stem}-chunk-{i:04d}", ordinal=i,
                 content=text, category=category,
                 tenant_id=tenant_id, user_id=user_id, tags=tags,
                 graph_edges=[{"target": stem, "relation": "chunk_of"}],
-                metadata={"file_id": str(file_id), "source_filename": filename},
+                metadata={"file_id": str(file_id), "source_filename": filename, "source_uri": uri},
             )
             for i, text in enumerate(chunk_texts)
         ]
@@ -207,6 +288,7 @@ class ContentService:
             source_session_id=session_id,
             metadata={
                 "file_id": str(file_entity.id),
+                "file_name": filename,
                 "resource_keys": [r.name for r in resources],
                 "source": "upload",
                 "chunk_count": len(resources),

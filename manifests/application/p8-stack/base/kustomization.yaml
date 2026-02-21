@@ -40,8 +40,10 @@ configMapGenerator:
       - LOG_LEVEL=info
       - POSTGRES__POOL_MIN_SIZE=2
       - POSTGRES__POOL_MAX_SIZE=10
-      - OTEL__ENABLED=false
-      - OTEL_SERVICE_NAME=p8-api
+      - P8_OTEL_ENABLED=false
+      - P8_OTEL_SERVICE_NAME=p8-api
+      - P8_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
+      - P8_OTEL_PROTOCOL=http
       - LLM__DEFAULT_MODEL=openai:gpt-4.1
       - AUTH__ENABLED=false
 

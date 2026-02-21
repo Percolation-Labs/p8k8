@@ -8,18 +8,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
-import pytest_asyncio
 
-from p8.ontology.types import Message, Moment, Session
+from p8.ontology.types import Moment
 from p8.services.memory import MemoryService
 from p8.services.repository import Repository
+from p8.utils.data import create_session, seed_messages, seed_messages_from_dicts
 
 
 # ---------------------------------------------------------------------------
-# Fixtures and helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -28,51 +27,6 @@ DATA_DIR = Path(__file__).parent / "data"
 @pytest.fixture(autouse=True)
 async def _clean(clean_db):
     yield
-
-
-async def _create_session(db, encryption, *, total_tokens: int = 0) -> Session:
-    repo = Repository(Session, db, encryption)
-    session = Session(name=f"test-session-{uuid4()}", mode="chat", total_tokens=total_tokens)
-    [result] = await repo.upsert(session)
-    return result
-
-
-async def _add_messages(
-    memory: MemoryService,
-    session_id,
-    messages: list[dict],
-) -> list[Message]:
-    """Persist a list of {role, content, tokens} dicts as messages."""
-    results = []
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        tokens = msg.get("tokens", len(content) // 4)
-        result = await memory.persist_message(
-            session_id, role, content, token_count=tokens,
-        )
-        results.append(result)
-    return results
-
-
-async def _add_alternating(
-    memory: MemoryService,
-    session_id,
-    count: int,
-    *,
-    token_count: int = 50,
-    prefix: str = "msg",
-) -> list[Message]:
-    """Persist alternating user/assistant messages."""
-    results = []
-    for i in range(count):
-        msg_type = "user" if i % 2 == 0 else "assistant"
-        content = f"{prefix}-{i}: " + ("x" * (token_count * 4))
-        msg = await memory.persist_message(
-            session_id, msg_type, content, token_count=token_count,
-        )
-        results.append(msg)
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +38,10 @@ async def test_compaction_produces_resolvable_breadcrumbs(db, encryption):
     """After compaction, old assistant messages contain [REM LOOKUP session-{id}-chunk-{N}]
     and the moment name IS in kv_store (resolvable via rem_lookup)."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add 10 messages (5 user + 5 assistant) × 50 tokens = 500 total
-    await _add_alternating(memory, session.id, 10, token_count=50)
+    await seed_messages(memory, session.id, 10, token_count=50)
 
     # Build a moment manually so compaction has something to reference
     moment = await memory.build_moment(session.id)
@@ -123,24 +77,24 @@ async def test_multi_turn_session_with_moments(db, encryption):
     """Simulate 15+ messages across 3 batches. Threshold triggers 2 moments.
     Context includes moment summaries + recent messages. Total fits within budget."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
     threshold = 200
 
     # Batch 1: 6 messages × 50 = 300 tokens → triggers moment 1
-    await _add_alternating(memory, session.id, 6, token_count=50, prefix="b1")
+    await seed_messages(memory, session.id, 6, token_count=50, prefix="b1")
     m1 = await memory.maybe_build_moment(session.id, threshold=threshold)
     assert m1 is not None
     assert m1.metadata["chunk_index"] == 0
 
     # Batch 2: 6 more × 50 = 300 tokens → triggers moment 2
-    await _add_alternating(memory, session.id, 6, token_count=50, prefix="b2")
+    await seed_messages(memory, session.id, 6, token_count=50, prefix="b2")
     m2 = await memory.maybe_build_moment(session.id, threshold=threshold)
     assert m2 is not None
     assert m2.metadata["chunk_index"] == 1
     assert m2.previous_moment_keys == [m1.name]
 
     # Batch 3: 3 more × 50 = 150 tokens → below threshold of 200
-    await _add_alternating(memory, session.id, 3, token_count=50, prefix="b3")
+    await seed_messages(memory, session.id, 3, token_count=50, prefix="b3")
     m3 = await memory.maybe_build_moment(session.id, threshold=threshold)
     assert m3 is None, "150 tokens should be below threshold of 200"
 
@@ -178,7 +132,7 @@ async def test_moment_visible_after_pai_messages_path(db, encryption):
     from p8.ontology.types import Schema
 
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Create a moment for this session
     moment_repo = Repository(Moment, db, encryption)
@@ -234,14 +188,14 @@ async def test_moment_visible_after_pai_messages_path(db, encryption):
 async def test_compaction_preserves_recent_messages(db, encryption):
     """After compaction, the last N messages are verbatim (not breadcrumbed)."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add 12 messages with identifiable content
     messages_data = []
     for i in range(12):
         role = "user" if i % 2 == 0 else "assistant"
         messages_data.append({"role": role, "content": f"unique-message-{i:03d}", "tokens": 50})
-    await _add_messages(memory, session.id, messages_data)
+    await seed_messages_from_dicts(memory, session.id, messages_data)
 
     # Build a moment so compaction uses moment breadcrumbs
     await memory.build_moment(session.id)
@@ -274,7 +228,7 @@ async def test_upload_moment_in_session_context(db, encryption):
     from p8.services.files import FileService
 
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     @dataclass
     class _FakeChunk:
@@ -398,13 +352,13 @@ async def test_upload_moment_without_session_creates_session(db, encryption):
 async def test_moment_chaining_across_many_batches(db, encryption):
     """5 batches of messages → 5 moments → each chains to predecessor."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
     threshold = 80
     moments = []
 
     for batch in range(5):
-        await _add_alternating(
-            memory, session.id, 4, token_count=30, prefix=f"batch{batch}",
+        await seed_messages(
+            memory, session.id, 4, token_count=50, prefix=f"batch{batch}",
         )
         moment = await memory.maybe_build_moment(session.id, threshold=threshold)
         assert moment is not None, f"Batch {batch} should trigger a moment"
@@ -441,11 +395,11 @@ async def test_full_pipeline_with_example_data(db, encryption):
     convo = data["conversations"][0]  # "project-planning"
     assert convo["name"] == "project-planning"
 
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
     threshold = convo["token_threshold"]
 
     # Replay all messages
-    await _add_messages(memory, session.id, convo["messages"])
+    await seed_messages_from_dicts(memory, session.id, convo["messages"])
 
     # Repeatedly check for moments (simulating end-of-turn triggers)
     moments_created = []
@@ -489,7 +443,7 @@ async def test_upload_then_session_context(db, encryption):
     from p8.services.files import FileService
 
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # 1. Upload a file with session_id
     @dataclass
@@ -529,7 +483,7 @@ async def test_upload_then_session_context(db, encryption):
     await asyncio.sleep(0.05)
 
     # 2. Add chat messages that trigger a session_chunk moment
-    await _add_alternating(memory, session.id, 8, token_count=50, prefix="chat")
+    await seed_messages(memory, session.id, 8, token_count=50, prefix="chat")
     chunk_moment = await memory.maybe_build_moment(session.id, threshold=200)
     assert chunk_moment is not None
 

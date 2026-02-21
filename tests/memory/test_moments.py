@@ -2,50 +2,12 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
-import pytest_asyncio
 
-from p8.ontology.types import Message, Moment, Session
+from p8.ontology.types import Moment
 from p8.services.memory import MemoryService
 from p8.services.repository import Repository
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-# NOTE: Tests omit user_id for convenience — the test database has no user
-# scoping requirements. In production, moments are stamped with user_id so
-# that queries like /moments/today and the CLI filter to the active user.
-
-
-async def _create_session(db, encryption, *, total_tokens: int = 0) -> Session:
-    """Create a session row and return it."""
-    repo = Repository(Session, db, encryption)
-    session = Session(name=f"test-session-{uuid4()}", mode="chat", total_tokens=total_tokens)
-    [result] = await repo.upsert(session)
-    return result
-
-
-async def _add_messages(
-    memory: MemoryService,
-    session_id,
-    count: int,
-    *,
-    token_count: int = 50,
-    prefix: str = "msg",
-) -> list[Message]:
-    """Persist alternating user/assistant messages. Returns all persisted messages."""
-    results = []
-    for i in range(count):
-        msg_type = "user" if i % 2 == 0 else "assistant"
-        content = f"{prefix}-{i}: " + ("x" * (token_count * 4))  # ~token_count tokens
-        msg = await memory.persist_message(
-            session_id, msg_type, content, token_count=token_count,
-        )
-        results.append(msg)
-    return results
+from p8.utils.data import create_session, seed_messages
 
 
 # ---------------------------------------------------------------------------
@@ -61,10 +23,10 @@ async def _clean(clean_db):
 async def test_moment_built_after_threshold(db, encryption):
     """Persist enough messages to exceed threshold → verify session_chunk moment exists."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add 6 messages × 50 tokens = 300 total tokens
-    await _add_messages(memory, session.id, 6, token_count=50)
+    await seed_messages(memory, session.id, 6, token_count=50)
 
     # Threshold of 200 → should trigger
     moment = await memory.maybe_build_moment(session.id, threshold=200)
@@ -81,15 +43,15 @@ async def test_moment_built_after_threshold(db, encryption):
 async def test_moment_chaining(db, encryption):
     """Build two moments → verify second moment's previous_moment_keys references the first."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # First batch: 4 messages × 50 = 200 tokens
-    await _add_messages(memory, session.id, 4, token_count=50)
+    await seed_messages(memory, session.id, 4, token_count=50)
     moment1 = await memory.maybe_build_moment(session.id, threshold=150)
     assert moment1 is not None
 
     # Second batch: 4 more messages × 50 = 200 more tokens
-    await _add_messages(memory, session.id, 4, token_count=50, prefix="batch2")
+    await seed_messages(memory, session.id, 4, token_count=50, prefix="batch2")
     moment2 = await memory.maybe_build_moment(session.id, threshold=150)
     assert moment2 is not None
     assert moment2.previous_moment_keys == [moment1.name]
@@ -99,10 +61,10 @@ async def test_moment_chaining(db, encryption):
 async def test_moments_injected_into_context(db, encryption):
     """Create moments for a session → load_context() → verify moment summaries as system messages."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add some messages
-    await _add_messages(memory, session.id, 4, token_count=50)
+    await seed_messages(memory, session.id, 4, token_count=50)
 
     # Manually create a moment for this session
     moment_repo = Repository(Moment, db, encryption)
@@ -127,10 +89,10 @@ async def test_multiple_moments_injected(db, encryption):
     import asyncio
 
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add some messages so load_context has something to return
-    await _add_messages(memory, session.id, 2, token_count=10)
+    await seed_messages(memory, session.id, 2, token_count=10)
 
     # Create 4 moments with small delays so created_at ordering is deterministic
     moment_repo = Repository(Moment, db, encryption)
@@ -166,10 +128,10 @@ async def test_multiple_moments_injected(db, encryption):
 async def test_no_moment_below_threshold(db, encryption):
     """Small session → verify no moment created."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add 2 messages × 10 tokens = 20 total
-    await _add_messages(memory, session.id, 2, token_count=10)
+    await seed_messages(memory, session.id, 2, token_count=10)
 
     moment = await memory.maybe_build_moment(session.id, threshold=200)
     assert moment is None
@@ -291,10 +253,10 @@ async def test_content_upload_moment_in_feed(db, encryption):
 async def test_session_timeline_interleaves_messages_and_moments(db, encryption):
     """Messages + moment in a session → timeline returns both types chronologically."""
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
 
     # Add 6 messages
-    await _add_messages(memory, session.id, 6, token_count=50)
+    await seed_messages(memory, session.id, 6, token_count=50)
 
     # Create a moment for this session
     moment_repo = Repository(Moment, db, encryption)
@@ -322,7 +284,7 @@ async def test_session_timeline_interleaves_messages_and_moments(db, encryption)
 
 async def test_session_timeline_empty_session(db, encryption):
     """Empty session → timeline returns empty list."""
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
     timeline = await db.rem_session_timeline(session.id)
     assert timeline == []
 
@@ -339,11 +301,11 @@ async def test_today_summary_with_activity(db, encryption):
     # Clean prior run's messages for this user so count is deterministic
     await db.execute("DELETE FROM messages WHERE user_id = $1", test_uid)
     memory = MemoryService(db, encryption)
-    session = await _create_session(db, encryption)
+    session = await create_session(db, encryption)
     # Stamp session with test user
     await db.execute("UPDATE sessions SET user_id = $1 WHERE id = $2", test_uid, session.id)
 
-    await _add_messages(memory, session.id, 4, token_count=25)
+    await seed_messages(memory, session.id, 4, token_count=25)
     # Stamp messages with test user
     await db.execute("UPDATE messages SET user_id = $1 WHERE session_id = $2", test_uid, session.id)
 

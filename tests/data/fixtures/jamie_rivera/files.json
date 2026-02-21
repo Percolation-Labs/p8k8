@@ -1,0 +1,59 @@
+{
+  "description": "6 file entities — PDF, XLSX, DOCX, PPTX, JPEG, M4A. Each maps to a sample upload file in tests/data/uploads/.",
+  "files": [
+    {
+      "name": "quarterly-report-q1.pdf",
+      "uri": "uploads/sample-report.pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 2048,
+      "parsed_content": "Q1 Quarterly Report: Revenue grew 18% QoQ. Key highlights include mobile app launch, 50k MAU milestone, and Series A close.",
+      "processing_status": "completed",
+      "source_session": "jamie-voice-pdf-day1"
+    },
+    {
+      "name": "q2-metrics-dashboard.xlsx",
+      "uri": "uploads/sample-spreadsheet.xlsx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "size_bytes": 3072,
+      "parsed_content": "Q2 Metrics Dashboard: DAU 12.4k (+23%), Revenue $142k (+18%), Churn 3.2% (-0.5pp). Growth projections for Q3-Q4.",
+      "processing_status": "completed",
+      "source_session": "jamie-xlsx-metrics-day6"
+    },
+    {
+      "name": "competitive-analysis-notion.docx",
+      "uri": "uploads/sample-doc.docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size_bytes": 4096,
+      "parsed_content": "Competitive Analysis: Notion AI. Strong: contextual suggestions, inline editing. Weak: no voice input, limited integrations. Opportunity in structured memory.",
+      "processing_status": "completed",
+      "source_session": "jamie-competitive-docx-day4"
+    },
+    {
+      "name": "board-presentation-q1.pptx",
+      "uri": "uploads/sample-slides.pptx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "size_bytes": 5120,
+      "parsed_content": "Board Presentation Q1 2026: Product milestones, user growth, financial projections, hiring plan. 12 slides.",
+      "processing_status": "completed",
+      "source_session": "jamie-investor-meeting-day5"
+    },
+    {
+      "name": "whiteboard-architecture-v2.jpg",
+      "uri": "uploads/sample-image.jpg",
+      "mime_type": "image/jpeg",
+      "size_bytes": 1536,
+      "parsed_content": "Whiteboard sketch showing microservices topology with API gateway, auth service, and event bus connections.",
+      "processing_status": "completed",
+      "source_session": "jamie-image-reminder-day2"
+    },
+    {
+      "name": "onboarding-ideas-voice.m4a",
+      "uri": "uploads/sample-voice.m4a",
+      "mime_type": "audio/mp4",
+      "size_bytes": 2560,
+      "parsed_content": "Voice memo: Brainstormed ideas for improving first-time user experience. Progressive disclosure, guided tour, value-first onboarding flow.",
+      "processing_status": "completed",
+      "source_session": "jamie-voice-pdf-day1"
+    }
+  ]
+}

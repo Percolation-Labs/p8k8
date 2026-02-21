@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS schemas (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS ontologies (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -83,6 +85,7 @@ CREATE TABLE IF NOT EXISTS resources (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -110,6 +113,7 @@ CREATE TABLE IF NOT EXISTS moments (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -130,6 +134,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -157,6 +162,7 @@ CREATE TABLE IF NOT EXISTS messages (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -178,6 +184,7 @@ CREATE TABLE IF NOT EXISTS servers (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -199,6 +206,7 @@ CREATE TABLE IF NOT EXISTS tools (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -220,6 +228,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -242,6 +251,7 @@ CREATE TABLE IF NOT EXISTS files (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -267,6 +277,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -285,6 +296,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -310,6 +322,7 @@ CREATE TABLE IF NOT EXISTS storage_grants (
     -- system fields
     tenant_id       VARCHAR(100),
     user_id         UUID,
+    encryption_level VARCHAR(20),
     graph_edges     JSONB DEFAULT '[]'::jsonb,
     metadata        JSONB DEFAULT '{}'::jsonb,
     tags            TEXT[] DEFAULT '{}',
@@ -580,6 +593,21 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS output_tokens INT DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS latency_ms INT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS model VARCHAR(100);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_name VARCHAR(255);
+
+-- Encryption level tracking (what mode was active when the row was written)
+ALTER TABLE schemas ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE moments ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE tools ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE files ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+ALTER TABLE storage_grants ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
 
 
 -- ---------------------------------------------------------------------------

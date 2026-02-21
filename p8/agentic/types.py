@@ -1,7 +1,7 @@
 """Typed models for the agentic runtime.
 
-Agent config, context attributes, routing state, streaming events,
-and tool references — all as Pydantic models.
+Context attributes, routing state, streaming events, and backward-compat
+aliases. The canonical agent config is now in ``p8.agentic.agent_schema``.
 """
 
 from __future__ import annotations
@@ -14,73 +14,35 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, create_model
+from p8.utils.ids import short_id
+
+from pydantic import BaseModel, Field
 from pydantic_ai import UsageLimits
 
+# ---------------------------------------------------------------------------
+# Backward-compat aliases — canonical versions live in agent_schema.py
+# ---------------------------------------------------------------------------
+
+from p8.agentic.agent_schema import (  # noqa: F401
+    AgentConfig,
+    AgentSchema,
+    AgentUsageLimits,
+    MCPResourceReference as ResourceReference,
+    MCPToolReference as ToolReference,
+)
+
 
 # ---------------------------------------------------------------------------
-# Agent config (extracted from schema json_schema)
+# Legacy AgentConfig (flat config extracted from old-format json_schema)
 # ---------------------------------------------------------------------------
 
 
-class ToolReference(BaseModel):
-    """Pointer to a remote tool on a server."""
+class LegacyAgentConfig(BaseModel):
+    """Legacy runtime config extracted from old-format json_schema.
 
-    name: str
-    server: str = "local"
-    protocol: str = "mcp"  # mcp | openapi
-    description: str | None = None
-
-
-class ResourceReference(BaseModel):
-    """Pointer to an MCP resource for context injection."""
-
-    uri: str
-    name: str | None = None
-    description: str | None = None
-
-
-class AgentUsageLimits(BaseModel):
-    """Token and request limits for agent execution.
-
-    Maps to ``pydantic_ai.UsageLimits`` at runtime. Declaring limits
-    in schema config prevents runaway agents from consuming unbounded tokens.
-    """
-
-    request_limit: int | None = None
-    tool_calls_limit: int | None = None
-    input_tokens_limit: int | None = None
-    output_tokens_limit: int | None = None
-    total_tokens_limit: int | None = None
-
-    def to_pydantic_ai(self) -> UsageLimits:
-        """Convert to ``pydantic_ai.UsageLimits``."""
-        kwargs: dict[str, Any] = {}
-        if self.request_limit is not None:
-            kwargs["request_limit"] = self.request_limit
-        if self.tool_calls_limit is not None:
-            kwargs["tool_calls_limit"] = self.tool_calls_limit
-        if self.input_tokens_limit is not None:
-            kwargs["input_tokens_limit"] = self.input_tokens_limit
-        if self.output_tokens_limit is not None:
-            kwargs["output_tokens_limit"] = self.output_tokens_limit
-        if self.total_tokens_limit is not None:
-            kwargs["total_tokens_limit"] = self.total_tokens_limit
-        return UsageLimits(**kwargs)
-
-
-class AgentConfig(BaseModel):
-    """Runtime config extracted from schema json_schema.
-
-    This is what lives in the ``json_schema`` JSONB column of a schema row
-    with ``kind='agent'``. The adapter reads this to build a pydantic-ai Agent.
-
-    Structured output:
-        When ``structured_output=True`` and ``response_schema`` contains
-        ``properties``, a dynamic Pydantic model is generated via
-        ``to_output_model()``. When ``structured_output=False`` but properties
-        exist, ``to_prompt_guidance()`` produces human-readable field guidance
-        that can be appended to the system prompt.
+    Kept for backward compatibility with tests and code that parses
+    the old flat config format (model_name, temperature, tools as flat list).
+    New code should use ``AgentSchema.from_schema_row()`` instead.
     """
 
     model_name: str | None = None
@@ -94,23 +56,21 @@ class AgentConfig(BaseModel):
     limits: AgentUsageLimits | None = None
 
     # Routing
-    routing_enabled: bool = True  # opt in to default routing table
-    routing_model: str | None = None  # override routing classifier model
+    routing_enabled: bool = True
+    routing_model: str | None = None
     routing_max_turns: int = 20
 
     # Observation
-    observation_mode: str = "sync"  # sync | parallel | disabled
+    observation_mode: str = "sync"
     observation_prompt: str | None = None
 
     @classmethod
-    def from_json_schema(cls, raw: dict | None) -> AgentConfig:
+    def from_json_schema(cls, raw: dict | None) -> LegacyAgentConfig:
         """Parse json_schema JSONB into typed config, tolerating extra keys."""
         if not raw:
             return cls()
-        # Only take known fields
         known = cls.model_fields
         filtered = {k: v for k, v in raw.items() if k in known}
-        # Normalize tool/resource entries
         if "tools" in filtered:
             filtered["tools"] = [
                 t if isinstance(t, dict) else {"name": t}
@@ -121,112 +81,9 @@ class AgentConfig(BaseModel):
                 r if isinstance(r, dict) else {"uri": r}
                 for r in filtered["resources"]
             ]
-        # Normalize limits
         if "limits" in filtered and isinstance(filtered["limits"], dict):
             filtered["limits"] = AgentUsageLimits(**filtered["limits"])
         return cls.model_validate(filtered)
-
-    # ------------------------------------------------------------------
-    # Output model generation
-    # ------------------------------------------------------------------
-
-    @property
-    def _properties(self) -> dict[str, Any]:
-        """Extract properties from response_schema."""
-        if not self.response_schema:
-            return {}
-        return self.response_schema.get("properties", {})
-
-    @property
-    def _required(self) -> list[str]:
-        """Extract required fields from response_schema."""
-        if not self.response_schema:
-            return []
-        return self.response_schema.get("required", [])
-
-    def to_output_model(self) -> type[BaseModel] | type[str]:
-        """Generate a dynamic Pydantic model from response_schema properties.
-
-        If ``structured_output`` is disabled or no properties are defined,
-        returns ``str`` (the agent produces plain text).
-
-        Otherwise, builds a Pydantic model at runtime using
-        ``pydantic.create_model``.
-
-        Example response_schema::
-
-            {
-                "properties": {
-                    "answer": {"type": "string"},
-                    "confidence": {"type": "number"}
-                },
-                "required": ["answer"]
-            }
-        """
-        if not self.structured_output or not self._properties:
-            return str
-
-        type_map: dict[str, type] = {
-            "string": str,
-            "number": float,
-            "integer": int,
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }
-
-        field_definitions: dict[str, Any] = {}
-        required_set = set(self._required)
-
-        for field_name, field_def in self._properties.items():
-            field_type_str = (
-                field_def.get("type", "string")
-                if isinstance(field_def, dict)
-                else "string"
-            )
-            python_type = type_map.get(field_type_str, str)
-
-            if field_name in required_set:
-                field_definitions[field_name] = (python_type, ...)
-            else:
-                field_definitions[field_name] = (python_type | None, None)
-
-        # Generate a class name from the agent config context
-        return create_model("AgentOutput", **field_definitions)
-
-    def to_prompt_guidance(self) -> str:
-        """Convert response_schema properties to human-readable prompt guidance.
-
-        When structured output is disabled, the agent still benefits from
-        knowing what fields it *should* produce. This generates a
-        natural-language description of the expected output shape that can
-        be appended to the system prompt.
-
-        Returns empty string if no properties are defined.
-        """
-        if not self._properties:
-            return ""
-
-        lines = ["Your response should include the following fields:"]
-        required_set = set(self._required)
-        for field_name, field_def in self._properties.items():
-            field_type = (
-                field_def.get("type", "string")
-                if isinstance(field_def, dict)
-                else "string"
-            )
-            desc = (
-                field_def.get("description", "")
-                if isinstance(field_def, dict)
-                else ""
-            )
-            required_marker = " (required)" if field_name in required_set else " (optional)"
-            line = f"- **{field_name}** ({field_type}{required_marker})"
-            if desc:
-                line += f": {desc}"
-            lines.append(line)
-
-        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +364,7 @@ class StreamingState:
     """Mutable state for an in-progress streaming response."""
 
     request_id: str = field(
-        default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        default_factory=lambda: short_id("chatcmpl-")
     )
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: int = field(default_factory=lambda: int(time.time()))

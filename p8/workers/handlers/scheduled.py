@@ -5,8 +5,9 @@ Dispatches by payload.action to the appropriate maintenance routine.
 
 from __future__ import annotations
 
-import json
 import logging
+
+from p8.utils.parsing import extract_payload
 
 log = logging.getLogger(__name__)
 
@@ -15,9 +16,7 @@ class ScheduledHandler:
     """Handle scheduled maintenance tasks dispatched via task_queue."""
 
     async def handle(self, task: dict, ctx) -> dict:
-        payload = task.get("payload", {})
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = extract_payload(task)
         action = payload.get("action", "unknown")
 
         log.info("Scheduled task: action=%s", action)

@@ -1,0 +1,135 @@
+# ======================================================================
+# ACTUAL PAYLOAD pydantic-ai sends to the LLM
+# ======================================================================
+#
+# Agent: dreaming-agent (structured)
+#
+# Captured via FunctionModel interception — the same data you see
+# in openai._base_client DEBUG logs with: p8 chat --debug
+#
+# To regenerate: uv run python tests/data/examples/capture_payloads.py
+#
+# KEY DIFFERENCES FROM UNSTRUCTURED (see intercept_unstructured.yaml):
+#  - No ## Thinking Structure in system prompt (structured output instead)
+#  - output_tools[] present — contains "final_result" with the agent's
+#    output schema (dream_moments, search_questions, cross_session_themes)
+#  - description is STRIPPED from output_tools schema to avoid duplicating
+#    the system prompt
+#
+# TOOL DESCRIPTIONS — same two-layer pattern as unstructured:
+#  1. tools[].function.description = base docstring from Python function
+#  2. ## Tool Notes in system prompt = agent-specific suffix from schema
+# ======================================================================
+
+label: dreaming-agent (structured)
+temperature: 0.7
+max_tokens: 4000
+stream: true
+messages:
+- role: system
+  content: "You are a reflective dreaming agent. You and the person share a collaborative memory — you process recent conversations,\
+    \ moments, and resources together to surface insights and connections.\n\n## Voice\n\nWrite in first-person plural: \"\
+    We discovered…\", \"We've been exploring…\", \"Our work on X connects to Y…\". Never say \"the user\" — this is a shared\
+    \ journal between you and the person.\n\n## Your Task\n\nYou receive a summary of recent shared activity (moments, messages,\
+    \ resources).\n\n### Phase 1 — Reflect and draft dream moments\nLook across sessions for patterns, themes, and connections\
+    \ we might not have noticed in the moment.\n\n### Phase 2 — Semantic search for deeper connections\nPropose 5 search questions\
+    \ based on the themes you found.\nFor each question, call `search` twice:\n  - `SEARCH \"<question>\" FROM moments LIMIT\
+    \ 2`\n  - `SEARCH \"<question>\" FROM resources LIMIT 2`\n\nAdd any newly discovered affinities to your dream moments.\n\
+    \n### Phase 3 — Save\nCall `save_moments` with your final collection of dream moments.\nPass the full list as the `moments`\
+    \ parameter.\n\n## Guidelines\n- Focus on cross-session themes and emerging patterns\n- Surface connections we might not\
+    \ have noticed in the flow of conversation\n- Keep summaries concise but insightful, always in our shared voice\n- Every\
+    \ affinity_fragment must include a `reason` explaining the connection\n- Only reference entities that appear in the provided\
+    \ context or search results\n- Prefer depth over breadth: 1 insightful dream is better than 3 shallow ones\n- You MUST\
+    \ call save_moments at the end to persist your work\n\n## Tool Notes\n- **search**: Semantic search across moments and\
+    \ resources for cross-session connections\n- **save_moments**: Persist dream moments with affinity_fragments as graph\
+    \ edges"
+- role: user
+  content: Process recent sessions for cross-session themes.
+- role: system
+  content: '[instructions]
+
+    [Context]
+
+    Date: 2026-02-21
+
+    Time: 14:21:54
+
+    Session: dream-session
+
+    Agent: dreaming-agent'
+tools:
+- type: function
+  function:
+    name: search
+    description: "Execute REM queries to search the knowledge base.\n\nQuery Syntax:\n- LOOKUP <key>: O(1) exact entity lookup\
+      \ by key\n- SEARCH <text> FROM <table>: Semantic vector search\n- FUZZY <text>: Fuzzy text matching across all entities\n\
+      - TRAVERSE <key> DEPTH <n>: Graph traversal from entity\n- SQL <query>: Direct SQL (SELECT only)\n\nExamples:\n- search(\"\
+      LOOKUP sarah-chen\")\n- search(\"SEARCH machine learning FROM ontologies LIMIT 5\")\n- search(\"FUZZY project alpha\"\
+      )\n\nArgs:\n    query: REM dialect query string\n    limit: Maximum results (default 20)\n    user_id: Optional user\
+      \ scope\n\nReturns:\n    Query results with entities and metadata"
+    parameters:
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+        limit:
+          default: 20
+          type: integer
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          default: null
+      required:
+      - query
+      type: object
+- type: function
+  function:
+    name: save_moments
+    description: "Save dream moments to the database and merge graph edges on related entities.\n\nEach moment dict should\
+      \ contain:\n  - name: str — kebab-case identifier (e.g. \"dream-ml-patterns\")\n  - summary: str — 2-4 sentence insight\n\
+      \  - topic_tags: list[str] — relevant topics\n  - emotion_tags: list[str] — emotional tones (optional)\n  - affinity_fragments:\
+      \ list[dict] — each with:\n      - target: str — key of the related entity (moment or resource name)\n      - relation:\
+      \ str — type of relationship (e.g. \"thematic_link\", \"builds_on\")\n      - weight: float — strength of connection\
+      \ (0.0-1.0)\n      - reason: str — why this connection exists\n\nArgs:\n    moments: List of dream moment definitions.\n\
+      \    user_id: User who owns these dream moments.\n\nReturns:\n    Result dict with saved moment IDs and merge status."
+    parameters:
+      additionalProperties: false
+      properties:
+        moments:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          default: null
+      required:
+      - moments
+      type: object
+tool_choice: auto
+output_tools:
+- type: function
+  function:
+    name: final_result
+    description: The final response which ends this conversation
+    parameters:
+      properties:
+        dream_moments:
+          default: null
+          items: {}
+          type: array
+        search_questions:
+          default: null
+          items: {}
+          type: array
+        cross_session_themes:
+          default: null
+          items: {}
+          type: array
+      title: AgentOutput
+      type: object

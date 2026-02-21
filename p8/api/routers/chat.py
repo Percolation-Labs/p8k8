@@ -18,10 +18,11 @@ from ag_ui.core.events import CustomEvent
 from p8.agentic.adapter import DEFAULT_AGENT_NAME
 from p8.agentic.delegate import set_child_event_sink
 from p8.api.controllers.chat import ChatController
-from p8.api.deps import get_db, get_encryption
+from p8.api.deps import get_db, get_encryption, get_optional_user
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.usage import check_quota, get_user_plan, increment_usage
+from p8.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -165,10 +166,12 @@ async def chat(
     """
     agent_name = request.headers.get("x-agent-schema-name") or DEFAULT_AGENT_NAME
 
-    raw_user_id = request.headers.get("x-user-id")
-    user_id = UUID(raw_user_id) if raw_user_id else None
-    user_email = request.headers.get("x-user-email")
+    # Resolve user identity — JWT or x-user-id/x-tenant-id headers
+    current_user = await get_optional_user(request)
+    user_id = current_user.user_id if current_user else None
+    user_email = current_user.email if current_user else None
     user_name = request.headers.get("x-user-name")
+    tenant_id = (current_user.tenant_id or None) if current_user else None
     session_name = request.headers.get("x-session-name")
     session_type = request.headers.get("x-session-type")
 
@@ -187,6 +190,7 @@ async def chat(
             user_id=user_id,
             user_email=user_email,
             user_name=user_name,
+            tenant_id=tenant_id,
             session_name=session_name,
             session_type=session_type,
         )
@@ -235,7 +239,7 @@ async def chat(
             input_tokens = usage.input_tokens if usage and usage.input_tokens else 0
             output_tokens = usage.output_tokens if usage and usage.output_tokens else 0
             latency_ms = int((time.monotonic() - stream_start) * 1000)
-            model_name = ctx.adapter._get_model_string()
+            model_name = ctx.adapter.config.get_options().get("model", "")
             agent_name_val = ctx.adapter.schema.name
 
             await controller.persist_turn(
@@ -253,7 +257,7 @@ async def chat(
 
             # Post-flight: increment chat token usage
             if user_id and plan_id:
-                token_estimate = (len(user_prompt) + len(assistant_text)) // 4
+                token_estimate = estimate_tokens(user_prompt) + estimate_tokens(assistant_text)
                 await increment_usage(db, user_id, "chat_tokens", max(token_estimate, 1), plan_id)
         except Exception:
             logger.exception("Failed to persist turn or track usage")

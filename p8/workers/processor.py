@@ -13,10 +13,10 @@ import argparse
 import asyncio
 import logging
 import signal
-import uuid
 from dataclasses import dataclass, field
 
 from p8.services.bootstrap import bootstrap_services
+from p8.utils.ids import short_id
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.queue import QueueService
@@ -82,7 +82,7 @@ class TieredWorker:
     tier: str
     poll_interval: float = 5.0
     batch_size: int = 1
-    worker_id: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
+    worker_id: str = field(default_factory=lambda: short_id("worker-"))
     _running: bool = field(default=False, repr=False)
 
     async def run(self) -> None:

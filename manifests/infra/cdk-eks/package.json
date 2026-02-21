@@ -1,0 +1,40 @@
+{
+  "name": "p8-eks-cluster",
+  "version": "1.0.0",
+  "description": "EKS cluster infrastructure for Percolation Labs using CDK v2",
+  "main": "bin/cdk.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "test": "jest",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "deploy:all": "cdk deploy --all --require-approval never"
+  },
+  "keywords": [
+    "aws-cdk",
+    "eks",
+    "kubernetes",
+    "gitops"
+  ],
+  "author": "Percolation Labs",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.10.0",
+    "aws-cdk": "^2.170.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@aws-cdk/lambda-layer-kubectl-v31": "^2.1.0",
+    "@aws-cdk/lambda-layer-kubectl-v33": "^2.0.0",
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.3.0",
+    "dotenv": "^16.4.0"
+  }
+}

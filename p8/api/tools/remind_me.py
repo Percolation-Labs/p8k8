@@ -36,13 +36,13 @@ async def remind_me(
         Reminder details including job name and schedule
     """
     from croniter import croniter
-    from p8.settings import Settings
+    from p8.settings import get_settings
 
     if not user_id:
         return {"status": "error", "error": "user_id is required for reminders"}
 
     now = datetime.now(timezone.utc)
-    settings = Settings()
+    settings = get_settings()
     api_url = f"{settings.api_base_url}/notifications/send"
     reminder_id = uuid4()
     job_name = f"reminder-{reminder_id}"

@@ -54,15 +54,18 @@ class Repository:
         if not entities:
             return []
 
-        # Ensure DEKs cached for all tenants
+        # Ensure DEKs cached and resolve encryption modes for all tenants
+        tenant_modes: dict[str, str] = {}
         for tid in {e.tenant_id for e in entities if e.tenant_id}:
             await self.encryption.get_dek(tid)
+            tenant_modes[tid] = await self.encryption.get_tenant_mode(tid)
 
-        # Dump, encrypt, and convert to JSON-serializable dicts
+        # Dump, encrypt, stamp encryption_level, and convert to JSON-serializable dicts
         rows_data = []
         for entity in entities:
             data = entity.model_dump(exclude_none=True)
             data = self.encryption.encrypt_fields(self.model_class, data, entity.tenant_id)
+            data["encryption_level"] = tenant_modes.get(entity.tenant_id, "none") if entity.tenant_id else "none"
             rows_data.append({k: _jsonify(v) for k, v in data.items()})
 
         # Column set = union across all entities (preserves insertion order)

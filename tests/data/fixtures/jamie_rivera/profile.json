@@ -1,0 +1,21 @@
+{
+  "description": "Jamie Rivera — product/engineering lead at a startup. Test profile for validating the full feed rendering pipeline.",
+  "user": {
+    "email": "user1@example.com",
+    "name": "Jamie Rivera",
+    "interests": ["product-management", "engineering", "AI"],
+    "activity_level": "high",
+    "content": "Jamie Rivera is a product/engineering lead at a fast-growing startup. They manage a team of four and focus on roadmap planning, technical architecture, and investor relations."
+  },
+  "tenant": {
+    "name": "jamie-test-tenant",
+    "encryption_mode": "platform",
+    "status": "active"
+  },
+  "team": [
+    {"name": "Sarah Kim", "role": "Senior Engineer"},
+    {"name": "Marcus Lee", "role": "Backend Engineer"},
+    {"name": "Priya Patel", "role": "Frontend Engineer"},
+    {"name": "Jordan Rivera", "role": "Designer"}
+  ]
+}

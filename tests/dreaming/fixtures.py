@@ -7,6 +7,7 @@ from uuid import UUID
 from p8.ontology.types import Moment, Resource, Session
 from p8.services.memory import MemoryService
 from p8.services.repository import Repository
+from p8.utils.tokens import estimate_tokens
 
 TEST_USER_ID = UUID("dddddddd-0000-0000-0000-000000000001")
 
@@ -45,7 +46,7 @@ async def setup_dreaming_fixtures(db, encryption):
     ]
     for mtype, content in ml_messages:
         await memory.persist_message(
-            sa.id, mtype, content, user_id=TEST_USER_ID, token_count=len(content) // 4,
+            sa.id, mtype, content, user_id=TEST_USER_ID, token_count=estimate_tokens(content),
         )
 
     # Messages for session B (architecture topics)
@@ -57,7 +58,7 @@ async def setup_dreaming_fixtures(db, encryption):
     ]
     for mtype, content in arch_messages:
         await memory.persist_message(
-            sb.id, mtype, content, user_id=TEST_USER_ID, token_count=len(content) // 4,
+            sb.id, mtype, content, user_id=TEST_USER_ID, token_count=estimate_tokens(content),
         )
 
     # Moments

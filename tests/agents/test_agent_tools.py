@@ -1,16 +1,20 @@
 """Integration tests for AgentAdapter with MCP tool loading.
 
 Tests the full agent construction pipeline:
-- SampleAgent registration and loading
+- Agent registration and loading (built-in, YAML, DB)
+- AgentSchema from_model_class, from_yaml_file, from_schema_row
 - Tool resolution from FastMCP server via FastMCPToolset
-- Tools: search, action, ask_agent (delegate)
-- Resource: user://profile/{user_id}
+- Tool description suffixes in system prompt
+- Thinking aide properties in prompt guidance
+- DB and YAML round-trips
+- TTL caching
 - Delegation (ask_agent calling another agent)
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import UUID, uuid4
 
 USER_ADA = UUID("00000000-0000-0000-0000-00000000ada0")
@@ -69,22 +73,143 @@ async def test_user(db, encryption):
 
 
 # ---------------------------------------------------------------------------
+# AgentSchema.from_model_class
+# ---------------------------------------------------------------------------
+
+
+def test_from_model_class_general():
+    """from_model_class parses GeneralAgent into a flat AgentSchema."""
+    from p8.agentic.core_agents import GeneralAgent
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.from_model_class(GeneralAgent)
+    assert schema.name == "general"
+    assert schema.structured_output is False
+    assert "friendly" in schema.description
+    # Properties are thinking aides, not "answer"
+    assert "user_intent" in schema.properties
+    assert "topic" in schema.properties
+    assert "requires_search" in schema.properties
+    assert "answer" not in schema.properties
+    # Tools are inline with descriptions
+    tool_names = {t.name for t in schema.tools}
+    assert {"search", "action", "ask_agent", "remind_me"}.issubset(tool_names)
+    # Tool descriptions present
+    search_tool = next(t for t in schema.tools if t.name == "search")
+    assert search_tool.description is not None
+    assert "REM" in search_tool.description
+
+
+def test_from_model_class_dreaming():
+    """from_model_class parses DreamingAgent with nested models."""
+    from p8.agentic.core_agents import DreamingAgent
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.from_model_class(DreamingAgent)
+    assert schema.name == "dreaming-agent"
+    assert schema.structured_output is True
+    assert schema.temperature == 0.7
+    assert "dream_moments" in schema.properties
+    assert "search_questions" in schema.properties
+    assert "cross_session_themes" in schema.properties
+    # Limits
+    assert schema.limits is not None
+    assert schema.limits.request_limit == 15
+    assert schema.limits.total_tokens_limit == 115000
+
+
+def test_from_model_class_sample():
+    """from_model_class parses SampleAgent correctly."""
+    from p8.agentic.core_agents import SampleAgent
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.from_model_class(SampleAgent)
+    assert schema.name == "sample-agent"
+    assert "topic" in schema.properties
+    assert "requires_search" in schema.properties
+    assert len(schema.tools) == 3
+    assert schema.limits is not None
+    assert schema.limits.request_limit == 10
+
+
+# ---------------------------------------------------------------------------
+# Tool description suffix in system prompt
+# ---------------------------------------------------------------------------
+
+
+def test_tool_notes_in_system_prompt():
+    """Tools with descriptions get a 'Tool Notes' section in system prompt."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.build(
+        name="test-agent",
+        description="You help users.",
+        tools=[
+            {"name": "search", "description": "Query the KB using REM"},
+            {"name": "action"},  # no description
+        ],
+    )
+    prompt = schema.get_system_prompt()
+    assert "## Tool Notes" in prompt
+    assert "**search**: Query the KB using REM" in prompt
+    # action has no description, should not appear in tool notes
+    assert "**action**" not in prompt
+
+
+def test_no_tool_notes_without_descriptions():
+    """No Tool Notes section when no tools have descriptions."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.build(
+        name="test-agent",
+        description="You help users.",
+        tools=[{"name": "search"}, {"name": "action"}],
+    )
+    prompt = schema.get_system_prompt()
+    assert "## Tool Notes" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Thinking aide properties in prompt guidance
+# ---------------------------------------------------------------------------
+
+
+def test_thinking_structure_in_prompt():
+    """Properties appear as 'Thinking Structure' in conversational mode prompt."""
+    from p8.agentic.core_agents import GENERAL_AGENT
+
+    prompt = GENERAL_AGENT.get_system_prompt()
+    assert "## Thinking Structure" in prompt
+    assert "user_intent" in prompt
+    assert "topic" in prompt
+    assert "requires_search" in prompt
+    assert "Do NOT output field names" in prompt
+
+
+def test_no_thinking_structure_in_structured_mode():
+    """Structured output agents don't get thinking structure guidance."""
+    from p8.agentic.core_agents import DREAMING_AGENT
+
+    prompt = DREAMING_AGENT.get_system_prompt()
+    assert "## Thinking Structure" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # SampleAgent registration & config
 # ---------------------------------------------------------------------------
 
 
 async def test_register_sample_agent(db, encryption):
     """register_sample_agent creates a schema row with correct config."""
-    from p8.agentic.adapter import SAMPLE_AGENT, register_sample_agent
+    from p8.agentic.adapter import register_sample_agent
 
     schema = await register_sample_agent(db, encryption)
     assert schema.name == "sample-agent"
     assert schema.kind == "agent"
     assert "knowledge base" in schema.content
     assert schema.json_schema is not None
-    assert schema.json_schema["temperature"] == 0.3
-    assert len(schema.json_schema["tools"]) >= 3
-    tool_names = {t["name"] if isinstance(t, dict) else t for t in schema.json_schema["tools"]}
+    # Flat format: tools at top level of json_schema
+    tool_names = {t["name"] if isinstance(t, dict) else t for t in schema.json_schema.get("tools", [])}
     assert {"search", "action", "ask_agent"}.issubset(tool_names)
 
 
@@ -92,10 +217,24 @@ async def test_builtin_agent_auto_registers(db, encryption):
     """from_schema_name auto-registers built-in agents on first load."""
     from p8.agentic.adapter import AgentAdapter
 
-    # No manual register_sample_agent — should auto-register from BUILTIN_AGENTS
     adapter = await AgentAdapter.from_schema_name("sample-agent", db, encryption)
     assert adapter.schema.name == "sample-agent"
-    assert adapter.config.temperature == 0.3
+
+
+# ---------------------------------------------------------------------------
+# Adapter .config property
+# ---------------------------------------------------------------------------
+
+
+async def test_adapter_config_property(sample_adapter):
+    """adapter.config is an alias for adapter.agent_schema."""
+    assert sample_adapter.config is sample_adapter.agent_schema
+    assert sample_adapter.config.name == "sample-agent"
+    assert sample_adapter.config.limits is not None
+    assert sample_adapter.config.limits.request_limit == 10
+    assert len(sample_adapter.config.tools) >= 3
+    tool_names = {t.name for t in sample_adapter.config.tools}
+    assert {"search", "action", "ask_agent"}.issubset(tool_names)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +248,6 @@ def test_load_yaml_agents_from_dir(tmp_path):
 
     from p8.agentic import adapter
 
-    # Write two YAML agent files
     (tmp_path / "greeter.yaml").write_text(yaml.dump({
         "name": "greeter",
         "kind": "agent",
@@ -124,23 +262,62 @@ def test_load_yaml_agents_from_dir(tmp_path):
         "content": "You summarize things.",
         "json_schema": {"temperature": 0.2},
     }))
-    # Write a non-yaml file (should be ignored)
     (tmp_path / "notes.txt").write_text("not an agent")
 
-    # Reset loader state and patch settings
     old_loaded = adapter._yaml_loaded
     old_builtins = dict(adapter.BUILTIN_AGENTS)
     try:
         adapter._yaml_loaded = False
-        from unittest.mock import patch
-        with patch("p8.settings.Settings") as MockSettings:
-            MockSettings.return_value.schema_dir = str(tmp_path)
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = str(tmp_path)
+        with patch("p8.settings.get_settings", return_value=mock_settings):
             adapter._load_yaml_agents()
 
         assert "greeter" in adapter.BUILTIN_AGENTS
         assert "summarizer" in adapter.BUILTIN_AGENTS
         assert adapter.BUILTIN_AGENTS["greeter"]["content"] == "You greet people."
         assert adapter.BUILTIN_AGENTS["summarizer"]["json_schema"]["temperature"] == 0.2
+    finally:
+        adapter._yaml_loaded = old_loaded
+        adapter.BUILTIN_AGENTS.clear()
+        adapter.BUILTIN_AGENTS.update(old_builtins)
+
+
+def test_load_yaml_agents_flat_format(tmp_path):
+    """_load_yaml_agents loads flat AgentSchema format YAML files."""
+    from p8.agentic import adapter
+
+    (tmp_path / "flat-agent.yaml").write_text("""\
+type: object
+name: flat-agent
+description: A flat agent loaded from YAML.
+properties:
+  topic:
+    type: string
+    description: Main topic
+tools:
+  - name: search
+    description: Search knowledge base
+temperature: 0.5
+""")
+
+    old_loaded = adapter._yaml_loaded
+    old_builtins = dict(adapter.BUILTIN_AGENTS)
+    try:
+        adapter._yaml_loaded = False
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = str(tmp_path)
+        with patch("p8.settings.get_settings", return_value=mock_settings):
+            adapter._load_yaml_agents()
+
+        assert "flat-agent" in adapter.BUILTIN_AGENTS
+        # Should be converted to Schema entity format
+        d = adapter.BUILTIN_AGENTS["flat-agent"]
+        assert d["kind"] == "agent"
+        assert "flat agent" in d["content"].lower()
+        assert d["json_schema"]["name"] == "flat-agent"
     finally:
         adapter._yaml_loaded = old_loaded
         adapter.BUILTIN_AGENTS.clear()
@@ -155,12 +332,12 @@ def test_load_yaml_agents_missing_dir():
     old_builtins = dict(adapter.BUILTIN_AGENTS)
     try:
         adapter._yaml_loaded = False
-        from unittest.mock import patch
-        with patch("p8.settings.Settings") as MockSettings:
-            MockSettings.return_value.schema_dir = "/nonexistent/path"
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = "/nonexistent/path"
+        with patch("p8.settings.get_settings", return_value=mock_settings):
             adapter._load_yaml_agents()
 
-        # Should not crash, builtins unchanged
         assert "sample-agent" in adapter.BUILTIN_AGENTS
     finally:
         adapter._yaml_loaded = old_loaded
@@ -185,13 +362,13 @@ def test_load_yaml_agents_skips_invalid(tmp_path):
     old_builtins = dict(adapter.BUILTIN_AGENTS)
     try:
         adapter._yaml_loaded = False
-        from unittest.mock import patch
-        with patch("p8.settings.Settings") as MockSettings:
-            MockSettings.return_value.schema_dir = str(tmp_path)
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = str(tmp_path)
+        with patch("p8.settings.get_settings", return_value=mock_settings):
             adapter._load_yaml_agents()
 
         assert "valid-agent" in adapter.BUILTIN_AGENTS
-        # bad.yaml should have been skipped
     finally:
         adapter._yaml_loaded = old_loaded
         adapter.BUILTIN_AGENTS.clear()
@@ -204,7 +381,6 @@ def test_load_yaml_does_not_overwrite_code_agents(tmp_path):
 
     from p8.agentic import adapter
 
-    # Write a YAML file with the same name as the code-defined sample-agent
     (tmp_path / "sample-agent.yaml").write_text(yaml.dump({
         "name": "sample-agent",
         "kind": "agent",
@@ -215,12 +391,12 @@ def test_load_yaml_does_not_overwrite_code_agents(tmp_path):
     old_builtins = dict(adapter.BUILTIN_AGENTS)
     try:
         adapter._yaml_loaded = False
-        from unittest.mock import patch
-        with patch("p8.settings.Settings") as MockSettings:
-            MockSettings.return_value.schema_dir = str(tmp_path)
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = str(tmp_path)
+        with patch("p8.settings.get_settings", return_value=mock_settings):
             adapter._load_yaml_agents()
 
-        # Code-defined version should win
         assert "knowledge base" in adapter.BUILTIN_AGENTS["sample-agent"]["content"]
     finally:
         adapter._yaml_loaded = old_loaded
@@ -247,9 +423,11 @@ async def test_yaml_agent_auto_registers(db, encryption, tmp_path):
     old_builtins = dict(adapter.BUILTIN_AGENTS)
     try:
         adapter._yaml_loaded = False
-        from unittest.mock import patch
-        with patch("p8.settings.Settings") as MockSettings:
-            MockSettings.return_value.schema_dir = str(tmp_path)
+        from unittest.mock import MagicMock, patch
+        mock_settings = MagicMock()
+        mock_settings.schema_dir = str(tmp_path)
+        with patch("p8.settings.get_settings", return_value=mock_settings):
+            adapter._load_yaml_agents()
 
             agent_adapter = await AgentAdapter.from_schema_name("yaml-bot", db, encryption)
 
@@ -262,18 +440,117 @@ async def test_yaml_agent_auto_registers(db, encryption, tmp_path):
         adapter.BUILTIN_AGENTS.update(old_builtins)
 
 
-async def test_sample_agent_config_parsing(sample_adapter):
-    """SampleAgent config is parsed correctly into typed AgentConfig."""
-    config = sample_adapter.config
-    # model_name may be empty (resolved at runtime from settings.default_model)
-    assert config.temperature == 0.3
-    assert config.max_tokens == 2000
-    assert len(config.tools) >= 3
-    assert {"search", "action", "ask_agent"}.issubset({t.name for t in config.tools})
-    assert len(config.resources) == 1
-    assert config.resources[0].uri == "user://profile/{user_id}"
-    assert config.limits is not None
-    assert config.limits.request_limit == 10
+# ---------------------------------------------------------------------------
+# DB round-trip
+# ---------------------------------------------------------------------------
+
+
+async def test_db_roundtrip_flat_schema(db, encryption):
+    """Save a flat AgentSchema to DB and load it back with all fields intact."""
+    from p8.agentic.adapter import AgentAdapter
+    from p8.agentic.agent_schema import AgentSchema
+    from p8.ontology.types import Schema
+    from p8.services.repository import Repository
+
+    # Build a schema programmatically
+    original = AgentSchema.build(
+        name="roundtrip-agent",
+        description="Test agent for DB round-trip.",
+        properties={
+            "topic": {"type": "string", "description": "Main topic"},
+        },
+        tools=[
+            {"name": "search", "description": "Search KB"},
+            {"name": "action"},
+        ],
+        temperature=0.5,
+        limits={"request_limit": 8, "total_tokens_limit": 40000},
+    )
+
+    # Save to DB
+    repo = Repository(Schema, db, encryption)
+    [row] = await repo.upsert(Schema(**original.to_schema_dict()))
+    assert row.name == "roundtrip-agent"
+
+    # Load back via adapter
+    adapter = await AgentAdapter.from_schema_name("roundtrip-agent", db, encryption)
+    loaded = adapter.agent_schema
+
+    assert loaded.name == "roundtrip-agent"
+    assert loaded.temperature == 0.5
+    assert "topic" in loaded.properties
+    assert len(loaded.tools) == 2
+    assert loaded.limits is not None
+    assert loaded.limits.request_limit == 8
+    assert loaded.limits.total_tokens_limit == 40000
+
+    # Verify tool description survived
+    search_tool = next(t for t in loaded.tools if t.name == "search")
+    assert search_tool.description == "Search KB"
+
+
+# ---------------------------------------------------------------------------
+# YAML round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_roundtrip():
+    """AgentSchema can be serialized to YAML and loaded back."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    original = AgentSchema.build(
+        name="yaml-rt-agent",
+        description="YAML round-trip test.",
+        tools=[
+            {"name": "search", "description": "Search the KB"},
+        ],
+        temperature=0.3,
+    )
+
+    yaml_str = original.to_yaml()
+    loaded = AgentSchema.from_yaml(yaml_str)
+
+    assert loaded.name == "yaml-rt-agent"
+    assert loaded.temperature == 0.3
+    assert len(loaded.tools) == 1
+    assert loaded.tools[0].name == "search"
+    assert loaded.tools[0].description == "Search the KB"
+
+
+def test_yaml_file_roundtrip():
+    """AgentSchema loads from YAML file on disk."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema.from_yaml_file(
+        Path(__file__).resolve().parents[2] / ".schema" / "sample-agent.yaml"
+    )
+    assert schema.name == "sample-agent"
+    assert "knowledge base" in schema.description
+    assert len(schema.tools) == 3
+    assert schema.limits is not None
+    assert schema.limits.request_limit == 10
+
+
+# ---------------------------------------------------------------------------
+# Caching
+# ---------------------------------------------------------------------------
+
+
+async def test_adapter_cache_ttl(db, encryption):
+    """AgentAdapter caches adapters with TTL."""
+    from p8.agentic import adapter
+    from p8.agentic.adapter import AgentAdapter, _adapter_cache, _cache_key
+
+    await AgentAdapter.from_schema_name("sample-agent", db, encryption)
+
+    key = _cache_key("sample-agent", None)
+    assert key in _adapter_cache
+    cached_adapter, cached_ts = _adapter_cache[key]
+    assert cached_adapter.schema.name == "sample-agent"
+
+    # Second call should return cached (same object)
+    adapter2 = await AgentAdapter.from_schema_name("sample-agent", db, encryption)
+    assert adapter2 is cached_adapter
 
 
 # ---------------------------------------------------------------------------
@@ -299,8 +576,6 @@ async def test_delegate_tools_include_ask_agent(sample_adapter):
 async def test_resolve_toolsets_with_local_mcp(sample_adapter, mcp_server):
     """resolve_toolsets creates a filtered FastMCPToolset from local server."""
     toolsets, tools = sample_adapter.resolve_toolsets(mcp_server=mcp_server)
-
-    # Should have one toolset (for local MCP tools) and one delegate tool
     assert len(toolsets) == 1
     assert len(tools) == 1  # ask_agent
 
@@ -322,7 +597,6 @@ async def test_fastmcp_toolset_creates_from_server(mcp_server):
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
     toolset = FastMCPToolset(mcp_server)
-    # Filtered toolset should also instantiate without error
     allowed = {"search", "action"}
     filtered = toolset.filtered(lambda ctx, td: td.name in allowed)
     assert filtered is not None
@@ -330,7 +604,6 @@ async def test_fastmcp_toolset_creates_from_server(mcp_server):
 
 async def test_fastmcp_call_search(db, encryption, mcp_server):
     """Call search tool directly through FastMCP server."""
-    # Seed something to search for
     from p8.ontology.types import Schema
     from p8.services.repository import Repository
 
@@ -471,7 +744,7 @@ async def test_user_profile_not_found(db, encryption):
 
 
 async def test_ask_agent_delegates(db, encryption):
-    """ask_agent invokes another agent and returns its response (no event sink)."""
+    """ask_agent invokes another agent and returns its response."""
     from unittest.mock import patch
 
     from p8.agentic.adapter import AgentAdapter
@@ -480,7 +753,6 @@ async def test_ask_agent_delegates(db, encryption):
 
     init_tools(db, encryption)
 
-    # Register a target agent
     from p8.ontology.types import Schema
     from p8.services.repository import Repository
 
@@ -500,7 +772,6 @@ async def test_ask_agent_delegates(db, encryption):
     with patch.object(AgentAdapter, "build_agent", patched_build):
         result = await ask_agent("echo-agent", "hello")
 
-    # Without event sink, returns plain dict (agent.run fallback)
     assert isinstance(result, dict)
     assert result["status"] == "success"
     assert result["agent_schema"] == "echo-agent"
@@ -576,7 +847,6 @@ async def test_ask_agent_streams_to_event_sink(db, encryption):
     def patched_build(self, **kwargs):
         return original_build(self, model_override=TestModel(custom_output_text="Child says hi"))
 
-    # Set up event sink
     sink: asyncio.Queue = asyncio.Queue()
     previous = set_child_event_sink(sink)
 
@@ -584,13 +854,11 @@ async def test_ask_agent_streams_to_event_sink(db, encryption):
         with patch.object(AgentAdapter, "build_agent", patched_build):
             result = await ask_agent("event-test-agent", "hello")
 
-        # Returns a dict (not ToolReturn)
         assert isinstance(result, dict)
         assert result["status"] == "success"
         assert result["agent_schema"] == "event-test-agent"
         assert "Child says hi" in result["text_response"]
 
-        # Event sink should have received child_content events
         events = []
         while not sink.empty():
             events.append(sink.get_nowait())
@@ -646,10 +914,8 @@ async def test_ask_agent_event_sink_content(db, encryption):
 
         content_events = [e for e in events if e["type"] == "child_content"]
         assert len(content_events) >= 1
-        # All content events should have agent_name
         for e in content_events:
             assert e["agent_name"] == "content-event-agent"
-        # Concatenated content should contain the output
         full_content = "".join(e["content"] for e in content_events)
         assert "42" in full_content
     finally:
@@ -697,7 +963,6 @@ async def test_ask_agent_no_sink_uses_run(db, encryption):
     def patched_build(self, **kwargs):
         return original_build(self, model_override=TestModel(custom_output_text="No sink response"))
 
-    # Ensure no event sink is set
     assert get_child_event_sink() is None
 
     with patch.object(AgentAdapter, "build_agent", patched_build):
@@ -743,3 +1008,58 @@ async def test_agent_context_attributes(sample_adapter):
     assert "Agent: sample-agent" in msg
     assert f"User ID: {USER_ADA}" in msg
     assert "ada@example.com" in msg
+
+
+# ---------------------------------------------------------------------------
+# Legacy schema format backward compat
+# ---------------------------------------------------------------------------
+
+
+async def test_legacy_schema_format_loads(db, encryption):
+    """Old-format json_schema (model_name, response_schema) loads correctly."""
+    from p8.agentic.adapter import AgentAdapter
+    from p8.ontology.types import Schema
+    from p8.services.repository import Repository
+
+    repo = Repository(Schema, db, encryption)
+    await repo.upsert(Schema(
+        name="legacy-agent",
+        kind="agent",
+        description="Legacy format agent",
+        content="You are a legacy format agent.",
+        json_schema={
+            "model_name": "openai:gpt-4o",
+            "temperature": 0.5,
+            "tools": [
+                {"name": "search", "server": "rem"},
+            ],
+            "response_schema": {
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            },
+        },
+    ))
+
+    adapter = await AgentAdapter.from_schema_name("legacy-agent", db, encryption)
+    assert adapter.config.name == "legacy-agent"
+    assert adapter.config.model == "openai:gpt-4o"
+    assert adapter.config.temperature == 0.5
+    assert len(adapter.config.tools) >= 1
+    assert "answer" in adapter.config.properties
+
+
+async def test_resources_merged_into_tools(db, encryption):
+    """Old schemas with 'resources' get them merged into tools."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema._parse_dict({
+        "type": "object",
+        "name": "merge-test",
+        "description": "Test",
+        "tools": [{"name": "search"}],
+        "resources": [{"name": "User Profile", "uri": "user://profile/{user_id}"}],
+    })
+
+    tool_names = {t.name for t in schema.tools}
+    assert "search" in tool_names
+    assert "user_profile" in tool_names

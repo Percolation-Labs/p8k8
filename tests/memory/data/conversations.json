@@ -1,0 +1,22 @@
+{
+  "conversations": [
+    {
+      "name": "project-planning",
+      "token_threshold": 200,
+      "messages": [
+        {"role": "user", "content": "Let's plan the Aurora project. What are the key milestones?", "tokens": 40},
+        {"role": "assistant", "content": "For the Aurora project, I'd suggest these milestones:\n1. Database schema design (Week 1-2)\n2. API layer implementation (Week 3-4)\n3. Agent framework integration (Week 5-6)\n4. Memory pipeline (Week 7-8)\n5. Testing and deployment (Week 9-10)", "tokens": 80},
+        {"role": "user", "content": "Good. Let's focus on the database schema first. We need tables for schemas, ontologies, resources, moments, and sessions.", "tokens": 50},
+        {"role": "assistant", "content": "Here's the proposed schema design:\n- **schemas**: Core ontology registry (name, kind, description, json_schema)\n- **ontologies**: Domain knowledge documents\n- **resources**: Chunked content from file uploads\n- **moments**: Temporal events and session summaries\n- **sessions**: Chat sessions with agent routing\n\nEach table will have CoreModel fields (id, created_at, updated_at, tenant_id) plus entity-specific columns. We'll use pgvector for embeddings and kv_store for O(1) lookups.", "tokens": 120},
+        {"role": "user", "content": "What about the embedding pipeline? How should we handle automatic vectorization?", "tokens": 35},
+        {"role": "assistant", "content": "I recommend a trigger-based approach:\n1. INSERT/UPDATE triggers on entity tables queue items to `embedding_queue`\n2. A background worker polls the queue and generates embeddings\n3. Embeddings stored in companion tables (embeddings_schemas, embeddings_ontologies, etc.)\n4. Content hash caching to skip unchanged content\n\nThis keeps the main write path fast while ensuring eventual consistency for search.", "tokens": 100},
+        {"role": "user", "content": "Makes sense. Now let's discuss the agent framework. We want agents to be declarative - defined as rows in the schemas table.", "tokens": 45},
+        {"role": "assistant", "content": "The declarative agent approach works like this:\n- Agent definitions stored as `kind='agent'` rows in schemas\n- `content` field = system prompt\n- `json_schema` field = runtime config (model, tools, limits)\n- AgentAdapter wraps a schema row into a runnable pydantic-ai Agent\n- Tools reference MCP servers via ToolReference (never inline code)\n- Routing via lazy agent switching (persist last agent per session)", "tokens": 95},
+        {"role": "user", "content": "What about memory management for long conversations?", "tokens": 30},
+        {"role": "assistant", "content": "The memory pipeline has several components:\n1. **MemoryService**: Manages session context assembly\n2. **Moment building**: When token count exceeds threshold, summarize older messages into a 'moment'\n3. **Compaction**: Replace old messages with breadcrumbs ([REM LOOKUP session-{id}-chunk-{N}])\n4. **Context injection**: Inject recent moments as system messages\n5. **Always-last-N**: Keep the last N messages verbatim for context continuity\n\nThis keeps the context window manageable while preserving important information.", "tokens": 110},
+        {"role": "user", "content": "Great overview. Let's also discuss the content ingestion pipeline for file uploads.", "tokens": 35},
+        {"role": "assistant", "content": "The content pipeline handles file uploads end-to-end:\n1. **ContentService.ingest()**: Entry point - accepts bytes + filename\n2. **Kreuzberg extraction**: Extracts text from PDFs, docs, etc.\n3. **Chunking**: Splits into Resource entities with ordinals\n4. **Graph edges**: Each chunk gets a `chunk_of` edge to the parent file\n5. **Session + Moment**: Creates an upload session and content_upload moment\n6. **S3 storage**: Optional S3 upload before extraction\n\nAudio files get special handling: split on silence, transcribe via Whisper, then re-chunk.", "tokens": 115}
+      ]
+    }
+  ]
+}

@@ -75,8 +75,13 @@ async def embedding_service(db, encryption, settings):
 
 
 @pytest_asyncio.fixture
-async def embedding_worker(embedding_service):
-    """Start the background worker; stop it when the test finishes."""
+async def embedding_worker(db, embedding_service):
+    """Start the background worker; stop it when the test finishes.
+
+    Clears stale queue entries first so the worker only processes entries
+    from the current test — prevents cross-test interference on timing.
+    """
+    await db.execute("DELETE FROM embedding_queue")
     worker = EmbeddingWorker(embedding_service, poll_interval=WORKER_POLL)
     task = asyncio.create_task(worker.run())
     yield worker

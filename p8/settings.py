@@ -41,7 +41,13 @@ class Settings(BaseSettings):
 
     # Agents
     default_model: str = "openai:gpt-4.1"  # fallback model when agent schema omits model_name
-    schema_dir: str = "./schema"  # folder of YAML agent/schema definitions (may not exist)
+    default_temperature: float = 0.1
+    default_max_tokens: int = 4000
+    default_request_limit: int = 15
+    default_token_limit: int = 80000
+    # YAML agent/schema definitions folder. Set P8_SCHEMA_DIR to load agents from disk
+    # e.g. P8_SCHEMA_DIR=.schema or P8_SCHEMA_DIR=/tmp/schema
+    schema_dir: str = ""
 
     # Memory
     context_token_budget: int = 8000
@@ -122,3 +128,14 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
 
     model_config = {"env_prefix": "P8_", "env_file": ".env", "extra": "ignore"}
+
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    """Return a cached singleton Settings instance."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings

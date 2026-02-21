@@ -30,6 +30,8 @@ from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.memory import MemoryService
 from p8.services.repository import Repository
+from p8.utils.parsing import ensure_parsed
+from p8.utils.tokens import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -228,7 +230,7 @@ class DreamingHandler:
                         continue  # system prompts live in the agent definition, not messages
                     elif isinstance(part, UserPromptPart):
                         content = part.content
-                        tc = len(content) // 4 if content else 0
+                        tc = estimate_tokens(content)
                         m = Message(
                             session_id=session_id, message_type="user",
                             content=content, token_count=tc,
@@ -238,7 +240,7 @@ class DreamingHandler:
                         total_tokens += tc
                     elif isinstance(part, ToolReturnPart):
                         content = part.content if isinstance(part.content, str) else json.dumps(part.content)
-                        tc = len(content) // 4 if content else 0
+                        tc = estimate_tokens(content)
                         m = Message(
                             session_id=session_id, message_type="tool_call",
                             content=content, token_count=tc,
@@ -273,7 +275,7 @@ class DreamingHandler:
                             "arguments": args,
                         })
                 content = "\n".join(text_parts) if text_parts else ""
-                tc = len(content) // 4 if content else 0
+                tc = estimate_tokens(content)
                 tool_calls = {"calls": tool_calls_data} if tool_calls_data else None
                 m = Message(
                     session_id=session_id, message_type="assistant",
@@ -328,9 +330,7 @@ class DreamingHandler:
                 summary = md.get("summary", "")
                 mtype = md.get("moment_type", "")
                 tags = md.get("topic_tags") or []
-                edges = md.get("graph_edges") or []
-                if isinstance(edges, str):
-                    edges = json.loads(edges)
+                edges = ensure_parsed(md.get("graph_edges"), default=[])
 
                 lines.append(
                     f"### {name} ({mtype})\n"
@@ -344,7 +344,7 @@ class DreamingHandler:
                 stats["moments"] += 1
 
             section = "\n".join(lines)
-            section_tokens = len(section) // 4
+            section_tokens = estimate_tokens(section)
             if token_estimate + section_tokens <= DATA_TOKEN_BUDGET:
                 sections.append(section)
                 token_estimate += section_tokens
@@ -383,7 +383,7 @@ class DreamingHandler:
                     lines.append("")
 
             section = "\n".join(lines)
-            section_tokens = len(section) // 4
+            section_tokens = estimate_tokens(section)
             if token_estimate + section_tokens <= DATA_TOKEN_BUDGET:
                 sections.append(section)
                 token_estimate += section_tokens
@@ -425,7 +425,7 @@ class DreamingHandler:
 
             if looked_up > 0:
                 section = "\n".join(lines)
-                section_tokens = len(section) // 4
+                section_tokens = estimate_tokens(section)
                 if token_estimate + section_tokens <= DATA_TOKEN_BUDGET:
                     sections.append(section)
                     token_estimate += section_tokens

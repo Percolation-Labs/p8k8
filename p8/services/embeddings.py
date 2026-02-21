@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.settings import Settings
+from p8.utils.ids import content_hash
 
 log = logging.getLogger(__name__)
 
@@ -217,7 +218,7 @@ class EmbeddingService:
             return {"processed": 0, "skipped": 0, "failed": 0}
 
         # Extract content for each item
-        items_with_text: list[tuple[dict, str, str]] = []  # (item, text, content_hash)
+        items_with_text: list[tuple[dict, str, str]] = []  # (item, text, text_hash)
         skipped = 0
 
         for item in batch:
@@ -227,7 +228,7 @@ class EmbeddingService:
                 skipped += 1
                 continue
             text = await self._maybe_decrypt(item["table_name"], item["entity_id"], text)
-            content_hash = hashlib.sha256(text.encode()).hexdigest()
+            text_hash = content_hash(text)
 
             # Check content-hash cache — skip if embedding already exists for this content
             existing_hash = await self.db.fetchval(
@@ -237,12 +238,12 @@ class EmbeddingService:
                 item["field_name"],
                 self.provider.provider_name,
             )
-            if existing_hash == content_hash:
+            if existing_hash == text_hash:
                 await self._remove_from_queue(item)
                 skipped += 1
                 continue
 
-            items_with_text.append((item, text, content_hash))
+            items_with_text.append((item, text, text_hash))
 
         if not items_with_text:
             return {"processed": 0, "skipped": skipped, "failed": 0}
@@ -260,7 +261,7 @@ class EmbeddingService:
         # Store each embedding
         processed = 0
         failed = 0
-        for (item, _, content_hash), embedding in zip(items_with_text, embeddings):
+        for (item, _, text_hash), embedding in zip(items_with_text, embeddings):
             try:
                 await self.db.execute(
                     "SELECT upsert_embedding($1, $2, $3, $4::vector, $5, $6)",
@@ -269,7 +270,7 @@ class EmbeddingService:
                     item["field_name"],
                     str(embedding),
                     self.provider.provider_name,
-                    content_hash,
+                    text_hash,
                 )
                 processed += 1
                 log.info(

@@ -1,0 +1,232 @@
+# ======================================================================
+# ACTUAL PAYLOAD pydantic-ai sends to the LLM
+# ======================================================================
+#
+# Agent: general (conversational)
+#
+# Captured via FunctionModel interception — the same data you see
+# in openai._base_client DEBUG logs with: p8 chat --debug
+#
+# To regenerate: uv run python tests/data/examples/capture_payloads.py
+#
+# TOOL DESCRIPTIONS — two layers
+# ==============================
+# Each tool's description reaches the LLM in TWO places:
+#
+# 1. tools[].function.description  — the BASE description, extracted by
+#    pydantic-ai from the Python function's docstring (via griffe parser).
+#    This is what the LLM sees in the tool-calling interface.
+#
+# 2. ## Tool Notes (in system prompt) — the AGENT-SPECIFIC suffix from
+#    MCPToolReference.description in the agent schema. This gives the
+#    agent context-specific guidance on how to use the tool.
+#
+# Example for "search":
+#   tools[].function.description = "Execute REM queries to search the
+#     knowledge base. Query Syntax: LOOKUP <key>: O(1) exact entity..."
+#     (from the search() function docstring in p8/api/tools/)
+#
+#   ## Tool Notes in system prompt = "**search**: Query knowledge base
+#     using REM dialect (LOOKUP, SEARCH, FUZZY, TRAVERSE, SQL). Tables:
+#     resources, moments, ontologies, files, sessions, users"
+#     (from GeneralAgent.model_config tools[0].description)
+#
+# They are NOT concatenated — they live in different parts of the payload.
+#
+# THINKING STRUCTURE (unstructured mode only)
+# ===========================================
+# Because structured_output is false, the agent's properties are rendered
+# as a ## Thinking Structure YAML block APPENDED to the system prompt.
+# This guides the LLM's internal reasoning without requiring JSON output.
+# Look for "## Thinking Structure" inside messages[0].content below —
+# it contains the fields (topic, user_intent, requires_search, etc.)
+# as YAML with descriptions as comments.
+#
+# In structured mode (see intercept_structured.yaml) this block is absent
+# — the properties become the output_tools schema instead.
+# ======================================================================
+
+label: general (conversational)
+temperature: 0.1
+max_tokens: 4000
+stream: true
+messages:
+- role: system
+  content: "You are a friendly, sharp assistant with access to a personal knowledge base powered by REM (Resource-Entity-Moment).\
+    \ Keep responses short and conversational — no bullet points, numbered lists, or long explanations unless the user explicitly\
+    \ asks you to explain or elaborate. Answer like a helpful friend: direct, warm, and to the point.\n\n## Style\n- Keep\
+    \ it brief. One or two sentences is usually enough.\n- Only use lists or detailed breakdowns when the user asks to explain\
+    \ something.\n- Be warm and casual, not robotic or formal.\n- Search before making claims about the user's data.\n- When\
+    \ results are empty, try a broader query or different mode.\n- Cite sources by referencing entity names from search results.\n\
+    \n## Tool Notes\n- **search**: Query knowledge base using REM dialect (LOOKUP, SEARCH, FUZZY, TRAVERSE, SQL). Tables:\
+    \ resources, moments, ontologies, files, sessions, users\n- **action**: Emit structured events: observation (reasoning\
+    \ metadata) or elicit (clarification)\n- **ask_agent**: Delegate to specialist agents for domain-specific tasks\n- **remind_me**:\
+    \ Create scheduled reminders — cron for recurring, ISO datetime for one-time. Infer schedule from context, don't ask for\
+    \ confirmation\n- **user_profile**: Load user profile for personalized responses\n\n## Thinking Structure\n\nUse these\
+    \ to guide your reasoning. Do NOT include these labels in output:\n\n```yaml\ntopic: string (required)\n  # Primary topic\
+    \ or entity the user is asking about\nuser_intent: string (required)\n  # Classify: question, task, greeting, follow-up,\
+    \ clarification\nrequires_search: boolean (required)\n  # Whether to search the knowledge base before responding\nsearch_strategy:\
+    \ string (required)\n  # If search needed: LOOKUP <key>, SEARCH <text> FROM <table>, FUZZY <text>, TRAVERSE <key>, or\
+    \ SQL\n```\n\nCRITICAL: Respond with conversational text only. Do NOT output field names, YAML, or JSON."
+- role: user
+  content: What did we talk about yesterday?
+- role: system
+  content: '[instructions]
+
+    [Context]
+
+    Date: 2026-02-21
+
+    Time: 14:21:54
+
+    Session: demo-session
+
+    Agent: general'
+tools:
+- type: function
+  function:
+    name: ask_agent
+    description: '<summary>Invoke another agent by name and return its response.
+
+
+      Enables multi-agent orchestration by allowing one agent to delegate
+
+      to another. The child agent runs with its own schema, tools, and
+
+      system prompt.
+
+
+      When called from the streaming chat endpoint, a child event sink
+
+      (``asyncio.Queue``) is available via ContextVar. The child agent
+
+      streams its content tokens, tool calls, and tool results to this
+
+      queue in real-time using ``agent.iter()``. The parent''s multiplexer
+
+      picks these up and forwards them to the client immediately.
+
+
+      When no event sink is available (e.g. CLI mode), falls back to
+
+      ``agent.run()`` for a non-streaming call.</summary>
+
+      <returns>
+
+      <description>Dict with status, output, text_response, agent_schema, and
+
+      is_structured_output keys.</description>
+
+      </returns>'
+    parameters:
+      additionalProperties: false
+      properties:
+        agent_name:
+          description: Agent schema name (must exist in schemas table with kind='agent')
+          type: string
+        input_text:
+          description: The prompt to send to the agent
+          type: string
+        input_data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          default: null
+          description: Optional structured input data (appended to prompt as JSON)
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          default: null
+          description: Optional user ID for context
+      required:
+      - agent_name
+      - input_text
+      type: object
+- type: function
+  function:
+    name: search
+    description: "Execute REM queries to search the knowledge base.\n\nQuery Syntax:\n- LOOKUP <key>: O(1) exact entity lookup\
+      \ by key\n- SEARCH <text> FROM <table>: Semantic vector search\n- FUZZY <text>: Fuzzy text matching across all entities\n\
+      - TRAVERSE <key> DEPTH <n>: Graph traversal from entity\n- SQL <query>: Direct SQL (SELECT only)\n\nExamples:\n- search(\"\
+      LOOKUP sarah-chen\")\n- search(\"SEARCH machine learning FROM ontologies LIMIT 5\")\n- search(\"FUZZY project alpha\"\
+      )\n\nArgs:\n    query: REM dialect query string\n    limit: Maximum results (default 20)\n    user_id: Optional user\
+      \ scope\n\nReturns:\n    Query results with entities and metadata"
+    parameters:
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+        limit:
+          default: 20
+          type: integer
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          default: null
+      required:
+      - query
+      type: object
+- type: function
+  function:
+    name: action
+    description: "Emit a typed action event for SSE streaming and UI updates.\n\nAction Types:\n    - \"observation\": Record\
+      \ metadata (confidence, sources, reasoning)\n    - \"elicit\": Request additional information from the user\n    - \"\
+      delegate\": Signal delegation to another agent\n\nArgs:\n    type: Action type (observation, elicit, delegate)\n   \
+      \ payload: Action-specific data\n\nReturns:\n    Action result confirming the event was emitted"
+    parameters:
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+        payload:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          default: null
+      required:
+      - type
+      type: object
+- type: function
+  function:
+    name: remind_me
+    description: "Create a scheduled reminder that triggers a push notification.\n\nOne-time reminders use an ISO datetime\
+      \ string (e.g. \"2025-03-01T09:00:00\").\nRecurring reminders use a cron expression (e.g. \"0 9 * * 1\" for every Monday\
+      \ at 9am).\n\nEach reminder becomes a pg_cron job that calls /notifications/send directly.\nMoments are only created\
+      \ when the notification actually fires.\n\nArgs:\n    name: Short name for the reminder (e.g. \"take-vitamins\")\n \
+      \   description: What to remind the user about\n    crontab: Cron expression for recurring, or ISO datetime for one-time\n\
+      \    tags: Optional tags for categorization\n    user_id: User to send the reminder to\n\nReturns:\n    Reminder details\
+      \ including job name and schedule"
+    parameters:
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        crontab:
+          type: string
+        tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          default: null
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          default: null
+      required:
+      - name
+      - description
+      - crontab
+      type: object
+tool_choice: auto

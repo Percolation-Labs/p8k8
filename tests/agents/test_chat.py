@@ -118,14 +118,10 @@ async def test_build_agent_returns_pydantic_ai_agent(db, encryption):
 
     adapter = await AgentAdapter.from_schema_name("build-test-agent", db, encryption)
 
-    # Check config extraction
-    assert adapter._get_model_string() == "anthropic:claude-haiku-3-5-20241022"
-    assert adapter._get_system_prompt() == "Custom system prompt"
-
-    settings = adapter._get_model_settings()
-    assert settings is not None
-    assert settings["temperature"] == 0.7
-    assert settings["max_tokens"] == 500
+    # Check config extraction via AgentSchema
+    assert adapter.config.model == "anthropic:claude-haiku-3-5-20241022"
+    assert "Custom system prompt" in adapter.config.get_system_prompt()
+    assert adapter.config.temperature == 0.7
 
     # Build with TestModel override
     agent = adapter.build_agent(model_override=TestModel(custom_output_text="Test response"))
@@ -146,11 +142,13 @@ async def test_build_agent_defaults(db, encryption):
     ))
 
     adapter = await AgentAdapter.from_schema_name("defaults-agent", db, encryption)
-    assert adapter._get_system_prompt() == "Just a description"
-    # Model string comes from settings.default_model when agent has no model_name
-    model_str = adapter._get_model_string()
-    assert ":" in model_str, f"Model string should be provider:model format, got {model_str}"
-    assert adapter._get_model_settings() is None
+    assert "Just a description" in adapter.config.get_system_prompt()
+    # Model comes from settings.default_model when agent has no model
+    options = adapter.config.get_options()
+    assert ":" in str(options["model"]), "Model should be provider:model format"
+    # Model settings populated from settings defaults
+    ms = options.get("model_settings", {})
+    assert ms.get("temperature", 0) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -220,11 +218,11 @@ async def test_context_attributes_with_session_context(db, encryption):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_config_from_json_schema():
-    """AgentConfig.from_json_schema parses known fields, ignores extras."""
-    from p8.agentic.types import AgentConfig
+def test_legacy_config_from_json_schema():
+    """LegacyAgentConfig.from_json_schema parses known fields, ignores extras."""
+    from p8.agentic.types import LegacyAgentConfig
 
-    config = AgentConfig.from_json_schema({
+    config = LegacyAgentConfig.from_json_schema({
         "model_name": "openai:gpt-4o",
         "temperature": 0.5,
         "tools": [
@@ -240,11 +238,11 @@ def test_agent_config_from_json_schema():
     assert config.tools[1].name == "simple_tool_name"
 
 
-def test_agent_config_defaults():
-    """AgentConfig.from_json_schema with None returns all defaults."""
-    from p8.agentic.types import AgentConfig
+def test_legacy_config_defaults():
+    """LegacyAgentConfig.from_json_schema with None returns all defaults."""
+    from p8.agentic.types import LegacyAgentConfig
 
-    config = AgentConfig.from_json_schema(None)
+    config = LegacyAgentConfig.from_json_schema(None)
     assert config.model_name is None
     assert config.temperature is None
     assert config.max_iterations == 10
@@ -257,24 +255,22 @@ def test_agent_config_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_to_output_model_structured():
-    """to_output_model generates a dynamic Pydantic model from response_schema."""
+def test_to_output_schema_structured():
+    """to_output_schema generates a dynamic Pydantic model from properties."""
     from pydantic import BaseModel as PydanticBase
 
-    from p8.agentic.types import AgentConfig
+    from p8.agentic.agent_schema import AgentSchema
 
-    config = AgentConfig(
+    schema = AgentSchema(
         structured_output=True,
-        response_schema={
-            "properties": {
-                "answer": {"type": "string", "description": "The answer"},
-                "confidence": {"type": "number"},
-                "tags": {"type": "array"},
-            },
-            "required": ["answer"],
+        properties={
+            "answer": {"type": "string", "description": "The answer"},
+            "confidence": {"type": "number"},
+            "tags": {"type": "array"},
         },
+        required=["answer"],
     )
-    OutputModel = config.to_output_model()
+    OutputModel = schema.to_output_schema()
     assert OutputModel is not str
     assert issubclass(OutputModel, PydanticBase)
 
@@ -285,51 +281,48 @@ def test_to_output_model_structured():
     assert "tags" in fields
 
 
-def test_to_output_model_plain_text():
-    """to_output_model returns str when structured_output is False."""
-    from p8.agentic.types import AgentConfig
+def test_to_output_schema_plain_text():
+    """to_output_schema returns str when structured_output is False."""
+    from p8.agentic.agent_schema import AgentSchema
 
-    config = AgentConfig(structured_output=False, response_schema={"properties": {"x": {"type": "string"}}})
-    assert config.to_output_model() is str
-
-
-def test_to_output_model_no_properties():
-    """to_output_model returns str when no properties defined."""
-    from p8.agentic.types import AgentConfig
-
-    config = AgentConfig(structured_output=True, response_schema={})
-    assert config.to_output_model() is str
-
-    config2 = AgentConfig(structured_output=True)
-    assert config2.to_output_model() is str
+    schema = AgentSchema(structured_output=False, properties={"x": {"type": "string"}})
+    assert schema.to_output_schema() is str
 
 
-def test_to_prompt_guidance():
-    """to_prompt_guidance generates human-readable field descriptions."""
-    from p8.agentic.types import AgentConfig
+def test_to_output_schema_no_properties():
+    """to_output_schema returns str when no properties defined."""
+    from p8.agentic.agent_schema import AgentSchema
 
-    config = AgentConfig(
-        response_schema={
-            "properties": {
-                "answer": {"type": "string", "description": "The main answer"},
-                "confidence": {"type": "number"},
-            },
-            "required": ["answer"],
+    schema = AgentSchema(structured_output=True, properties={})
+    assert schema.to_output_schema() is str
+
+    schema2 = AgentSchema(structured_output=True)
+    assert schema2.to_output_schema() is str
+
+
+def test_to_prompt_thinking_structure():
+    """to_prompt generates thinking structure from properties."""
+    from p8.agentic.agent_schema import AgentSchema
+
+    schema = AgentSchema(
+        properties={
+            "answer": {"type": "string", "description": "The main answer"},
+            "confidence": {"type": "number"},
         },
+        required=["answer"],
     )
-    guidance = config.to_prompt_guidance()
+    guidance = schema.to_prompt()
     assert "answer" in guidance
     assert "(required)" in guidance
     assert "confidence" in guidance
-    assert "(optional)" in guidance
     assert "The main answer" in guidance
 
 
-def test_to_prompt_guidance_empty():
-    """to_prompt_guidance returns empty string when no properties."""
-    from p8.agentic.types import AgentConfig
+def test_to_prompt_empty():
+    """to_prompt returns empty string when no properties."""
+    from p8.agentic.agent_schema import AgentSchema
 
-    assert AgentConfig().to_prompt_guidance() == ""
+    assert AgentSchema().to_prompt() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -338,18 +331,21 @@ def test_to_prompt_guidance_empty():
 
 
 def test_usage_limits_parsing():
-    """AgentConfig parses limits from json_schema."""
-    from p8.agentic.types import AgentConfig
+    """AgentSchema parses limits from dict."""
+    from p8.agentic.agent_schema import AgentSchema
 
-    config = AgentConfig.from_json_schema({
+    schema = AgentSchema._parse_dict({
+        "type": "object",
+        "name": "limits-test",
+        "description": "Test",
         "limits": {
             "request_limit": 10,
             "total_tokens_limit": 50000,
         }
     })
-    assert config.limits is not None
-    assert config.limits.request_limit == 10
-    assert config.limits.total_tokens_limit == 50000
+    assert schema.limits is not None
+    assert schema.limits.request_limit == 10
+    assert schema.limits.total_tokens_limit == 50000
 
 
 def test_usage_limits_to_pydantic_ai():
@@ -424,7 +420,7 @@ async def test_build_agent_prompt_guidance_appended(db, encryption):
     ))
 
     adapter = await AgentAdapter.from_schema_name("guidance-agent", db, encryption)
-    prompt = adapter._get_system_prompt()
+    prompt = adapter.config.get_system_prompt()
     assert "You are a helpful assistant." in prompt
     assert "answer" in prompt
     assert "(required)" in prompt
@@ -966,7 +962,8 @@ async def test_function_model_captures_llm_input(db, encryption):
     # -- 9. Verify: model settings --
     assert info.model_settings is not None
     assert info.model_settings.get("temperature") == 0.3
-    assert info.model_settings.get("max_tokens") == 2000
+    # max_tokens comes from settings.default_max_tokens, not from agent config
+    assert info.model_settings.get("max_tokens") is not None
 
     # -- 10. Verify: output --
     assert "Captured response" in str(result.output)

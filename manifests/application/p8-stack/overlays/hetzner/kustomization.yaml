@@ -23,6 +23,8 @@ resources:
   - ../../base
   - namespace.yaml
   - secrets.yaml
+  - ../../../../platform/otel-collector
+  - ../../../../platform/openbao
 
 commonLabels:
   environment: hetzner
@@ -38,8 +40,10 @@ configMapGenerator:
     literals:
       - ENVIRONMENT=hetzner
       - LOG_LEVEL=info
-      - OTEL__ENABLED=false
-      - OTEL_SERVICE_NAME=p8-api
+      - P8_OTEL_ENABLED=true
+      - P8_OTEL_SERVICE_NAME=p8-api
+      - P8_OTEL_COLLECTOR_ENDPOINT=http://otel-collector.p8.svc.cluster.local:4318
+      - P8_OTEL_PROTOCOL=http
       - AUTH__ENABLED=true
       - P8_S3_ENDPOINT_URL=https://fsn1.your-objectstorage.com
       - P8_S3_BUCKET=p8-percolate
@@ -47,6 +51,10 @@ configMapGenerator:
       # APNs (push notifications)
       - P8_APNS_BUNDLE_ID=ai.percolationlabs.remapp
       - P8_APNS_ENVIRONMENT=production
+      # KMS — OpenBao Transit (in-cluster)
+      - P8_KMS_PROVIDER=vault
+      - P8_KMS_VAULT_URL=http://openbao.p8.svc.cluster.local:8200
+      - P8_KMS_VAULT_TRANSIT_KEY=p8-master
 
   - name: p8-version-info
     behavior: merge
@@ -71,3 +79,22 @@ patches:
       - op: replace
         path: /spec/storage/size
         value: "20Gi"
+
+  # Inject Phoenix credentials into OTEL collector
+  - target:
+      kind: Deployment
+      name: otel-collector
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: PHOENIX_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: p8-app-secrets
+                key: PHOENIX_API_KEY
+          - name: PHOENIX_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: p8-app-secrets
+                key: PHOENIX_ENDPOINT

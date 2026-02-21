@@ -1,0 +1,37 @@
+{
+  "description": "2 reminders — one-time (Day 2) and recurring (Day 5).",
+  "reminders": [
+    {
+      "id_key": "jamie-reminder-api-followup",
+      "text": "Follow up with Marcus on API migration spike results",
+      "source_session": "jamie-image-reminder-day2",
+      "reminder_type": "one_time",
+      "due_time_iso": "T17:00:00",
+      "days_ago": 1,
+      "status": "pending",
+      "source_tool_call": {
+        "tool_name": "remind_me",
+        "arguments": {
+          "message": "Follow up with Marcus on API migration spike results",
+          "when": "5pm today"
+        }
+      }
+    },
+    {
+      "id_key": "jamie-reminder-weekly-metrics",
+      "text": "Review weekly growth metrics and update investor dashboard",
+      "source_session": "jamie-investor-meeting-day5",
+      "reminder_type": "recurring",
+      "cron": "0 10 * * 5",
+      "days_ago": 4,
+      "status": "pending",
+      "source_tool_call": {
+        "tool_name": "remind_me",
+        "arguments": {
+          "message": "Review weekly growth metrics and update investor dashboard",
+          "when": "every Friday at 10am"
+        }
+      }
+    }
+  ]
+}

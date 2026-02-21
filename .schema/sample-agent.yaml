@@ -1,0 +1,26 @@
+type: object
+name: sample-agent
+short_description: Sample agent demonstrating the declarative schema structure.
+limits:
+  request_limit: 10
+  total_tokens_limit: 50000
+description: |
+  You are a helpful assistant with access to a knowledge base
+  and the ability to delegate to other agents.
+
+  Always search the knowledge base before answering factual questions.
+  Delegate to specialist agents when the task is outside your expertise.
+properties:
+  topic:
+    type: string
+    description: Primary topic of the user's question
+  requires_search:
+    type: boolean
+    description: Whether to search the knowledge base first
+tools:
+  - name: search
+    description: Query the knowledge base using REM
+  - name: action
+    description: Emit observation or elicit events
+  - name: ask_agent
+    description: Delegate to specialist agents

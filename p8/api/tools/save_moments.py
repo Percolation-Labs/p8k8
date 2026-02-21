@@ -11,6 +11,7 @@ from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 from p8.ontology.types import Moment
 from p8.services.graph import merge_graph_edges
 from p8.services.repository import Repository
+from p8.utils.parsing import ensure_parsed
 
 log = logging.getLogger(__name__)
 
@@ -127,9 +128,7 @@ async def _merge_edge_on_target(
     row = rows[0]
     entity_type = row["entity_type"]
     entity_id = row["entity_id"]
-    existing_edges = row["graph_edges"] or []
-    if isinstance(existing_edges, str):
-        existing_edges = json.loads(existing_edges)
+    existing_edges = ensure_parsed(row["graph_edges"], default=[])
 
     merged = merge_graph_edges(existing_edges, [new_edge])
 
