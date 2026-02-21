@@ -56,7 +56,11 @@ async def lifespan(app: FastAPI):
 
         # Initialize MCP server's session manager (task group) so it can
         # handle requests.  The mounted sub-app exposes a .lifespan property.
-        mcp_app = app.state.mcp_app
+        # Re-create the MCP app each lifespan cycle so the session manager
+        # is fresh (StreamableHTTPSessionManager.run() is single-use).
+        mcp_app = get_mcp_app()
+        app.state.mcp_app = mcp_app
+        app.mount("/mcp", mcp_app)
         async with mcp_app.lifespan(mcp_app):
             yield
 
@@ -142,10 +146,10 @@ def create_app() -> FastAPI:
     async def root_well_known(request: Request):
         return await auth.well_known_oauth(request)
 
-    # Mount MCP server at /mcp (Streamable HTTP)
-    mcp_app = get_mcp_app()
-    app.state.mcp_app = mcp_app  # stored for lifespan initialization
-    app.mount("/mcp", mcp_app)
+    # MCP server is mounted during lifespan (needs fresh session manager each cycle).
+    # Create an initial instance for route registration.
+    app.state.mcp_app = get_mcp_app()
+    app.mount("/mcp", app.state.mcp_app)
 
     # RFC 9728 — Protected Resource Metadata must be at the root level.
     # RemoteAuthProvider creates these routes inside the MCP sub-app, but they
