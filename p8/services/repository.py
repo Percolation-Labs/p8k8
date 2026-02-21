@@ -16,7 +16,7 @@ T = TypeVar("T", bound=CoreModel)
 # Columns stored as JSONB in postgres — need json.dumps() for asyncpg
 _JSONB_COLUMNS = {"metadata", "graph_edges", "json_schema", "tool_calls", "auth_config",
                   "extracted_data", "present_persons", "parsed_output", "input_schema",
-                  "output_schema"}
+                  "output_schema", "devices"}
 
 
 def _prepare_value(key: str, value):
