@@ -333,7 +333,7 @@ class NotificationService:
         creds = self._get_fcm_credentials()
         if not creds.valid:
             creds.refresh(GoogleRequest())
-        return creds.token
+        return creds.token  # type: ignore[no-any-return]
 
     async def _get_fcm_client(self) -> httpx.AsyncClient:
         if self._fcm_client is None:

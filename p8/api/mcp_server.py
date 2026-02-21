@@ -1,7 +1,8 @@
 """FastMCP server — registers tools from api/tools/ and resources.
 
 Mounted at /mcp on the FastAPI app using Streamable HTTP transport.
-Google OAuth is enabled when P8_GOOGLE_CLIENT_ID is configured.
+Auth via RemoteAuthProvider + JWTVerifier(HS256) — validates the app's own
+JWTs.  The main app serves as the OAuth 2.1 Authorization Server.
 """
 
 from __future__ import annotations
@@ -49,19 +50,31 @@ async def user_profile(user_id: str) -> str:
 
 
 def _create_auth(settings: Settings):
-    """Create Google OAuth provider if credentials are configured and auth is enabled."""
-    if not settings.mcp_auth_enabled or not settings.google_client_id:
+    """Create RemoteAuthProvider that validates the app's own HS256 JWTs.
+
+    The MCP server acts as a resource server — it validates tokens but does
+    not issue them.  The main app at api_base_url is the OAuth 2.1
+    Authorization Server (handles /auth/authorize, /auth/token, /auth/register).
+    Works with any provider configured on the AS (Google, Apple, magic link).
+    """
+    if not settings.mcp_auth_enabled:
         return None
 
-    from fastmcp.server.auth.providers.google import GoogleProvider
+    from fastmcp.server.auth import RemoteAuthProvider
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
 
-    return GoogleProvider(
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
+    jwt_verifier = JWTVerifier(
+        public_key=settings.auth_secret_key,  # HS256 shared secret
+        algorithm="HS256",
+    )
+
+    from pydantic import AnyHttpUrl
+    return RemoteAuthProvider(
+        token_verifier=jwt_verifier,
+        authorization_servers=[AnyHttpUrl(settings.api_base_url)],
         base_url=settings.api_base_url,
-        issuer_url=settings.api_base_url,
-        redirect_path="/auth/callback/google",
-        require_authorization_consent=False,
+        scopes_supported=["openid"],
+        resource_name="p8",
     )
 
 

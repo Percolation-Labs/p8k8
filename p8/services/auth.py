@@ -409,6 +409,182 @@ class AuthService:
         return jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
 
     # -----------------------------------------------------------------------
+    # OAuth 2.1 Authorization Server — Dynamic Client Registration + Auth Codes
+    # -----------------------------------------------------------------------
+
+    async def register_client(self, metadata: dict) -> dict:
+        """Register an OAuth client (RFC 7591 Dynamic Client Registration).
+
+        Stores client in kv_store with entity_type='oauth_client'.
+        Returns client_id, client_secret, and echoed metadata.
+        """
+        client_id = str(uuid4())
+        client_secret = str(uuid4())
+
+        client_record = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": metadata.get("redirect_uris", []),
+            "client_name": metadata.get("client_name", ""),
+            "grant_types": metadata.get("grant_types", ["authorization_code"]),
+            "response_types": metadata.get("response_types", ["code"]),
+            "token_endpoint_auth_method": metadata.get("token_endpoint_auth_method", "client_secret_post"),
+        }
+
+        import json
+        await self.db.execute(
+            "INSERT INTO kv_store (entity_key, entity_type, entity_id, content_summary)"
+            " VALUES ($1, $2, $3, $4)"
+            " ON CONFLICT (COALESCE(tenant_id, ''), entity_key)"
+            " DO UPDATE SET content_summary = $4",
+            f"oauth_client:{client_id}",
+            "oauth_client",
+            uuid4(),
+            json.dumps(client_record),
+        )
+
+        return client_record
+
+    async def get_client(self, client_id: str) -> dict | None:
+        """Retrieve a registered OAuth client by client_id."""
+        import json
+        row = await self.db.fetchrow(
+            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = $2",
+            f"oauth_client:{client_id}",
+            "oauth_client",
+        )
+        if not row:
+            return None
+        return dict(json.loads(row["content_summary"]))
+
+    def authenticate_client(self, client_id: str, client_secret: str, client_record: dict) -> bool:
+        """Verify client credentials against stored record."""
+        import hmac
+        return hmac.compare_digest(client_record.get("client_secret", ""), client_secret)
+
+    async def create_authorization_code(
+        self,
+        client_id: str,
+        redirect_uri: str,
+        code_challenge: str,
+        scope: str,
+        provider: str,
+        provider_state: str | None = None,
+    ) -> str:
+        """Generate and store an authorization code with PKCE challenge.
+
+        The code is stored in kv_store with entity_type='auth_code'.
+        provider_state is the state param from the MCP client, forwarded back on redirect.
+        """
+        import json
+        code = str(uuid4())
+        code_record = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_challenge": code_challenge,
+            "scope": scope,
+            "provider": provider,
+            "client_state": provider_state,
+        }
+
+        await self.db.execute(
+            "INSERT INTO kv_store (entity_key, entity_type, entity_id, content_summary)"
+            " VALUES ($1, $2, $3, $4)"
+            " ON CONFLICT (COALESCE(tenant_id, ''), entity_key)"
+            " DO UPDATE SET content_summary = $4",
+            f"auth_code:{code}",
+            "auth_code",
+            uuid4(),
+            json.dumps(code_record),
+        )
+
+        return code
+
+    async def get_authorization_code(self, code: str) -> dict | None:
+        """Retrieve an authorization code record (does not consume it)."""
+        import json
+        row = await self.db.fetchrow(
+            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = $2",
+            f"auth_code:{code}",
+            "auth_code",
+        )
+        if not row:
+            return None
+        return dict(json.loads(row["content_summary"]))
+
+    async def consume_authorization_code(self, code: str) -> dict | None:
+        """Retrieve and delete an authorization code (single-use)."""
+        import json
+        row = await self.db.fetchrow(
+            "DELETE FROM kv_store WHERE entity_key = $1 AND entity_type = $2 RETURNING content_summary",
+            f"auth_code:{code}",
+            "auth_code",
+        )
+        if not row:
+            return None
+        return dict(json.loads(row["content_summary"]))
+
+    async def set_authorization_code_user(self, code: str, user_id: str, tenant_id: str) -> None:
+        """Attach user info to an existing authorization code after OAuth callback."""
+        import json
+        record = await self.get_authorization_code(code)
+        if not record:
+            return
+        record["user_id"] = user_id
+        record["tenant_id"] = tenant_id
+        await self.db.execute(
+            "UPDATE kv_store SET content_summary = $1 WHERE entity_key = $2 AND entity_type = $3",
+            json.dumps(record),
+            f"auth_code:{code}",
+            "auth_code",
+        )
+
+    async def exchange_authorization_code(
+        self,
+        code: str,
+        client_id: str,
+        code_verifier: str,
+        redirect_uri: str,
+    ) -> dict:
+        """Exchange an authorization code for tokens.
+
+        Verifies PKCE (S256), consumes the code, and issues tokens.
+        Raises ValueError on any validation failure.
+        """
+        import hashlib
+        import base64
+
+        record = await self.consume_authorization_code(code)
+        if not record:
+            raise ValueError("Invalid or expired authorization code")
+
+        # Verify client_id matches
+        if record["client_id"] != client_id:
+            raise ValueError("client_id mismatch")
+
+        # Verify redirect_uri matches
+        if record["redirect_uri"] != redirect_uri:
+            raise ValueError("redirect_uri mismatch")
+
+        # Verify PKCE: SHA256(code_verifier) must equal stored code_challenge
+        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        computed_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        if computed_challenge != record["code_challenge"]:
+            raise ValueError("PKCE verification failed")
+
+        # Look up user and issue tokens
+        user_id = record.get("user_id")
+        tenant_id = record.get("tenant_id")
+        if not user_id or not tenant_id:
+            raise ValueError("Authorization code not yet authorized")
+
+        user = await self.get_user(UUID(user_id), tenant_id=tenant_id)
+        if not user:
+            raise ValueError("User not found")
+
+        return await self.issue_tokens(user, tenant_id)
+
+    # -----------------------------------------------------------------------
     # Magic link
     # -----------------------------------------------------------------------
 

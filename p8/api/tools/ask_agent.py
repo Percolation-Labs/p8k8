@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ToolReturnPart,
 )
 
 from p8.agentic.adapter import AgentAdapter
@@ -94,7 +95,11 @@ async def _run_with_streaming(
                                 "arguments": tool_args,
                             })
                         elif isinstance(tool_event, FunctionToolResultEvent):
-                            result_content = tool_event.result.model_response_str()
+                            result_content = (
+                                tool_event.result.model_response_str()
+                                if isinstance(tool_event.result, ToolReturnPart)
+                                else str(tool_event.result.content)
+                            )
                             await event_sink.put({
                                 "type": "child_tool_result",
                                 "agent_name": agent_name,
@@ -103,6 +108,7 @@ async def _run_with_streaming(
                                 "result": result_content,
                             })
 
+    assert agent_run.result is not None, "Agent run completed without a result"
     output = agent_run.result.output
     text_response = "".join(accumulated_content) or str(output)
     is_structured = not isinstance(output, str)

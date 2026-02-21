@@ -122,6 +122,15 @@ class RevokeTokenRequest(BaseModel):
     refresh_token: str | None = None
 
 
+class OAuthClientRegistrationRequest(BaseModel):
+    """RFC 7591 Dynamic Client Registration."""
+    redirect_uris: list[str]
+    client_name: str = ""
+    grant_types: list[str] = ["authorization_code"]
+    response_types: list[str] = ["code"]
+    token_endpoint_auth_method: str = "client_secret_post"
+
+
 # ---------------------------------------------------------------------------
 # Tenant endpoints (unchanged)
 # ---------------------------------------------------------------------------
@@ -206,35 +215,98 @@ async def signup(body: SignupRequest, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# OAuth 2.1 — Dynamic Client Registration (RFC 7591)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/register")
+async def register_client(body: OAuthClientRegistrationRequest, request: Request):
+    """Register an OAuth client (MCP clients call this automatically)."""
+    auth = request.app.state.auth
+    client = await auth.register_client(body.model_dump())
+    return JSONResponse(client, status_code=201)
+
+
+# ---------------------------------------------------------------------------
 # OAuth 2.1 — authorize + callback
 # ---------------------------------------------------------------------------
 
 
 @router.get("/authorize")
-async def oauth_authorize(request: Request, provider: str):
-    """Redirect to OAuth provider (google or apple)."""
+async def oauth_authorize(
+    request: Request,
+    provider: str = "google",
+    client_id: str | None = None,
+    redirect_uri: str | None = None,
+    code_challenge: str | None = None,
+    code_challenge_method: str | None = None,
+    state: str | None = None,
+    response_type: str | None = None,
+    scope: str | None = None,
+):
+    """Redirect to OAuth provider (google or apple).
+
+    If client_id is present, this is an MCP OAuth 2.1 flow with PKCE.
+    Otherwise, it's the existing browser-based flow.
+    """
+    auth_svc = request.app.state.auth
+    settings = request.app.state.settings
+
+    # MCP client OAuth 2.1 flow
+    if client_id:
+        if not redirect_uri or not code_challenge:
+            raise HTTPException(400, "redirect_uri and code_challenge are required for OAuth 2.1 flow")
+        if code_challenge_method and code_challenge_method != "S256":
+            raise HTTPException(400, "Only S256 code_challenge_method is supported")
+
+        # Validate client
+        client_record = await auth_svc.get_client(client_id)
+        if not client_record:
+            raise HTTPException(400, "Unknown client_id")
+        if redirect_uri not in client_record.get("redirect_uris", []):
+            raise HTTPException(400, "redirect_uri not registered for this client")
+
+        # Create an authorization code (pre-auth, user not yet known)
+        code = await auth_svc.create_authorization_code(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            scope=scope or "openid",
+            provider=provider,
+            provider_state=state,
+        )
+
+        # Store the pending code in session so the callback can find it
+        request.session["mcp_auth_code"] = code
+
+        # Redirect to the chosen OAuth provider
+        oauth = _get_oauth(request)
+        oauth_client = getattr(oauth, provider, None)
+        if oauth_client is None:
+            raise HTTPException(400, f"Unknown or unconfigured provider: {provider}")
+
+        callback_uri = f"{settings.api_base_url}/auth/callback/{provider}"
+        return await oauth_client.authorize_redirect(request, callback_uri)
+
+    # Standard browser flow (existing behavior)
     oauth = _get_oauth(request)
     client = getattr(oauth, provider, None)
     if client is None:
         raise HTTPException(400, f"Unknown or unconfigured provider: {provider}")
 
-    settings = request.app.state.settings
-    redirect_uri = f"{settings.api_base_url}/auth/callback/{provider}"
-    return await client.authorize_redirect(request, redirect_uri)
+    callback_redirect_uri = f"{settings.api_base_url}/auth/callback/{provider}"
+    return await client.authorize_redirect(request, callback_redirect_uri)
 
 
 @router.get("/callback/{provider}")
 @router.post("/callback/{provider}")
 async def oauth_callback(request: Request, provider: str):
-    """Handle OAuth callback, issue tokens, set cookies, redirect."""
-    # MCP OAuth flows use the same Google callback URL but go through
-    # /mcp/authorize (FastMCP), not /auth/authorize (authlib).
-    # Detect by checking if authlib stored state in the session.
-    state = request.query_params.get("state", "")
-    if state and not any(k.startswith(f"_state_{provider}_") for k in request.session):
-        from starlette.responses import RedirectResponse
-        return RedirectResponse(f"/mcp/auth/callback/{provider}?{request.url.query}")
+    """Handle OAuth callback, issue tokens, set cookies, redirect.
 
+    If this callback was triggered by an MCP authorize flow (mcp_auth_code in
+    session), attach the user to the auth code and redirect to the MCP client's
+    redirect_uri with ?code=...&state=... instead of setting cookies.
+    """
     oauth = _get_oauth(request)
     client = getattr(oauth, provider, None)
     if client is None:
@@ -259,15 +331,41 @@ async def oauth_callback(request: Request, provider: str):
         # Apple sends user info as form POST param on first auth only
         form = await request.form()
         user_json = form.get("user")
-        user_info = json.loads(user_json) if user_json else None
+        user_info = json.loads(str(user_json)) if user_json else None
         user, tenant_id = await auth.handle_apple_callback(id_token_claims, user_info)
 
     else:
         raise HTTPException(400, f"Unsupported provider: {provider}")
 
+    # Check if this is an MCP OAuth 2.1 flow
+    mcp_auth_code = request.session.pop("mcp_auth_code", None)
+    if mcp_auth_code:
+        # Attach user to the pending authorization code
+        await auth.set_authorization_code_user(mcp_auth_code, str(user.id), tenant_id)
+
+        # Retrieve the code record to get the client's redirect_uri and state
+        code_record = await auth.get_authorization_code(mcp_auth_code)
+        if not code_record:
+            raise HTTPException(400, "Authorization code expired")
+
+        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+        params = {"code": mcp_auth_code}
+        if code_record.get("client_state"):
+            params["state"] = code_record["client_state"]
+
+        client_redirect = code_record["redirect_uri"]
+        # Append params to the client's redirect_uri
+        parsed = urlparse(client_redirect)
+        existing_qs = parse_qs(parsed.query)
+        existing_qs.update({k: [v] for k, v in params.items()})
+        flat_qs = urlencode({k: v[0] for k, v in existing_qs.items()})
+        redirect_url = urlunparse(parsed._replace(query=flat_qs))
+
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # Standard browser flow — issue tokens as cookies
     tokens = await auth.issue_tokens(user, tenant_id)
 
-    # Redirect to frontend with cookies set
     redirect_url = f"{settings.api_base_url}/"
     response = RedirectResponse(url=redirect_url, status_code=302)
     _set_token_cookies(response, tokens)
@@ -414,7 +512,7 @@ async def mobile_oauth_callback(request: Request, provider: str):
                                if k in ("sub", "email", "email_verified", "aud", "iss")}
         form = await request.form()
         user_json = form.get("user")
-        user_info = json.loads(user_json) if user_json else None
+        user_info = json.loads(str(user_json)) if user_json else None
         user, tenant_id = await auth.handle_apple_callback(id_token_claims, user_info)
 
     else:
@@ -449,7 +547,7 @@ async def mobile_google_drive_disconnect(request: Request):
         "UPDATE storage_grants SET status = 'revoked', metadata = '{}'::jsonb"
         " WHERE user_id_ref = $1 AND provider = 'google-drive' AND status = 'active'"
         " RETURNING id",
-        UUID(current.user_id),
+        current.user_id,
     )
 
     return {"status": "disconnected", "revoked": len(rows)}
@@ -465,7 +563,7 @@ async def mobile_google_drive_status(request: Request):
         "SELECT id, status FROM storage_grants"
         " WHERE user_id_ref = $1 AND provider = 'google-drive' AND status = 'active'"
         " LIMIT 1",
-        UUID(current.user_id),
+        current.user_id,
     )
 
     return {"connected": row is not None}
@@ -484,9 +582,12 @@ async def well_known_oauth(request: Request):
         "issuer": base,
         "authorization_endpoint": f"{base}/auth/authorize",
         "token_endpoint": f"{base}/auth/token",
+        "registration_endpoint": f"{base}/auth/register",
         "revocation_endpoint": f"{base}/auth/revoke",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "scopes_supported": ["openid"],
         "code_challenge_methods_supported": ["S256"],
     }
 
@@ -497,24 +598,69 @@ async def well_known_oauth(request: Request):
 
 
 @router.post("/token")
-async def token_refresh(request: Request, body: RefreshTokenRequest = RefreshTokenRequest()):
-    """Exchange a refresh token for a new access + refresh pair (rotation)."""
+async def token_endpoint(request: Request):
+    """OAuth 2.1 token endpoint — supports authorization_code and refresh_token grants."""
     auth = request.app.state.auth
 
-    # Get refresh token from body or cookie
-    refresh_token = body.refresh_token or request.cookies.get("refresh_token")
+    # Parse form body (OAuth 2.1 token requests use application/x-www-form-urlencoded)
+    # Also support JSON body for backwards compat with existing refresh flow
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        grant_type = form.get("grant_type", "refresh_token")
+        params = dict(form)
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        grant_type = body.get("grant_type", "refresh_token")
+        params = body
 
-    if not refresh_token:
-        raise HTTPException(400, "No refresh token provided")
+    if grant_type == "authorization_code":
+        code = params.get("code")
+        client_id = params.get("client_id")
+        client_secret = params.get("client_secret")
+        code_verifier = params.get("code_verifier")
+        redirect_uri = params.get("redirect_uri")
 
-    try:
-        tokens = await auth.refresh_tokens(refresh_token)
-    except jwt.PyJWTError as e:
-        raise HTTPException(401, str(e))
+        if not all([code, client_id, code_verifier, redirect_uri]):
+            raise HTTPException(400, "Missing required parameters: code, client_id, code_verifier, redirect_uri")
 
-    response = JSONResponse(tokens)
-    _set_token_cookies(response, tokens)
-    return response
+        # Authenticate client if client_secret provided
+        if client_secret:
+            client_record = await auth.get_client(client_id)
+            if not client_record or not auth.authenticate_client(client_id, client_secret, client_record):
+                raise HTTPException(401, "Invalid client credentials")
+
+        try:
+            tokens = await auth.exchange_authorization_code(
+                code=code,
+                client_id=client_id,
+                code_verifier=code_verifier,
+                redirect_uri=redirect_uri,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+        return JSONResponse(tokens)
+
+    elif grant_type == "refresh_token":
+        refresh_token = params.get("refresh_token") or request.cookies.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(400, "No refresh token provided")
+
+        try:
+            tokens = await auth.refresh_tokens(refresh_token)
+        except jwt.PyJWTError as e:
+            raise HTTPException(401, str(e))
+
+        response = JSONResponse(tokens)
+        _set_token_cookies(response, tokens)
+        return response
+
+    else:
+        raise HTTPException(400, f"Unsupported grant_type: {grant_type}")
 
 
 @router.post("/revoke")
@@ -620,8 +766,8 @@ async def patch_me(request: Request, body: PatchUserRequest):
 
     db = request.app.state.db
     import json as _json
-    set_clauses = []
-    params = [uid]  # $1 = user id
+    set_clauses: list[str] = []
+    params: list[object] = [uid]  # $1 = user id
     for i, (field, value) in enumerate(updates.items(), start=2):
         if field == "devices":
             set_clauses.append(f"{field} = ${i}::jsonb")

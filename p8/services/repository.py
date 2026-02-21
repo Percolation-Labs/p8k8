@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TypeVar
+from typing import Generic, TypeVar
 from uuid import UUID
 
 from p8.ontology.base import CoreModel
@@ -35,14 +35,14 @@ def _jsonify(value):
     return value
 
 
-class Repository:
+class Repository(Generic[T]):
     def __init__(self, model_class: type[T], db: Database, encryption: EncryptionService):
         self.model_class = model_class
         self.table = model_class.__table_name__
         self.db = db
         self.encryption = encryption
 
-    async def upsert(self, entities: CoreModel | list[CoreModel]) -> list[CoreModel]:
+    async def upsert(self, entities: T | list[T]) -> list[T]:
         """Bulk insert-or-update via jsonb_populate_recordset.
 
         Accepts a single entity or list. Always returns a list.
@@ -98,7 +98,7 @@ class Repository:
 
     async def get(
         self, entity_id: UUID, *, tenant_id: str | None = None, decrypt: bool = True
-    ) -> CoreModel | None:
+    ) -> T | None:
         """Fetch entity by ID.
 
         decrypt=True  → decrypt encrypted fields (platform mode default)
@@ -111,7 +111,7 @@ class Repository:
             return None
         return self._decrypt_row(row, tenant_id if decrypt else None)
 
-    async def get_for_tenant(self, entity_id: UUID, *, tenant_id: str | None = None) -> CoreModel | None:
+    async def get_for_tenant(self, entity_id: UUID, *, tenant_id: str | None = None) -> T | None:
         """Mode-aware get: checks tenant mode to decide whether to decrypt."""
         should_decrypt = await self.encryption.should_decrypt_on_read(tenant_id)
         return await self.get(entity_id, tenant_id=tenant_id, decrypt=should_decrypt)
@@ -126,7 +126,7 @@ class Repository:
         limit: int = 50,
         offset: int = 0,
         decrypt: bool = True,
-    ) -> list[CoreModel]:
+    ) -> list[T]:
         """List entities with optional filters.
 
         filters: extra column=value equality filters, e.g. {"kind": "agent", "name": "foo"}.
@@ -163,7 +163,7 @@ class Repository:
         effective_tenant = tenant_id if decrypt else None
         return [self._decrypt_row(r, effective_tenant) for r in rows]
 
-    async def find_for_tenant(self, *, tenant_id: str | None = None, **kwargs) -> list[CoreModel]:
+    async def find_for_tenant(self, *, tenant_id: str | None = None, **kwargs) -> list[T]:
         """Mode-aware find: checks tenant mode to decide whether to decrypt."""
         should_decrypt = await self.encryption.should_decrypt_on_read(tenant_id)
         return await self.find(tenant_id=tenant_id, decrypt=should_decrypt, **kwargs)
@@ -174,9 +174,9 @@ class Repository:
             f" WHERE id = $1 AND deleted_at IS NULL",
             entity_id,
         )
-        return result == "UPDATE 1"
+        return bool(result == "UPDATE 1")
 
-    def _decrypt_row(self, row, tenant_id: str | None) -> CoreModel:
+    def _decrypt_row(self, row, tenant_id: str | None) -> T:
         data = dict(row)
         # asyncpg may return JSONB as str when defaults come from DB
         for key in _JSONB_COLUMNS:

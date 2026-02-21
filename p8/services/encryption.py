@@ -23,6 +23,7 @@ import os
 import time
 
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding, rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes, serialization
 
@@ -201,6 +202,7 @@ class EncryptionService:
             return self._encrypt_fields_sealed(model_class, data, tenant_id)
 
         dek = cached[0]
+        assert isinstance(dek, bytes)
         entity_id = str(data.get("id", ""))
         aad = f"{tenant_id}:{entity_id}".encode()
 
@@ -265,6 +267,7 @@ class EncryptionService:
         if not cached or cached[0] is _DISABLED or cached[0] is _SEALED:
             return data  # sealed: can't decrypt without private key
         dek = cached[0]
+        assert isinstance(dek, bytes)
 
         entity_id = str(data.get("id", ""))
         aad = f"{tenant_id}:{entity_id}".encode()
@@ -296,6 +299,7 @@ class EncryptionService:
             return data
 
         private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+        assert isinstance(private_key, RSAPrivateKey)
         entity_id = str(data.get("id", ""))
         aad = f"{tenant_id}:{entity_id}".encode()
         oaep = asym_padding.OAEP(

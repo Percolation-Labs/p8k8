@@ -50,7 +50,7 @@ class QueueService:
             scheduled_at,
             max_retries,
         )
-        task_id = row["id"]
+        task_id: UUID = row["id"]
         log.info("Enqueued %s task %s (tier=%s)", task_type, task_id, tier)
         return task_id
 
@@ -62,7 +62,7 @@ class QueueService:
         tenant_id: str | None = None,
     ) -> UUID:
         """Enqueue a file processing task. Delegates to SQL for tier assignment."""
-        task_id = await self.db.fetchval(
+        task_id: UUID = await self.db.fetchval(  # type: ignore[assignment]
             "SELECT enqueue_file_task($1, $2, $3)",
             file_id,
             user_id,

@@ -101,7 +101,7 @@ class GoogleDriveService:
                 "grant_type": "refresh_token",
             })
             resp.raise_for_status()
-            return resp.json()["access_token"]
+            return resp.json()["access_token"]  # type: ignore[no-any-return]
 
     async def _get_grant(self, user_id: UUID) -> StorageGrant:
         """Get the active Google Drive grant for a user."""

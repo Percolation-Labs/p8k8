@@ -144,7 +144,7 @@ class ChatController:
             message_history=ctx.message_history or None,
             instructions=ctx.injector.instructions,
         )
-        assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
+        assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)  # type: ignore[attr-defined]
         all_messages = (
             result.all_messages() if hasattr(result, "all_messages")
             else getattr(result, "_all_messages", None)

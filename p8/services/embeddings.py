@@ -114,7 +114,7 @@ class FastEmbedProvider(EmbeddingProvider):
     def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", dimensions: int = 384):
         self._model_name = model_name
         self._dimensions = dimensions
-        self._model = None  # lazy init
+        self._model: object | None = None  # lazy init
 
     def _get_model(self):
         if self._model is None:
@@ -315,7 +315,7 @@ class EmbeddingService:
             " WHERE table_name = $1 AND status = 'pending'",
             table,
         )
-        return count
+        return count  # type: ignore[no-any-return]
 
     # --- internal helpers ---
 
@@ -336,7 +336,7 @@ class EmbeddingService:
         return [dict(r) for r in rows]
 
     async def _extract_content(self, item: dict) -> str | None:
-        return await self.db.fetchval(
+        return await self.db.fetchval(  # type: ignore[no-any-return]
             "SELECT content_for_embedding($1, $2, $3)",
             item["table_name"],
             item["entity_id"],
@@ -381,7 +381,9 @@ class EmbeddingService:
             raw = base64.b64decode(text)
             nonce, ct = raw[:12], raw[12:]
             aad = f"{tenant_id}:{entity_id}".encode()
-            return AESGCM(cached[0]).decrypt(nonce, ct, aad).decode()
+            dek = cached[0]
+            assert isinstance(dek, bytes)
+            return AESGCM(dek).decrypt(nonce, ct, aad).decode()
         except Exception:
             return text  # not encrypted
 

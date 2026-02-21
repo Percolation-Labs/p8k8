@@ -64,7 +64,7 @@ class DefaultClassifier:
         agent_state: dict,
         available_agents: list[dict],
     ) -> str:
-        fallback = agent_state.get("fallback", "general")
+        fallback: str = agent_state.get("fallback", "general")
         return fallback
 
 

@@ -54,7 +54,11 @@ async def lifespan(app: FastAPI):
             notification_service = NotificationService(db, settings)
         app.state.notification_service = notification_service
 
-        yield
+        # Initialize MCP server's session manager (task group) so it can
+        # handle requests.  The mounted sub-app exposes a .lifespan property.
+        mcp_app = app.state.mcp_app
+        async with mcp_app.lifespan(mcp_app):
+            yield
 
         if notification_service:
             await notification_service.close()
@@ -117,7 +121,21 @@ def create_app() -> FastAPI:
     # Root health check (matches Dockerfile HEALTHCHECK path)
     @app.get("/health")
     async def root_health():
-        return {"status": "ok"}
+        providers = []
+        if boot_settings.google_client_id:
+            providers.append("google")
+        if boot_settings.apple_client_id:
+            providers.append("apple")
+        providers.append("magic_link")  # always available
+        return {
+            "status": "ok",
+            "auth": {
+                "mcp_auth_enabled": boot_settings.mcp_auth_enabled,
+                "providers": providers,
+                "authorization_server": f"{boot_settings.api_base_url}/.well-known/oauth-authorization-server",
+                "protected_resource": f"{boot_settings.api_base_url}/.well-known/oauth-protected-resource/mcp",
+            },
+        }
 
     # .well-known/oauth-authorization-server for the app's own OAuth (mobile/web)
     @app.get("/.well-known/oauth-authorization-server")
@@ -126,44 +144,22 @@ def create_app() -> FastAPI:
 
     # Mount MCP server at /mcp (Streamable HTTP)
     mcp_app = get_mcp_app()
+    app.state.mcp_app = mcp_app  # stored for lifespan initialization
     app.mount("/mcp", mcp_app)
 
-    # RFC 8414 — MCP clients resolve issuer "http://host/mcp" to
-    # "http://host/.well-known/oauth-authorization-server/mcp".
-    # Proxy the metadata from FastMCP's own well-known endpoint.
-    if boot_settings.mcp_auth_enabled and boot_settings.google_client_id:
-        # RFC 9728 — Protected Resource Metadata.
-        # MCP clients discover auth via /.well-known/oauth-protected-resource{path}.
-        @app.get("/.well-known/oauth-protected-resource/mcp/")
+    # RFC 9728 — Protected Resource Metadata must be at the root level.
+    # RemoteAuthProvider creates these routes inside the MCP sub-app, but they
+    # need to be at /.well-known/oauth-protected-resource/mcp (root-level).
+    if boot_settings.mcp_auth_enabled:
         @app.get("/.well-known/oauth-protected-resource/mcp")
         async def mcp_protected_resource(request: Request):
-            base = str(request.base_url).rstrip("/")
+            base = boot_settings.api_base_url
             return {
                 "resource": f"{base}/mcp/",
-                "authorization_servers": [f"{base}/mcp"],
+                "authorization_servers": [base],
                 "scopes_supported": ["openid"],
                 "bearer_methods_supported": ["header"],
-            }
-
-        # RFC 8414 — Authorization Server Metadata.
-        # MCP clients resolve issuer "http://host/mcp" to
-        # "http://host/.well-known/oauth-authorization-server/mcp".
-        @app.get("/.well-known/oauth-authorization-server/mcp")
-        @app.get("/.well-known/oauth-authorization-server/mcp/")
-        async def mcp_oauth_metadata(request: Request):
-            base = str(request.base_url).rstrip("/")
-            return {
-                "issuer": f"{base}/mcp",
-                "authorization_endpoint": f"{base}/mcp/authorize",
-                "token_endpoint": f"{base}/mcp/token",
-                "registration_endpoint": f"{base}/mcp/register",
-                "revocation_endpoint": f"{base}/mcp/revoke",
-                "scopes_supported": ["openid"],
-                "response_types_supported": ["code"],
-                "grant_types_supported": ["authorization_code", "refresh_token"],
-                "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
-                "code_challenge_methods_supported": ["S256"],
-                "client_id_metadata_document_supported": True,
+                "resource_name": "p8",
             }
 
     return app

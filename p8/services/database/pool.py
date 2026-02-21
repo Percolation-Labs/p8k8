@@ -39,13 +39,17 @@ class PoolMixin:
             await self.pool.close()
 
     async def fetch(self, query: str, *args):
+        assert self.pool is not None, "Database not connected"
         return await self.pool.fetch(query, *args)
 
     async def fetchrow(self, query: str, *args):
+        assert self.pool is not None, "Database not connected"
         return await self.pool.fetchrow(query, *args)
 
     async def fetchval(self, query: str, *args):
+        assert self.pool is not None, "Database not connected"
         return await self.pool.fetchval(query, *args)
 
     async def execute(self, query: str, *args):
+        assert self.pool is not None, "Database not connected"
         return await self.pool.execute(query, *args)

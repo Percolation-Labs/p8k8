@@ -306,7 +306,7 @@ class AgentSchema(BaseModel):
     # Output model generation
     # -----------------------------------------------------------------
 
-    def to_output_schema(self, strip_description: bool = True) -> type[BaseModel] | type[str]:
+    def to_output_schema(self, strip_description: bool = True) -> type[BaseModel] | type[str]:  # type: ignore[valid-type]
         """Generate a Pydantic model from schema properties.
 
         Returns ``str`` if structured_output is disabled or no properties.
@@ -328,20 +328,20 @@ class AgentSchema(BaseModel):
             default = ... if prop_name in self.required else None
             fields[prop_name] = (field_type, default)
 
-        base_model = create_model("AgentOutput", **fields)
+        base_model = create_model("AgentOutput", **fields)  # type: ignore[call-overload]
 
         if not strip_description:
-            return base_model
+            return base_model  # type: ignore[no-any-return]
 
         class SchemaWrapper(base_model):  # type: ignore
             @classmethod
             def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:
                 schema = super().model_json_schema(**kwargs)
                 schema.pop("description", None)
-                return schema
+                return schema  # type: ignore[no-any-return]
 
         SchemaWrapper.__name__ = "AgentOutput"
-        return SchemaWrapper
+        return SchemaWrapper  # type: ignore[return-value]
 
     # -----------------------------------------------------------------
     # Prompt guidance (thinking structure for conversational mode)
@@ -492,13 +492,13 @@ class AgentSchema(BaseModel):
         return cls._parse_dict(data)
 
     @classmethod
-    def from_model_class(cls, model_cls: type[BaseModel]) -> "AgentSchema":
+    def from_model_class(cls, model_cls: type[BaseModel]) -> "AgentSchema":  # type: ignore[valid-type]
         """Create AgentSchema from a Pydantic model class.
 
         Uses ``model_json_schema()`` which flattens json_schema_extra
         to the top level.  Parses tool dicts and limits into typed models.
         """
-        js = model_cls.model_json_schema()
+        js = model_cls.model_json_schema()  # type: ignore[attr-defined]
         # Remove Pydantic noise
         js.pop("title", None)
         return cls._parse_dict(js)
@@ -559,7 +559,7 @@ class AgentSchema(BaseModel):
 
     def to_yaml(self) -> str:
         """Serialize to YAML string."""
-        return yaml.dump(
+        return yaml.dump(  # type: ignore[no-any-return]
             self.model_dump(exclude_none=True),
             default_flow_style=False,
             sort_keys=False,
@@ -664,7 +664,7 @@ class AgentSchema(BaseModel):
 
     def _get_defs(self) -> dict[str, Any]:
         """Get JSON Schema $defs for nested model definitions."""
-        return (self.model_extra or {}).get("$defs", {})
+        return (self.model_extra or {}).get("$defs", {})  # type: ignore[no-any-return]
 
     def _resolve_refs(self, prop: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
         """Resolve $ref pointers to inline definitions."""
@@ -675,7 +675,7 @@ class AgentSchema(BaseModel):
             ref_path = prop["$ref"]  # e.g. "#/$defs/DreamMoment"
             ref_name = ref_path.rsplit("/", 1)[-1]
             if ref_name in defs:
-                return defs[ref_name]
+                return defs[ref_name]  # type: ignore[no-any-return]
             return prop
 
         # Resolve nested $refs in items (arrays)
@@ -693,7 +693,7 @@ class AgentSchema(BaseModel):
         return prop
 
     @staticmethod
-    def _json_type_to_python(json_type: str) -> type:
+    def _json_type_to_python(json_type: str) -> type:  # type: ignore[valid-type]
         type_map: dict[str, type] = {
             "string": str,
             "number": float,
@@ -773,7 +773,7 @@ def get_system_prompt(schema: AgentSchema | dict[str, Any]) -> str:
     if isinstance(schema, AgentSchema):
         return schema.get_system_prompt()
 
-    base = schema.get("description", "")
+    base: str = schema.get("description", "")
     custom = schema.get("system_prompt")
     if custom:
         return f"{base}\n\n{custom}"

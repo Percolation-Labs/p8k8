@@ -14,11 +14,11 @@ from p8.services.encryption import EncryptionService
 
 
 def get_db(request: Request) -> Database:
-    return request.app.state.db
+    return request.app.state.db  # type: ignore[no-any-return]
 
 
 def get_encryption(request: Request) -> EncryptionService:
-    return request.app.state.encryption
+    return request.app.state.encryption  # type: ignore[no-any-return]
 
 
 async def require_api_key(request: Request) -> None:

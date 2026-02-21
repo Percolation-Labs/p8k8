@@ -224,7 +224,7 @@ class RemQueryEngine:
             return results
 
         if mode == "FUZZY":
-            return await self.db.rem_fuzzy(
+            return await self.db.rem_fuzzy(  # type: ignore[no-any-return]
                 p["query_text"],
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -241,7 +241,7 @@ class RemQueryEngine:
                 model = TABLE_MAP.get(table)
                 search_field = getattr(model, "__embedding_field__", "content") if model else "content"
             embedding = await self._get_embedding(p["query_text"])
-            return await self.db.rem_search(
+            return await self.db.rem_search(  # type: ignore[no-any-return]
                 embedding,
                 table,
                 field=search_field,
@@ -253,7 +253,7 @@ class RemQueryEngine:
             )
 
         if mode == "TRAVERSE":
-            return await self.db.rem_traverse(
+            return await self.db.rem_traverse(  # type: ignore[no-any-return]
                 p["start_key"],
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -272,7 +272,7 @@ class RemQueryEngine:
     async def _get_embedding(self, text: str) -> list[float]:
         provider = self._get_provider()
         vectors = await provider.embed([text])
-        return vectors[0]
+        return vectors[0]  # type: ignore[no-any-return]
 
     def _get_provider(self):
         if self._embedding_provider is None:

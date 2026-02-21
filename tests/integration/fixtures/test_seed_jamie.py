@@ -10,9 +10,7 @@ Prerequisites:
 
 from __future__ import annotations
 
-import json
 import uuid
-from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -20,8 +18,7 @@ import pytest
 import pytest_asyncio
 
 from p8.ontology.base import P8_NAMESPACE, deterministic_id
-from p8.ontology.types import File, Message, Moment, Session, Tenant, User
-from p8.services.memory import MemoryService
+from p8.ontology.types import Message, Moment, Session, User
 from p8.services.repository import Repository
 
 # ── Fixtures dir ─────────────────────────────────────────────────

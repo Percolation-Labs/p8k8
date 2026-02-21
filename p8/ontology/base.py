@@ -38,6 +38,12 @@ class CoreModel(BaseModel):
                              first non-None value wins; empty tuple → always uuid4
     """
 
+    # --- Table name (set by subclasses) ---
+    __table_name__: ClassVar[str]
+
+    # --- Embedding field (set by subclasses, None = no embeddings) ---
+    __embedding_field__: ClassVar[str | None] = None
+
     # --- Identity declarations (subclasses override) ---
     __id_fields__: ClassVar[tuple[str, ...]] = ("name",)
     # Ordered fields to try for deterministic ID generation.

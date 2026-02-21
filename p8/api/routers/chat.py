@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic_ai.ui.ag_ui import AGUIAdapter
@@ -38,7 +38,7 @@ def _extract_user_prompt(body: dict) -> str:
                 return " ".join(
                     p.get("text", "") for p in content if p.get("type") == "text"
                 )
-            return content
+            return content  # type: ignore[no-any-return]
     return ""
 
 
@@ -162,7 +162,8 @@ async def chat(
         x-session-name: Session display name — upserted on create or update (optional)
         x-session-type: Session mode (chat|workflow|eval) — upserted on create or update (optional)
 
-    Body: AG-UI RunAgentInput (thread_id, run_id, messages, tools, context, state)
+    Body: AG-UI RunAgentInput — all fields optional (defaults filled from chat_id).
+        Supported: thread_id, run_id, messages, tools, context, state, forwarded_props.
     """
     agent_name = request.headers.get("x-agent-schema-name") or DEFAULT_AGENT_NAME
 
@@ -213,9 +214,21 @@ async def chat(
                 },
             )
 
-    # Parse body before AG-UI consumes the request stream
+    # Parse body and fill in AG-UI defaults so callers can omit them
     raw_body = await request.body()
-    body = json.loads(raw_body)
+    body = json.loads(raw_body) if raw_body else {}
+    body.setdefault("thread_id", chat_id)
+    body.setdefault("threadId", chat_id)
+    body.setdefault("run_id", str(uuid4()))
+    body.setdefault("runId", body["run_id"])
+    body.setdefault("messages", [])
+    body.setdefault("tools", [])
+    body.setdefault("context", [])
+    body.setdefault("forwarded_props", {})
+    body.setdefault("forwardedProps", {})
+    body.setdefault("state", None)
+    # Overwrite cached body so AGUIAdapter.from_request sees the defaults
+    request._body = json.dumps(body).encode()
     user_prompt = _extract_user_prompt(body)
 
     # Create child event sink for delegation streaming

@@ -120,7 +120,8 @@ async def verify_model(model: type[CoreModel], db) -> list[Issue]:
     """Verify a single model's declarations against the live database."""
     issues: list[Issue] = []
     table = model.__table_name__
-    embedding_field = getattr(model, "__embedding_field__", None)
+    meta = _build_json_schema(model)
+    embedding_field = meta["embedding_field"]
 
     # 1. Table exists
     exists = await db.fetchval(
@@ -168,9 +169,9 @@ async def verify_model(model: type[CoreModel], db) -> list[Issue]:
         issues.append(Issue(table, "error", "unregistered_schema", f"No schemas row with name='{table}' kind='table'"))
     else:
         # 5. Schema metadata matches
-        db_meta = ensure_parsed(schema_row["json_schema"], default={})
-        expected = _build_json_schema(model)
-        for key, expected_val in expected.items():
+        raw_meta = ensure_parsed(schema_row["json_schema"], default={})
+        db_meta = raw_meta if isinstance(raw_meta, dict) else {}
+        for key, expected_val in meta.items():
             db_val = db_meta.get(key)
             if db_val != expected_val:
                 issues.append(

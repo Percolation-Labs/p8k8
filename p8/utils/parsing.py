@@ -36,9 +36,9 @@ def ensure_parsed(value: str | dict | list | None, default=None) -> dict | list 
         ensure_parsed(None, default=[])  # []
     """
     if value is None:
-        return default
+        return default  # type: ignore[no-any-return]
     if isinstance(value, str):
-        return json.loads(value)
+        return json.loads(value)  # type: ignore[no-any-return]
     return value
 
 
@@ -59,7 +59,7 @@ def extract_payload(task: dict) -> dict:
     """
     payload = task.get("payload", {})
     if isinstance(payload, str):
-        return json.loads(payload)
+        return json.loads(payload)  # type: ignore[no-any-return]
     return payload or {}
 
 

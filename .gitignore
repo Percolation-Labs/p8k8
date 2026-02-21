@@ -12,3 +12,4 @@ pgdata/
 recording-*.wav
 .claude/
 *.p8
+.mypy_cache/

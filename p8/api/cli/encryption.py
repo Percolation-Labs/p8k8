@@ -87,6 +87,7 @@ async def _test(tenant_id: str, mode: str):
 
         # Check API-style read (mode-aware)
         loaded = await repo.get_for_tenant(saved.id, tenant_id=tenant_id)
+        assert loaded is not None, "Message not found after upsert"
         api_is_plain = loaded.content == plaintext
         typer.echo(f"  api read: {loaded.content if api_is_plain else '[ciphertext]'}")
 
@@ -128,6 +129,8 @@ async def _test_isolation():
 
         loaded_a = await repo.get(saved.id, tenant_id=tenant_a)
         loaded_b = await repo.get(saved.id, tenant_id=tenant_b)
+        assert loaded_a is not None, "Message not found for tenant A"
+        assert loaded_b is not None, "Message not found for tenant B"
 
         ok = loaded_a.content == "secret-a" and loaded_b.content != "secret-a"
         typer.echo(f"  tenant-a reads: {loaded_a.content}")

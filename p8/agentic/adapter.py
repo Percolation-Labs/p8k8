@@ -290,14 +290,14 @@ class AgentAdapter:
         for ref in self.agent_schema.tools:
             if ref.name in DELEGATE_TOOL_NAMES:
                 continue
-            server = ref.server or "local"
-            tools_by_server.setdefault(server, set()).add(ref.name)
+            srv = ref.server or "local"
+            tools_by_server.setdefault(srv, set()).add(ref.name)
 
         # Resolve local/rem server tools via FastMCPToolset
         local_servers = {"local", "rem"}
         for server_name, tool_names in tools_by_server.items():
             if server_name in local_servers:
-                server = mcp_server
+                server: Any = mcp_server
                 if server is None:
                     from p8.api.mcp_server import get_mcp_server
                     server = get_mcp_server()
@@ -305,20 +305,18 @@ class AgentAdapter:
                     server = mcp_url
 
                 if server is not None:
-                    ts = FastMCPToolset(server)
+                    toolset: Any = FastMCPToolset(server)
                     if tool_names:
-                        ts = ts.filtered(
-                            lambda ctx, td, allowed=tool_names: td.name in allowed
-                        )
-                    toolsets.append(ts)
+                        _filter = lambda ctx, td, allowed=tool_names: td.name in allowed  # type: ignore[misc]
+                        toolset = toolset.filtered(_filter)
+                    toolsets.append(toolset)
             elif mcp_url:
                 # Remote server — use URL endpoint
-                ts = FastMCPToolset(mcp_url)
+                toolset_r: Any = FastMCPToolset(mcp_url)
                 if tool_names:
-                    ts = ts.filtered(
-                        lambda ctx, td, allowed=tool_names: td.name in allowed
-                    )
-                toolsets.append(ts)
+                    _filter_r = lambda ctx, td, allowed=tool_names: td.name in allowed  # type: ignore[misc]
+                    toolset_r = toolset_r.filtered(_filter_r)
+                toolsets.append(toolset_r)
 
         # Delegate tools — registered as direct Python functions
         tools.extend(self._get_delegate_tools())
@@ -439,7 +437,7 @@ class AgentAdapter:
 
         agent = Agent(**kwargs)
         if self.agent_schema.limits:
-            agent._p8_usage_limits = self.agent_schema.limits.to_pydantic_ai()
+            agent._p8_usage_limits = self.agent_schema.limits.to_pydantic_ai()  # type: ignore[attr-defined]
         return agent
 
     # ------------------------------------------------------------------
@@ -546,7 +544,7 @@ class AgentAdapter:
                     ModelRequest(parts=[SystemPromptPart(content=content)])
                 )
             elif mt == "assistant":
-                parts = [TextPart(content=content)]
+                parts: list[TextPart | ToolCallPart] = [TextPart(content=content)]
                 # If this assistant message had tool calls, include them
                 if tool_calls and isinstance(tool_calls, dict):
                     for tc in tool_calls.get("calls", []):

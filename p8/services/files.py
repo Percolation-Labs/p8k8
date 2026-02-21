@@ -107,6 +107,7 @@ class FileService:
         bucket, key = self._parse_s3_uri(uri)
 
         def _get():
+            assert self._s3_client is not None
             resp = self._s3_client.get_object(Bucket=bucket, Key=key)
             return resp["Body"].read()
 
@@ -117,6 +118,7 @@ class FileService:
         bucket, key = self._parse_s3_uri(uri)
 
         def _put():
+            assert self._s3_client is not None
             self._s3_client.put_object(Bucket=bucket, Key=key, Body=data)
 
         await asyncio.to_thread(_put)

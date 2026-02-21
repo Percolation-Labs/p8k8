@@ -174,7 +174,8 @@ class MemoryService:
             tenant_id=tenant_id,
             user_id=user_id,
         )
-        [result] = await self.message_repo.upsert(msg)
+        results = await self.message_repo.upsert(msg)
+        result: Message = results[0]
 
         await self.db.execute(
             "UPDATE sessions SET total_tokens = total_tokens + $1 WHERE id = $2",

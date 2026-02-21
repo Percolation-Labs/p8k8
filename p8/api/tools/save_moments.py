@@ -128,7 +128,8 @@ async def _merge_edge_on_target(
     row = rows[0]
     entity_type = row["entity_type"]
     entity_id = row["entity_id"]
-    existing_edges = ensure_parsed(row["graph_edges"], default=[])
+    raw_edges = ensure_parsed(row["graph_edges"], default=[])
+    existing_edges: list[dict] = raw_edges if isinstance(raw_edges, list) else []
 
     merged = merge_graph_edges(existing_edges, [new_edge])
 

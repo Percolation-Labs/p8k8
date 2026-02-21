@@ -31,14 +31,14 @@ When you upsert ontology pages, the KV store trigger indexes each page by its `n
 
 ## Categories
 
-Ontology pages are organized by topic. Each category is a subfolder:
+Ontology pages are organized by topic. Use filename prefixes or subdirectories as needed:
 
-| Category | Folder | What goes here |
-|----------|--------|----------------|
-| **Agents** | `agents/` | Agent capabilities, routing, delegation patterns |
-| **Moments** | `moments/` | Temporal events, session chunks, memory compaction |
-| **Security** | `security/` | Encryption, tenancy, PII redaction, auth |
-| **REM Queries** | `rem-queries/` | Query modes, functions, usage patterns |
+| Category | Prefix / Folder | What goes here |
+|----------|-----------------|----------------|
+| **Agents** | `agent-*` | Agent capabilities, routing, delegation patterns |
+| **Moments** | `moment-*` | Temporal events, session chunks, memory compaction |
+| **Security** | `security-*` | Encryption, tenancy, PII redaction, auth |
+| **REM Queries** | `rem-*` | Query modes, functions, usage patterns |
 
 ## File size rule
 

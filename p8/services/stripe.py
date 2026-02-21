@@ -51,7 +51,7 @@ class StripeService:
             user_id, tenant_id,
         )
         if row:
-            return row["stripe_customer_id"]
+            return row["stripe_customer_id"]  # type: ignore[no-any-return]
 
         customer = stripe.Customer.create(
             email=email,
@@ -102,7 +102,7 @@ class StripeService:
             cancel_url=f"{base}/billing/cancel",
             metadata={"p8_user_id": str(user_id), "plan_id": plan_id},
         )
-        return session.url
+        return session.url  # type: ignore[return-value]
 
     async def create_addon_checkout(
         self, user_id: UUID, email: str, tenant_id: str | None, addon_id: str
@@ -127,7 +127,7 @@ class StripeService:
                 "grant_amount": str(addon["grant_amount"]),
             },
         )
-        return session.url
+        return session.url  # type: ignore[return-value]
 
     async def create_portal_session(
         self, user_id: UUID, tenant_id: str | None
@@ -145,12 +145,12 @@ class StripeService:
             customer=row["stripe_customer_id"],
             return_url=self.settings.api_base_url,
         )
-        return session.url
+        return session.url  # type: ignore[return-value]
 
     async def _update_subscription_from_stripe(self, sub) -> None:
         """Update local stripe_customers row from a Stripe Subscription object."""
-        price_id = sub.items.data[0].price.id if sub.items.data else None
-        plan_id = PRICE_TO_PLAN.get(price_id, "pro")
+        price_id: str | None = sub.items.data[0].price.id if sub.items.data else None
+        plan_id = PRICE_TO_PLAN.get(price_id, "free") if price_id else "free"
         period_end = datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc) if sub.current_period_end else None
 
         await self.db.execute(
@@ -216,9 +216,70 @@ class StripeService:
                         _UUID(user_id_str), resource_type, grant_amount,
                     )
                     logger.info("Credited %s +%d %s (addon %s)", user_id_str, grant_amount, resource_type, metadata["addon_id"])
+
+                # Record payment intent for audit trail (enables refund lookups)
+                pi_id = session.payment_intent
+                if pi_id and user_id_str:
+                    await self.db.execute(
+                        "INSERT INTO payment_intents "
+                        "(user_id, stripe_payment_intent_id, stripe_customer_id, "
+                        " amount, currency, status, description, metadata) "
+                        "VALUES ($1, $2, $3, $4, $5, 'succeeded', $6, $7) "
+                        "ON CONFLICT (stripe_payment_intent_id) DO NOTHING",
+                        _UUID(user_id_str), pi_id, session.customer,
+                        session.amount_total or 0, session.currency or "usd",
+                        f"Addon: {metadata.get('addon_id', '')}",
+                        metadata,
+                    )
             elif session.subscription:
                 sub = stripe.Subscription.retrieve(session.subscription)
                 await self._update_subscription_from_stripe(sub)
+
+        # Invoice payment failed → mark subscription as past_due
+        elif event.type == "invoice.payment_failed":
+            invoice = event.data.object
+            customer_id = invoice.customer
+            result = await self.db.fetchrow(
+                "UPDATE stripe_customers SET subscription_status = 'past_due' "
+                "WHERE stripe_customer_id = $1 AND subscription_status = 'active' "
+                "RETURNING id",
+                customer_id,
+            )
+            if result:
+                logger.info("Customer %s marked past_due (invoice.payment_failed)", customer_id)
+            else:
+                logger.info("Customer %s already past_due or not active, skipping", customer_id)
+
+        # Charge refunded → reverse addon credits if applicable
+        elif event.type == "charge.refunded":
+            charge = event.data.object
+            pi_id = charge.payment_intent
+            if pi_id:
+                pi_row = await self.db.fetchrow(
+                    "SELECT user_id, metadata FROM payment_intents "
+                    "WHERE stripe_payment_intent_id = $1",
+                    pi_id,
+                )
+                if pi_row and pi_row["metadata"].get("addon_id"):
+                    pi_meta = pi_row["metadata"]
+                    resource_type = pi_meta.get("resource_type")
+                    grant_amount = int(pi_meta.get("grant_amount", 0))
+                    if resource_type and grant_amount:
+                        await self.db.execute(
+                            "UPDATE usage_tracking "
+                            "SET granted_extra = GREATEST(granted_extra - $1, 0) "
+                            "WHERE user_id = $2 AND resource_type = $3 "
+                            "AND period_start = date_trunc('month', CURRENT_DATE)::date",
+                            grant_amount, pi_row["user_id"], resource_type,
+                        )
+                        logger.info(
+                            "Reversed %d %s for user %s (refund on %s)",
+                            grant_amount, resource_type, pi_row["user_id"], pi_id,
+                        )
+                elif pi_row:
+                    logger.info("Refund on subscription payment %s — no credit reversal needed", pi_id)
+                else:
+                    logger.warning("Refund on unknown payment_intent %s — no action taken", pi_id)
 
         await self.db.execute(
             "UPDATE webhook_events SET processed = TRUE WHERE stripe_event_id = $1",

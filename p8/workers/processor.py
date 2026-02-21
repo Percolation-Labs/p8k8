@@ -63,11 +63,11 @@ def _register_default_handlers() -> None:
     from p8.workers.handlers.scheduled import ScheduledHandler
 
     if "file_processing" not in _HANDLER_REGISTRY:
-        register_handler("file_processing", FileProcessingHandler())
+        register_handler("file_processing", FileProcessingHandler())  # type: ignore[arg-type]
     if "dreaming" not in _HANDLER_REGISTRY:
-        register_handler("dreaming", DreamingHandler())
+        register_handler("dreaming", DreamingHandler())  # type: ignore[arg-type]
     if "scheduled" not in _HANDLER_REGISTRY:
-        register_handler("scheduled", ScheduledHandler())
+        register_handler("scheduled", ScheduledHandler())  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

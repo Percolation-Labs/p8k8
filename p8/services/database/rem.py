@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+if TYPE_CHECKING:
+    import asyncpg
 
 
 class RemMixin:
@@ -11,9 +15,12 @@ class RemMixin:
     Requires ``self.pool`` (asyncpg.Pool) — provided by PoolMixin.
     """
 
+    pool: asyncpg.Pool | None
+
     async def rem_lookup(
         self, key: str, *, tenant_id: str | None = None, user_id: UUID | None = None
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_lookup($1, $2, $3)", key, tenant_id, user_id
         )
@@ -31,6 +38,7 @@ class RemMixin:
         min_similarity: float = 0.7,
         limit: int = 10,
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_search($1::vector, $2, $3, $4, $5, $6, $7, $8)",
             str(embedding),
@@ -53,6 +61,7 @@ class RemMixin:
         threshold: float = 0.3,
         limit: int = 10,
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_fuzzy($1, $2, $3, $4, $5)",
             query, tenant_id, threshold, limit, user_id,
@@ -68,6 +77,7 @@ class RemMixin:
         max_depth: int = 1,
         rel_type: str | None = None,
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_traverse($1, $2, $3, $4, $5)",
             key,
@@ -81,6 +91,7 @@ class RemMixin:
     async def rem_session_timeline(
         self, session_id: UUID, *, limit: int = 50
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_session_timeline($1, $2)", session_id, limit
         )
@@ -98,6 +109,7 @@ class RemMixin:
         from datetime import date as _date
 
         bd = _date.fromisoformat(before_date) if before_date else None
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_moments_feed($1, $2, $3)", user_id, limit, bd
         )
@@ -111,6 +123,7 @@ class RemMixin:
         max_messages: int | None = None,
         since: str | None = None,
     ) -> list[dict]:
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM rem_load_messages($1, $2, $3, $4::timestamptz)",
             session_id,
@@ -129,6 +142,7 @@ class RemMixin:
         threshold: int = 0,
     ) -> dict | None:
         """Build a session_chunk moment. Returns moment dict or None if below threshold."""
+        assert self.pool is not None
         row = await self.pool.fetchrow(
             "SELECT * FROM rem_build_moment($1, $2, $3, $4)",
             session_id, tenant_id, user_id, threshold,
@@ -159,6 +173,7 @@ class RemMixin:
         import json as _json
         tc_json = _json.dumps(tool_calls) if tool_calls else None
         pai_json = pai_messages  # already a JSON string from caller
+        assert self.pool is not None
         row = await self.pool.fetchrow(
             "SELECT * FROM rem_persist_turn("
             "$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
@@ -178,6 +193,7 @@ class RemMixin:
         new_agent_name: str | None = None,
     ) -> dict:
         """Clone a session and its messages. Returns {new_session_id, messages_copied}."""
+        assert self.pool is not None
         row = await self.pool.fetchrow(
             "SELECT * FROM clone_session($1, $2, $3, $4)",
             source_session_id,
@@ -203,6 +219,7 @@ class RemMixin:
     ) -> dict:
         """Search sessions with optional filters. Returns {results, total, page, page_size}."""
         embedding_str = str(query_embedding) if query_embedding else None
+        assert self.pool is not None
         rows = await self.pool.fetch(
             "SELECT * FROM search_sessions($1, $2, $3, $4, $5, $6::timestamptz,"
             " $7::vector, $8, $9, $10)",

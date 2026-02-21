@@ -38,15 +38,14 @@ curl http://localhost:8000/health
 
 # 6. Chat with the default agent
 uv run p8 chat
-# or via API (AG-UI protocol):
-curl -N -X POST http://localhost:8000/chat/test-1 \
+# or via API (minimal — AG-UI fields are optional, defaults are filled in):
+CHAT_ID=$(uuidgen)
+curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "Content-Type: application/json" \
   -H "x-agent-schema-name: general" \
-  -d '{
-    "threadId": "test-1", "runId": "run-1",
-    "messages": [{"id": "msg-1", "role": "user", "content": "hello"}],
-    "tools": [], "context": [], "forwardedProps": {}, "state": null
-  }'
+  -d "{
+    \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"hello\"}]
+  }"
 ```
 
 `p8 migrate` is available for applying schema changes to an existing database, but docker-compose handles init from scratch.
@@ -74,29 +73,25 @@ Streaming chat with AG-UI protocol. Returns an SSE stream of typed events.
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `x-agent-schema-name` | Yes | Agent schema name (must exist in `schemas` table with `kind='agent'`) |
+| `x-agent-schema-name` | No | Agent schema name (defaults to `general`; must exist in `schemas` table with `kind='agent'`) |
 | `x-user-id` | No | User identity for context injection and message persistence |
 | `x-user-email` | No | User email for context injection |
 | `x-user-name` | No | User display name for context injection |
 | `Accept` | No | `text/event-stream` (default) |
 
-**Body:** AG-UI `RunAgentInput` — `threadId`, `runId`, `messages`, `tools`, `context`, `state`.
+**Body:** AG-UI `RunAgentInput` — all fields optional. Defaults are filled from the URL `chat_id`. Supported: `threadId`, `runId`, `messages`, `tools`, `context`, `state`, `forwardedProps`.
 
 #### Basic chat
 
 ```bash
 CHAT_ID=$(uuidgen)
 
+# Minimal — only messages required, everything else defaults
 curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "Content-Type: application/json" \
   -H "x-agent-schema-name: sample-agent" \
-  -H "Accept: text/event-stream" \
   -d "{
-    \"threadId\": \"${CHAT_ID}\",
-    \"runId\": \"$(uuidgen)\",
-    \"state\": null,
-    \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"Hello\"}],
-    \"tools\": [], \"context\": [], \"forwardedProps\": {}
+    \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"Hello\"}]
   }"
 ```
 
@@ -118,7 +113,7 @@ content streams token-by-token in real-time as `CUSTOM` events, interleaved with
 the parent's tool execution events. This is achieved via `agent.iter()` + an
 `asyncio.Queue` event sink + `asyncio.wait(FIRST_COMPLETED)` multiplexing.
 
-First, register a child agent:
+First, register a child agent if you dont have one already you want to use:
 
 ```bash
 curl -X POST http://localhost:8000/schemas/ \
@@ -139,17 +134,12 @@ CHAT_ID=$(uuidgen)
 curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "Content-Type: application/json" \
   -H "x-agent-schema-name: sample-agent" \
-  -H "Accept: text/event-stream" \
   -d "{
-    \"threadId\": \"${CHAT_ID}\",
-    \"runId\": \"$(uuidgen)\",
-    \"state\": null,
     \"messages\": [{
       \"id\": \"$(uuidgen)\",
       \"role\": \"user\",
       \"content\": \"Use the ask_agent tool to delegate to echo-child: say hello\"
-    }],
-    \"tools\": [], \"context\": [], \"forwardedProps\": {}
+    }]
   }"
 ```
 

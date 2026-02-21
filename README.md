@@ -61,17 +61,14 @@ uv run p8 serve --port 8000
 curl http://localhost:8000/health
 # → {"status":"ok"}
 
-# 6. Streaming chat (AG-UI protocol)
-curl -N -X POST http://localhost:8000/chat/test-session-1 \
+# 6. Streaming chat (AG-UI protocol — all body fields optional)
+CHAT_ID=$(uuidgen)
+curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "Content-Type: application/json" \
   -H "x-agent-schema-name: general" \
-  -H "x-user-id: 66fd910d-beba-56d5-a50a-ffb147ce0569" \
-  -d '{
-    "threadId": "test-session-1",
-    "runId": "run-1",
-    "messages": [{"id": "msg-1", "role": "user", "content": "hello"}],
-    "tools": [], "context": [], "forwardedProps": {}, "state": null
-  }'
+  -d "{
+    \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"hello\"}]
+  }"
 ```
 
 Docker compose starts Postgres 18 (with pgvector, pg_cron) on port `5488` and OpenBao KMS on port `8200`. Use `p8 migrate` to re-apply schema changes to an existing database.
@@ -157,6 +154,9 @@ p8 upsert schemas agents.yaml
 # Configure git hooks (one-time setup)
 git config core.hooksPath .githooks
 
+# Type checking
+uv run mypy p8/
+
 # Unit tests (fast, no external deps)
 uv run pytest tests/unit/
 
@@ -169,7 +169,7 @@ docker compose -p p8-test -f docker-compose.test.yml down
 uv run pytest
 ```
 
-Pre-commit runs unit tests. Pre-push starts an ephemeral Postgres on port 5499 and runs integration tests.
+Pre-commit runs mypy + unit tests. Pre-push starts an ephemeral Postgres on port 5499 and runs integration tests.
 
 ## Deployment
 

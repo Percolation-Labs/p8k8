@@ -20,6 +20,7 @@ from p8.ontology.verify import (
 from typer.testing import CliRunner
 
 from p8.api.cli import app
+from tests.unit.helpers import MockAsyncServices
 
 runner = CliRunner()
 
@@ -278,32 +279,9 @@ class TestVerifyAll:
 # ============================================================================
 
 
-class _MockAsyncServices:
-    def __init__(self):
-        db = MagicMock()
-        db.connect = AsyncMock()
-        db.close = AsyncMock()
-        db.execute = AsyncMock()
-        encryption = MagicMock()
-        encryption.ensure_system_key = AsyncMock()
-        encryption._dek_cache = {}
-        settings = MagicMock()
-        settings.system_tenant_id = "__system__"
-        file_service = MagicMock()
-        content_service = MagicMock()
-        embedding_service = None
-        self.services = (db, encryption, settings, file_service, content_service, embedding_service)
-
-    async def __aenter__(self):
-        return self.services
-
-    async def __aexit__(self, *args):
-        pass
-
-
 class TestVerifyCLI:
     def test_verify_no_issues(self):
-        mock = _MockAsyncServices()
+        mock = MockAsyncServices()
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
             patch("p8.api.cli.schema.verify_all", new_callable=AsyncMock, return_value=[]),
@@ -313,7 +291,7 @@ class TestVerifyCLI:
         assert "0 error(s)" in result.output
 
     def test_verify_with_errors_exits_1(self):
-        mock = _MockAsyncServices()
+        mock = MockAsyncServices()
         issues = [Issue("schemas", "error", "missing_column", "Column 'foo' missing")]
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
@@ -325,7 +303,7 @@ class TestVerifyCLI:
         assert "missing_column" in result.output
 
     def test_verify_warnings_only_exits_0(self):
-        mock = _MockAsyncServices()
+        mock = MockAsyncServices()
         issues = [Issue("servers", "warning", "stale_embedding_table", "stale table")]
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
@@ -338,7 +316,7 @@ class TestVerifyCLI:
 
 class TestRegisterCLI:
     def test_register_outputs_count(self):
-        mock = _MockAsyncServices()
+        mock = MockAsyncServices()
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
             patch("p8.ontology.verify.register_models", new_callable=AsyncMock, return_value=13),

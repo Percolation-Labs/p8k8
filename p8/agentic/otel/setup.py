@@ -65,15 +65,15 @@ def setup_instrumentation() -> None:
                     return [SanitizingSpanExporter._sanitize(v) for v in value]
                 return value
 
-            def export(self, spans: tuple[ReadableSpan, ...]) -> SpanExportResult:
-                sanitized = []
+            def export(self, spans: tuple[ReadableSpan, ...]) -> SpanExportResult:  # type: ignore[override]
+                sanitized: list[ReadableSpan] = []
                 for span in spans:
                     if span.attributes:
                         attrs = {k: self._sanitize(v) for k, v in span.attributes.items()}
                         sanitized.append(_SanitizedSpan(span, attrs))
                     else:
                         sanitized.append(span)
-                return self._wrapped.export(tuple(sanitized))
+                return self._wrapped.export(tuple(sanitized))  # type: ignore[arg-type]
 
             def shutdown(self) -> None:
                 self._wrapped.shutdown()
@@ -172,7 +172,7 @@ def setup_instrumentation() -> None:
                 insecure=s.otel_insecure,
             )
         else:
-            base_exporter = HTTPExporter(
+            base_exporter = HTTPExporter(  # type: ignore[assignment]
                 endpoint=f"{s.otel_collector_endpoint}/v1/traces",
                 timeout=s.otel_export_timeout,
             )

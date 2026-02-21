@@ -41,6 +41,8 @@ async def execute_query(q: QueryRequest, db: Database = Depends(get_db)):
     """Execute a structured REM query."""
     match q.mode.upper():
         case "LOOKUP":
+            if not q.key:
+                raise HTTPException(400, "LOOKUP requires key")
             return await db.rem_lookup(q.key, tenant_id=q.tenant_id, user_id=q.user_id)
         case "SEARCH":
             if not q.embedding or not q.table:
@@ -50,10 +52,14 @@ async def execute_query(q: QueryRequest, db: Database = Depends(get_db)):
                 tenant_id=q.tenant_id, min_similarity=q.threshold, limit=q.limit,
             )
         case "FUZZY":
+            if not q.query:
+                raise HTTPException(400, "FUZZY requires query")
             return await db.rem_fuzzy(
                 q.query, tenant_id=q.tenant_id, threshold=q.threshold, limit=q.limit,
             )
         case "TRAVERSE":
+            if not q.key:
+                raise HTTPException(400, "TRAVERSE requires key")
             return await db.rem_traverse(
                 q.key, tenant_id=q.tenant_id, max_depth=q.max_depth, rel_type=q.rel_type,
             )

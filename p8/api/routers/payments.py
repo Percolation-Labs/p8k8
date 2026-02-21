@@ -18,7 +18,7 @@ def _get_stripe(request: Request) -> StripeService:
     svc = request.app.state.stripe_service
     if not svc:
         raise HTTPException(503, "Stripe not configured")
-    return svc
+    return svc  # type: ignore[no-any-return]
 
 
 class CheckoutRequest(BaseModel):

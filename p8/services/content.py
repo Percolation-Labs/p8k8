@@ -285,7 +285,7 @@ print(json.dumps(output))
             name=f"upload-{stem}",
             moment_type="content_upload",
             summary=f"Uploaded {filename} ({len(resources)} chunks, {char_count} chars)",
-            source_session_id=session_id,
+            source_session_id=UUID(session_id) if session_id else None,
             metadata={
                 "file_id": str(file_entity.id),
                 "file_name": filename,

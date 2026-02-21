@@ -37,9 +37,12 @@ p8 = "p8.api.cli:app"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "ruff>=0.9",
+    "types-croniter>=6.0.0.20250809",
+    "types-pyyaml>=6.0.12.20250915",
 ]
 
 [build-system]
@@ -56,6 +59,16 @@ markers = [
     "llm: tests that call a real LLM (skipped by default, run with -m llm)",
 ]
 addopts = "-m 'not llm'"
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["tests/", "remapp/"]
 
 [tool.ruff]
 line-length = 100

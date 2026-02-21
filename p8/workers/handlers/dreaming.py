@@ -229,7 +229,7 @@ class DreamingHandler:
                     if isinstance(part, SystemPromptPart):
                         continue  # system prompts live in the agent definition, not messages
                     elif isinstance(part, UserPromptPart):
-                        content = part.content
+                        content = part.content if isinstance(part.content, str) else str(part.content)
                         tc = estimate_tokens(content)
                         m = Message(
                             session_id=session_id, message_type="user",
@@ -254,9 +254,9 @@ class DreamingHandler:
                         total_tokens += tc
 
             elif isinstance(msg, ModelResponse):
-                text_parts = []
-                tool_calls_data = []
-                for part in msg.parts:
+                text_parts: list[str] = []
+                tool_calls_data: list[dict] = []
+                for part in msg.parts:  # type: ignore[assignment]  # ModelResponsePart, not request parts
                     if isinstance(part, TextPart):
                         text_parts.append(part.content)
                     elif isinstance(part, ToolCallPart):
@@ -330,7 +330,7 @@ class DreamingHandler:
                 summary = md.get("summary", "")
                 mtype = md.get("moment_type", "")
                 tags = md.get("topic_tags") or []
-                edges = ensure_parsed(md.get("graph_edges"), default=[])
+                edges = ensure_parsed(md.get("graph_edges"), default=[]) or []
 
                 lines.append(
                     f"### {name} ({mtype})\n"
@@ -405,10 +405,14 @@ class DreamingHandler:
                 summary = kv["content_summary"] or ""
 
                 # For resources/files, try to load actual content
-                if etype in ("resources", "files") and kv["entity_id"]:
+                _RESOURCE_QUERIES = {
+                    "resources": "SELECT content FROM resources WHERE id = $1 LIMIT 1",
+                    "files": "SELECT parsed_content FROM files WHERE id = $1 LIMIT 1",
+                }
+                if etype in _RESOURCE_QUERIES and kv["entity_id"]:
                     field = "content" if etype == "resources" else "parsed_content"
                     content_rows = await db.fetch(
-                        f"SELECT {field} FROM {etype} WHERE id = $1 LIMIT 1",
+                        _RESOURCE_QUERIES[etype],
                         kv["entity_id"],
                     )
                     if content_rows:
