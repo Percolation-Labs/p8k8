@@ -190,18 +190,163 @@ toolsets, tools = adapter.resolve_toolsets(mcp_server=server)
 - Only tools declared in the agent's `tools` list are loaded — no extras
 - `ask_agent` is special: always a direct Python function (not from MCP) to avoid namespace conflicts
 
-## Context Injection
+## How the LLM Payload is Assembled
 
-Runtime context (date, user, session, routing) is injected via pydantic-ai's `instructions` parameter:
+Every agent call sends three distinct layers to the model. Understanding these layers is critical — they have different origins, different persistence rules, and different positions in the prompt.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  1. SYSTEM PROMPT                                   │
+│     Source: Pydantic model docstring / description   │
+│     Position: system message (first)                 │
+│     Persisted: no (rebuilt from schema each request) │
+│                                                     │
+│     Includes: ## Tool Notes, ## Thinking Structure   │
+├─────────────────────────────────────────────────────┤
+│  2. INSTRUCTIONS (context injection)                 │
+│     Source: ContextInjector — built per-request       │
+│     Position: after system prompt, before history     │
+│     Persisted: never                                 │
+│                                                     │
+│     Contains:                                        │
+│       [Context]                                      │
+│       Date: 2026-02-21                               │
+│       Time: 14:30:00                                 │
+│       User ID: 00000000-...                          │
+│       User email: alice@example.com                  │
+│       Session: sess-123                              │
+│       Agent: general                                 │
+│                                                     │
+│       + X-Added-Instruction (when provided)          │
+├─────────────────────────────────────────────────────┤
+│  3. MESSAGE HISTORY + NEW USER PROMPT                │
+│     Source: messages table (loaded per-session)       │
+│     Position: after instructions                     │
+│     Persisted: yes (user, tool_call, tool_response,  │
+│                     assistant)                       │
+│                                                     │
+│     Interleaved: user, assistant, system (moments),  │
+│                  tool_call, tool_response,            │
+│                  observation, memory                  │
+└─────────────────────────────────────────────────────┘
+```
+
+### Layer 1: System Prompt (from schema)
+
+The Pydantic model **docstring** becomes the system prompt. When you define an agent as a class:
+
+```python
+class GeneralAgent(BaseModel):
+    """You are a friendly assistant with access to a knowledge base.
+    Search before making claims about the user's data."""
+
+    topic: str = Field(description="Primary topic")
+```
+
+The docstring (`"""You are a friendly assistant..."""`) is extracted by `AgentSchema.from_model_class()`, stored in the `content` field of the Schema row, and passed to pydantic-ai as `system_prompt`. For YAML-defined agents, the `description` field serves the same role.
+
+The system prompt is **never persisted** to the messages table — it's rebuilt from the schema on every request. This means you can update an agent's system prompt and all future requests will use the new version, even for existing sessions.
+
+If the agent has tool references with descriptions, they're appended as a `## Tool Notes` section. If it has properties (in conversational mode), they're appended as `## Thinking Structure`.
+
+### Layer 2: Instructions (context injection)
+
+Per-request context is injected via pydantic-ai's `instructions` parameter. The `ContextInjector` assembles a text block containing:
+
+- **Date and time** — current timestamp
+- **User identity** — user_id, email, display name (from JWT or headers)
+- **Session info** — session_id, session_name, session_metadata
+- **Agent name** — which agent schema is handling this request
+- **Routing table** — active agent state for multi-agent routing
+- **Extra sections** — arbitrary text from `X-Added-Instruction` or programmatic callers
 
 ```python
 injector = adapter.build_injector(
     user_id=user_id,
     user_email="alice@example.com",
     session_id="sess-123",
+    extra_sections=["Respond only in French"],
 )
 result = await agent.run(prompt, instructions=injector.instructions)
 ```
+
+Instructions are **never persisted**. They're rebuilt fresh on every request from the current request context. This is what makes `X-Added-Instruction` safe — the instruction influences the model's response but leaves no trace in stored conversation history.
+
+#### X-Added-Instruction Header
+
+API consumers inject arbitrary instructions via the `X-Added-Instruction` header. The instruction is appended to the context block as an `extra_section`:
+
+```bash
+CHAT_ID=$(uuidgen)
+curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
+  -H 'Content-Type: application/json' \
+  -H 'x-agent-schema-name: general' \
+  -H 'X-Added-Instruction: Always respond in haiku form' \
+  -d '{"messages":[{"id":"m1","role":"user","content":"hello"}]}'
+```
+
+Flow: `X-Added-Instruction` header → `controller.prepare(added_instruction=...)` → `adapter.build_injector(extra_sections=[...])` → `ContextInjector.instructions` → `agent.run(instructions=...)`.
+
+### Layer 3: Message History (from DB)
+
+Conversation history is loaded from the `messages` table by `MemoryService.load_context()`, converted to pydantic-ai `ModelMessage` objects by `_rows_to_model_messages()`, and passed as `message_history`.
+
+Loading uses `rem_load_messages()` — a SQL function that loads messages most-recent-first with a running token sum, stopping when the token budget is exceeded. The last N `session_chunk` moments are then prepended as system messages for temporal grounding.
+
+The chat flow persists `user`, `tool_call`, `tool_response`, and `assistant` messages. Tool calls and responses are interleaved in the correct order between user and assistant — each tool invocation produces a `tool_call` row (call metadata in `tool_calls` JSONB, `content` NULL) followed by a `tool_response` row (tool result in `content`, correlation metadata in `tool_calls` JSONB). For `ask_agent` delegation, the `tool_response` captures the structured output artifact from the child agent. When loading history for the LLM, both `tool_call` and `tool_response` rows are **skipped** — the assistant response already incorporates tool results, and pydantic-ai requires matching `ToolReturnPart` objects which we don't replay. These rows exist for observability, session replay, and debugging (visible in timeline views and SQL queries).
+
+## Message Roles
+
+The `messages.message_type` column determines how each row is interpreted when loaded back into agent context. Roles fall into two categories: **persisted by the chat flow** and **persisted by other subsystems**.
+
+### Persisted by the chat flow
+
+Each chat turn persists messages in order: `user` → `tool_call` → `tool_response` → ... → `assistant`. When no tool calls occurred, only `user` + `assistant` are saved via `rem_persist_turn` (single SQL round-trip). When tool calls are present, messages are inserted individually via `persist_message()` to preserve ordering.
+
+| Role | Direction | What it contains | Loaded into LLM context? |
+|------|-----------|------------------|--------------------------|
+| `user` | Human → Model | The user's message text | Yes — `ModelRequest` with `UserPromptPart` |
+| `tool_call` | Model → Tool | Call metadata in `tool_calls` JSONB (name, args, id). `content` is NULL. | No — skipped when loading history |
+| `tool_response` | Tool → Model | Tool response in `content` + correlation metadata in `tool_calls` JSONB (name, id). For `ask_agent` this captures the structured output artifact. | No — skipped when loading history |
+| `assistant` | Model → Human | The agent's final text response + usage metrics | Yes — `ModelResponse` with `TextPart` |
+
+The resulting message sequence in DB looks like:
+
+```
+user, tool_call, tool_response, tool_call, tool_response, assistant
+```
+
+A captured example — including `search` + `ask_agent` delegation to a structured output agent — is in [`examples/data/agent_run.yaml`](../../examples/data/agent_run.yaml). Regenerate with: `uv run python examples/capture_agent_run.py`
+
+### Persisted by other subsystems
+
+| Role | Source | What it contains | pydantic-ai mapping | When loaded |
+|------|--------|------------------|---------------------|-------------|
+| `system` | Moment injection | Session context summaries (`[Session context] ...`) | `ModelRequest` with `SystemPromptPart` | Injected at history load time by `MemoryService` |
+| `observation` | `adapter.persist_observation()` | Structured observations (`[Observation] ...`) | `ModelRequest` with `UserPromptPart` | Treated as context, not user speech |
+| `memory` | Memory compaction | Compacted conversation summaries | `ModelRequest` with `SystemPromptPart` | Background knowledge from older turns |
+| `think` | Internal reasoning | Model's chain-of-thought (if captured) | Skipped | Never loaded into context |
+
+### What is NOT persisted
+
+- **System prompt** — rebuilt from the agent schema each request
+- **Instructions** — rebuilt from request context (date, user, session, X-Added-Instruction)
+
+### Multi-agent delegation and persistence
+
+When a parent agent calls `ask_agent`, the child agent runs independently and returns its output as a tool result to the parent. The delegation is captured as a `tool_call` row (with `name: ask_agent` and the delegation arguments) followed by a `tool_response` row containing the child's output. The parent then incorporates the child's response into its own final text. The child's internal tool calls (e.g. if the child called `search`) are not saved to the parent's session.
+
+For **structured output agents** (like `DreamingAgent`), the child returns a JSON object matching its output schema. The `tool_response` row captures this structured output artifact — making it queryable and replayable from the messages table.
+
+### History loading and compaction
+
+When loading history for a new turn, `MemoryService.load_context()` performs:
+
+1. **Token-aware loading** — `rem_load_messages()` loads recent messages within a token budget
+2. **Moment injection** — recent `session_chunk` moments are prepended as `system` messages for temporal grounding
+3. **Compaction** — old assistant messages outside the recent window are replaced with breadcrumbs pointing to the covering moment (`[Earlier: ... → REM LOOKUP <key>]`)
+
+This means the model always sees a bounded context window: recent full messages + compacted summaries of older conversation.
 
 ## Multi-Agent Delegation
 
@@ -210,7 +355,7 @@ Agents delegate via `ask_agent(agent_name, input_text)`:
 1. **Parent agent** calls `ask_agent` tool
 2. **Child agent** loads, runs, streams response
 3. **Child events** bubble up via event sink (`asyncio.Queue` in `ContextVar`)
-4. **Tool calls** from child are saved to DB for the session
+4. **Tool calls and responses** from child are saved to DB as `tool_call` + `tool_response` rows
 
 Child streaming is **non-blocking** — child events are interleaved with parent events via `_merged_event_stream()`.
 
@@ -308,7 +453,7 @@ See also `test_function_model_captures_llm_input` in `tests/agents/test_chat.py`
 | 2 | **Config properties override defaults.** Agent-level `temperature`, `model`, `limits` take precedence over settings defaults. | `p8 query "SQL SELECT json_schema->>'temperature' FROM schemas WHERE name='dreaming-agent'"` | `curl http://localhost:8000/schemas/?name=dreaming-agent` — check `json_schema.temperature` is `0.7`, not settings default |
 | 3 | **Streaming children are non-blocking.** Child agent events interleave with parent via `_merged_event_stream`. | `p8 chat --agent general` then ask it to delegate: "ask the sample agent about X" | `curl -N -X POST "http://localhost:8000/chat/$(uuidgen)" -H 'x-agent-schema-name: general' -H 'Content-Type: application/json' -d '{"messages":[{"id":"m1","role":"user","content":"ask the sample agent about X"}]}'` — observe `child_content` SSE events interleaved with parent events |
 | 4 | **Structured response disabled adds YAML properties into prompt.** Conversational agents get a `## Thinking Structure` block. | `python -c "from p8.agentic.core_agents import GENERAL_AGENT; print(GENERAL_AGENT.get_system_prompt())"` | `curl http://localhost:8000/schemas/?name=general` — then call `AgentSchema.from_schema_row(row).get_system_prompt()` and verify `## Thinking Structure` present |
-| 5 | **Structured response enabled saves tool calls in message.** Delegate runs with structured output persist tool_calls JSONB on assistant messages. | `p8 query "SQL SELECT tool_calls FROM messages WHERE session_id='<id>' AND tool_calls IS NOT NULL"` | `curl -X POST http://localhost:8000/query/ -H 'Content-Type: application/json' -d '{"mode":"SQL","query":"SELECT tool_calls FROM messages WHERE tool_calls IS NOT NULL LIMIT 5"}'` |
+| 5 | **Tool calls and responses persisted as separate rows.** `tool_call` rows have `content=NULL` + metadata in `tool_calls` JSONB. `tool_response` rows have the result in `content` + correlation in `tool_calls` JSONB. | `p8 query "SQL SELECT message_type, tool_calls, content FROM messages WHERE message_type IN ('tool_call','tool_response') ORDER BY created_at LIMIT 10"` | `curl -X POST http://localhost:8000/query/ -H 'Content-Type: application/json' -d '{"mode":"SQL","query":"SELECT message_type, tool_calls, LEFT(content,100) FROM messages WHERE message_type IN ('"'"'tool_call'"'"','"'"'tool_response'"'"') ORDER BY created_at LIMIT 10"}'` |
 | 6 | **Latency and token count fields populated on metrics.** `input_tokens`, `output_tokens`, `latency_ms` are non-zero on assistant messages. | `p8 query "SQL SELECT input_tokens, output_tokens, latency_ms FROM messages WHERE message_type='assistant' AND input_tokens > 0 LIMIT 5"` | `curl -X POST http://localhost:8000/query/ -H 'Content-Type: application/json' -d '{"mode":"SQL","query":"SELECT input_tokens, output_tokens, latency_ms, model FROM messages WHERE message_type='"'"'assistant'"'"' AND input_tokens > 0 LIMIT 5"}'` |
 | 7 | **Only tools declared in agent schema are sent to LLM.** Enable `openai._base_client` DEBUG logging (see above) and check the `tools` array in the request payload — it should contain only the tools listed in the agent's schema, not every tool on the MCP server. | Enable debug logging, run `p8 chat --agent sample-agent`, check "Request options" log — `tools` should be exactly `[search, action, ask_agent]` | See `test_function_model_captures_llm_input` in `test_chat.py` for programmatic verification via `FunctionModel` |
 | 8 | **Structured output has description stripped.** When `structured_output: true`, the Pydantic model's `model_json_schema()` omits top-level `description`. | `python -c "from p8.agentic.core_agents import DREAMING_AGENT; M = DREAMING_AGENT.to_output_schema(); print('description' not in M.model_json_schema())"` — prints `True` | N/A — verify in unit tests: `test_build_agent_structured_output` in `test_chat.py` |

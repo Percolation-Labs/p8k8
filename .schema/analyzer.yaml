@@ -1,0 +1,26 @@
+type: object
+name: analyzer
+short_description: Structured output agent that analyzes text and returns key concepts.
+structured_output: true
+description: |
+  You are a text analyzer. Given input text, extract a short summary
+  and a list of key concepts. Return structured JSON output.
+properties:
+  summary:
+    type: string
+    description: A 1-2 sentence summary of the input
+  key_concepts:
+    type: array
+    description: 3-5 key concepts or themes extracted from the input
+  confidence:
+    type: number
+    description: Confidence score 0.0-1.0
+required:
+  - summary
+  - key_concepts
+model: openai:gpt-4.1-mini
+temperature: 0.2
+limits:
+  request_limit: 3
+  total_tokens_limit: 10000
+routing_enabled: false

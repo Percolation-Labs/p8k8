@@ -63,7 +63,7 @@ async def test_search_fuzzy(_seed_schema):
 
 @pytest.mark.asyncio
 async def test_search_sql():
-    result = await search(query="SELECT name, kind FROM schemas LIMIT 3")
+    result = await search(query="SQL SELECT name, kind FROM schemas LIMIT 3")
     assert result["status"] == "success"
     assert isinstance(result["results"], list)
 

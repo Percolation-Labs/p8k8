@@ -1,0 +1,16 @@
+# External Secrets Operator — install via Helm
+#
+# This is a stub. ESO is installed as a Helm chart, not raw manifests.
+# Deploy with:
+#
+#   helm repo add external-secrets https://charts.external-secrets.io
+#   helm repo update
+#   helm install external-secrets external-secrets/external-secrets \
+#     --namespace external-secrets \
+#     --create-namespace \
+#     --set installCRDs=true
+#
+# Once installed, apply the ClusterSecretStore and ExternalSecret resources
+# in this directory to connect to OpenBao.
+#
+# Pattern matches manifests/platform/cloudnative-pg/operator.yaml

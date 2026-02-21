@@ -11,6 +11,27 @@ from p8.services.repository import Repository
 from p8.utils.tokens import estimate_tokens
 
 
+def format_moment_context(md: dict) -> str:
+    """Format a moment dict as enriched session context for agent injection.
+
+    Includes summary, resource keys, file name, and topic tags when available.
+    Skips metadata lines already present in the summary (e.g. upload moments
+    embed Resources: in their summary text).
+    Used by both MemoryService.load_context() and adapter._load_session_moments().
+    """
+    summary = md.get("summary", "")
+    parts = [f"[Session context]\n{summary}"]
+    meta = md.get("metadata") or {}
+    if meta.get("resource_keys") and "Resources:" not in summary:
+        parts.append(f"Resources: {', '.join(meta['resource_keys'][:10])}")
+    if meta.get("file_name") and "File:" not in summary:
+        parts.append(f"File: {meta['file_name']}")
+    tags = md.get("topic_tags") or []
+    if tags:
+        parts.append(f"Topics: {', '.join(tags)}")
+    return "\n".join(parts)
+
+
 class MemoryService:
     def __init__(self, db: Database, encryption: EncryptionService):
         self.db = db
@@ -59,7 +80,7 @@ class MemoryService:
             md = self.encryption.decrypt_fields(Moment, md, tenant_id)
             messages.insert(0, {
                 "message_type": "system",
-                "content": f"[Session context]\n{md.get('summary', '')}",
+                "content": format_moment_context(md),
                 "token_count": 0,
             })
 
@@ -68,11 +89,16 @@ class MemoryService:
         #    rather than per-message keys (messages don't sync to kv_store).
         if len(messages) > always_last + 2:
             latest_moment_name = moment_rows[0]["name"] if moment_rows else None
+            moment_hint = (moment_rows[0].get("summary", "")[:120] if moment_rows else "")
             for i in range(len(messages) - always_last):
                 msg = messages[i]
                 if msg.get("message_type") == "assistant" and msg.get("content"):
                     if latest_moment_name:
-                        messages[i] = {**msg, "content": f"[REM LOOKUP {latest_moment_name}]", "token_count": 10}
+                        messages[i] = {
+                            **msg,
+                            "content": f"[Earlier: {moment_hint}… → REM LOOKUP {latest_moment_name}]",
+                            "token_count": 20,
+                        }
                     else:
                         messages[i] = {**msg, "content": "[earlier message compacted]", "token_count": 5}
 
@@ -155,15 +181,21 @@ class MemoryService:
         self,
         session_id: UUID,
         message_type: str,
-        content: str,
+        content: str | None,
         *,
         tenant_id: str | None = None,
         user_id: UUID | None = None,
         token_count: int | None = None,
         tool_calls: dict | None = None,
+        agent_name: str | None = None,
+        model: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        latency_ms: int | None = None,
+        encryption_level: str | None = None,
     ) -> Message:
         if token_count is None:
-            token_count = estimate_tokens(content)
+            token_count = estimate_tokens(content or "")
 
         msg = Message(
             session_id=session_id,
@@ -173,6 +205,12 @@ class MemoryService:
             tool_calls=tool_calls,
             tenant_id=tenant_id,
             user_id=user_id,
+            agent_name=agent_name,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=latency_ms,
+            encryption_level=encryption_level,
         )
         results = await self.message_repo.upsert(msg)
         result: Message = results[0]

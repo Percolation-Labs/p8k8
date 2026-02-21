@@ -94,12 +94,26 @@ class ContentService:
             stem, uri, mime_type, data, full_text,
             tenant_id=tenant_id, user_id=user_id, tags=tag_list,
         )
+
+        # Generate and upload thumbnail for images
+        thumb_data: bytes | None = None
+        if mime_type and mime_type.startswith("image/"):
+            thumb_data = await self._generate_thumbnail(data)
+            if thumb_data and self.settings.s3_bucket and uri and uri.startswith("s3://"):
+                _, orig_key = FileService._parse_s3_uri(uri)
+                thumb_key = f"{orig_key}-thumb.jpg"
+                thumb_uri = await self.file_service.write_to_bucket(thumb_key, thumb_data)
+                file_entity.thumbnail_uri = thumb_uri
+                repo = Repository(File, self.db, self.encryption)
+                await repo.upsert(file_entity)
+
         resource_entities = await self._persist_chunks(
             stem, uri, chunk_texts, file_entity.id, filename,
             category=category, tenant_id=tenant_id, user_id=user_id, tags=tag_list,
         )
         moment = await self._create_upload_moment(
             stem, filename, file_entity, resource_entities, full_text,
+            thumb_data=thumb_data,
             session_id=session_id, tenant_id=tenant_id, user_id=user_id,
         )
         result_session_id = await self._ensure_upload_session(
@@ -277,21 +291,47 @@ print(json.dumps(output))
         self,
         stem: str, filename: str,
         file_entity: File, resources: list[Resource], full_text: str,
-        *, session_id: str | None, tenant_id: str | None, user_id: UUID | None,
+        *,
+        thumb_data: bytes | None = None,
+        session_id: str | None, tenant_id: str | None, user_id: UUID | None,
     ) -> Moment:
-        """Record a content_upload moment."""
+        """Record a content_upload moment with content preview and resource keys."""
+        import base64
+
         char_count = len(full_text) if full_text else 0
+        resource_keys = [r.name for r in resources]
+
+        # Build enriched summary with preview and resource keys
+        parts = [f"Uploaded {filename} ({len(resources)} chunks, {char_count} chars)."]
+        if resource_keys:
+            parts.append(f"Resources: {', '.join(resource_keys[:5])}")
+        if full_text:
+            preview = (full_text[:200] + "…") if len(full_text) > 200 else full_text
+            parts.append(f"Preview: {preview}")
+
+        # For image uploads: embed thumbnail as base64 data URI (typically ~3KB),
+        # plus store the API path for full-res access
+        image_uri = None
+        file_id_str = str(file_entity.id)
+        is_image = file_entity.mime_type and file_entity.mime_type.startswith("image/")
+
+        if is_image and thumb_data:
+            b64 = base64.b64encode(thumb_data).decode()
+            image_uri = f"data:image/jpeg;base64,{b64}"
+
         moment = Moment(
             name=f"upload-{stem}",
             moment_type="content_upload",
-            summary=f"Uploaded {filename} ({len(resources)} chunks, {char_count} chars)",
+            summary="\n".join(parts),
+            image_uri=image_uri,
             source_session_id=UUID(session_id) if session_id else None,
             metadata={
-                "file_id": str(file_entity.id),
+                "file_id": file_id_str,
                 "file_name": filename,
-                "resource_keys": [r.name for r in resources],
+                "resource_keys": resource_keys,
                 "source": "upload",
                 "chunk_count": len(resources),
+                **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
             },
             tenant_id=tenant_id, user_id=user_id,
         )
@@ -382,9 +422,30 @@ print(json.dumps(output))
         return " ".join(transcriptions)
 
     async def _process_image(self, data: bytes, mime_type: str) -> tuple[str, list[str]]:
-        """Placeholder — file entity created, no text extraction yet."""
+        """No text extraction for images yet. Thumbnail generated separately."""
         # TODO: LLM vision API to describe image
         return ("", [])
+
+    async def _generate_thumbnail(self, data: bytes) -> bytes | None:
+        """Generate a JPEG thumbnail (max 400px, 80% quality). Returns None on failure."""
+        import asyncio
+
+        def _make_thumb() -> bytes | None:
+            try:
+                from PIL import Image, ImageOps
+                img: Image.Image = Image.open(BytesIO(data))
+                img = ImageOps.exif_transpose(img)  # type: ignore[assignment]
+                img.thumbnail((400, 400))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=80)
+                return buf.getvalue()
+            except Exception:
+                logger.warning("Thumbnail generation failed", exc_info=True)
+                return None
+
+        return await asyncio.to_thread(_make_thumb)
 
     # ── Path / Directory ingestion ─────────────────────────────────────────
 

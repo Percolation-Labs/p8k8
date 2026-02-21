@@ -527,13 +527,15 @@ async def test_rows_to_model_messages(db, encryption):
         {"message_type": "user", "content": "Hello"},
         {"message_type": "assistant", "content": "Hi there!"},
         {"message_type": "system", "content": "System note"},
+        {"message_type": "tool_call", "content": None, "tool_calls": {"name": "search", "id": "tc-1", "arguments": {}}},
+        {"message_type": "tool_response", "content": "search results", "tool_calls": {"name": "search", "id": "tc-1"}},
         {"message_type": "observation", "content": "User clicked button"},
         {"message_type": "memory", "content": "User prefers dark mode"},
         {"message_type": "think", "content": "Internal reasoning"},
     ]
     messages = adapter._rows_to_model_messages(rows)
 
-    # user, assistant, system, observation, memory — think is skipped
+    # user, assistant, system, observation, memory — tool_call, tool_response, think are skipped
     assert len(messages) == 5
     assert isinstance(messages[0], ModelRequest)  # user
     assert isinstance(messages[1], ModelResponse)  # assistant
@@ -542,9 +544,9 @@ async def test_rows_to_model_messages(db, encryption):
     assert isinstance(messages[4], ModelRequest)  # memory
 
 
-async def test_rows_with_tool_calls(db, encryption):
-    """_rows_to_model_messages handles assistant messages with tool_calls."""
-    from pydantic_ai.messages import ModelResponse, ToolCallPart
+async def test_rows_with_tool_calls_skipped(db, encryption):
+    """_rows_to_model_messages skips tool_call rows and keeps assistant simple."""
+    from pydantic_ai.messages import ModelResponse, TextPart
 
     from p8.agentic.adapter import AgentAdapter
     from p8.ontology.types import Schema
@@ -559,31 +561,99 @@ async def test_rows_with_tool_calls(db, encryption):
 
     adapter = await AgentAdapter.from_schema_name("tool-conv-agent", db, encryption)
     rows = [
-        {
-            "message_type": "assistant",
-            "content": "Let me search for that.",
-            "tool_calls": {
-                "calls": [
-                    {"name": "search", "arguments": {"q": "test"}, "id": "tc-1"},
-                ]
-            },
-        },
+        {"message_type": "user", "content": "Search for something"},
         {
             "message_type": "tool_call",
-            "content": "Search result: found 3 items",
+            "content": None,
+            "tool_calls": {"name": "search", "id": "tc-1", "arguments": {"q": "test"}},
+        },
+        {
+            "message_type": "tool_response",
+            "content": "Found 3 results",
             "tool_calls": {"name": "search", "id": "tc-1"},
+        },
+        {
+            "message_type": "assistant",
+            "content": "I found 3 results.",
         },
     ]
     messages = adapter._rows_to_model_messages(rows)
+
+    # tool_call and tool_response rows are skipped — only user + assistant
     assert len(messages) == 2
 
-    # Assistant message with tool call
-    resp = messages[0]
+    # Assistant message is simple TextPart only (no ToolCallPart)
+    resp = messages[1]
     assert isinstance(resp, ModelResponse)
-    assert len(resp.parts) == 2  # TextPart + ToolCallPart
-    tc_part = resp.parts[1]
-    assert isinstance(tc_part, ToolCallPart)
-    assert tc_part.tool_name == "search"
+    assert len(resp.parts) == 1
+    assert isinstance(resp.parts[0], TextPart)
+    assert resp.parts[0].content == "I found 3 results."
+
+
+async def test_extract_tool_calls(db, encryption):
+    """_extract_tool_calls extracts tool calls paired with their responses."""
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+
+    from p8.agentic.adapter import AgentAdapter
+
+    # Simulate a pydantic-ai message sequence: search + ask_agent
+    all_messages = [
+        ModelRequest(parts=[UserPromptPart(content="Search for p8")]),
+        ModelResponse(parts=[
+            ToolCallPart(tool_name="search", args={"query": "p8"}, tool_call_id="tc-1"),
+        ]),
+        ModelRequest(parts=[ToolReturnPart(
+            tool_name="search", content="Found 3 results", tool_call_id="tc-1",
+        )]),
+        ModelResponse(parts=[
+            ToolCallPart(tool_name="ask_agent", args={"agent_name": "analyzer", "input_text": "summarize"}, tool_call_id="tc-2"),
+        ]),
+        ModelRequest(parts=[ToolReturnPart(
+            tool_name="ask_agent", content='{"summary": "p8 is...", "confidence": 0.9}', tool_call_id="tc-2",
+        )]),
+        ModelResponse(parts=[
+            TextPart(content="I found 3 results about p8."),
+        ]),
+    ]
+
+    calls = AgentAdapter._extract_tool_calls(all_messages)
+
+    assert len(calls) == 2
+
+    # search call with its result
+    assert calls[0]["tool_name"] == "search"
+    assert calls[0]["tool_call_id"] == "tc-1"
+    assert calls[0]["arguments"] == {"query": "p8"}
+    assert calls[0]["result"] == "Found 3 results"
+
+    # ask_agent call with structured output result
+    assert calls[1]["tool_name"] == "ask_agent"
+    assert calls[1]["tool_call_id"] == "tc-2"
+    assert calls[1]["arguments"] == {"agent_name": "analyzer", "input_text": "summarize"}
+    assert '"summary"' in calls[1]["result"]
+    assert '"confidence"' in calls[1]["result"]
+
+
+async def test_extract_tool_calls_empty():
+    """_extract_tool_calls returns empty list when no tool calls."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from p8.agentic.adapter import AgentAdapter
+
+    all_messages = [
+        ModelRequest(parts=[UserPromptPart(content="Hello")]),
+        ModelResponse(parts=[TextPart(content="Hi there!")]),
+    ]
+    assert AgentAdapter._extract_tool_calls(all_messages) == []
+    assert AgentAdapter._extract_tool_calls(None) == []
+    assert AgentAdapter._extract_tool_calls([]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -967,6 +1037,82 @@ async def test_function_model_captures_llm_input(db, encryption):
 
     # -- 10. Verify: output --
     assert "Captured response" in str(result.output)
+
+
+async def test_added_instruction_injected_and_not_persisted(db, encryption):
+    """X-Added-Instruction flows into injector.instructions but is never persisted.
+
+    Uses FunctionModel to capture the instructions the model receives,
+    then persists the turn and verifies the stored messages don't contain
+    the added instruction.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from p8.agentic.adapter import AgentAdapter
+    from p8.api.controllers.chat import ChatController
+    from p8.ontology.types import Schema
+    from p8.services.repository import Repository
+
+    # Register a test agent
+    repo = Repository(Schema, db, encryption)
+    await repo.upsert(Schema(
+        name="added-instr-agent",
+        kind="agent",
+        description="Agent for added instruction test",
+        content="You are a helpful assistant.",
+    ))
+
+    # Capture what the model receives
+    captured_info: list[AgentInfo] = []
+
+    def capture_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_info.append(info)
+        return ModelResponse(parts=[TextPart(content="Bonjour!")])
+
+    # Patch build_agent to use FunctionModel
+    original_build = AgentAdapter.build_agent
+
+    def patched_build(self, **kwargs):
+        return original_build(self, model_override=FunctionModel(capture_model))
+
+    controller = ChatController(db, encryption)
+
+    with patch.object(AgentAdapter, "build_agent", patched_build):
+        # Prepare with added_instruction
+        ctx = await controller.prepare(
+            "added-instr-agent",
+            added_instruction="Respond only in French",
+        )
+
+        # Verify the instruction appears in injector output
+        assert "Respond only in French" in ctx.injector.instructions
+
+        turn = await controller.run_turn(ctx, "Hello")
+
+    # Verify the model saw the added instruction
+    assert len(captured_info) >= 1
+    assert "Respond only in French" in captured_info[0].instructions
+
+    # Verify persistence does NOT contain the added instruction
+    rows = await db.fetch(
+        "SELECT content, message_type FROM messages"
+        " WHERE session_id = $1 ORDER BY created_at",
+        ctx.session_id,
+    )
+    for row in rows:
+        assert "Respond only in French" not in (row["content"] or "")
+
+    # But the actual conversation content is persisted
+    types = [r["message_type"] for r in rows]
+    assert "user" in types
+    assert "assistant" in types
 
 
 async def test_function_model_with_message_history(db, encryption):

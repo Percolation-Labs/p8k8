@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, Form
 from fastapi.responses import Response
 
 from p8.api.deps import CurrentUser, get_db, get_encryption, get_optional_user
@@ -34,10 +34,13 @@ async def upload_content(
     category: str | None = Form(default=None),
     tags: str | None = Form(default=None),
     s3_key: str | None = Form(default=None),
+    session_id: str | None = Form(default=None),
 ):
     """Upload a file for content extraction, chunking, and persistence.
 
     Authenticated via JWT or x-user-id/x-tenant-id headers.
+    Pass ``session_id`` to link the upload moment to an existing chat session
+    so the agent has context about the uploaded content.
 
     Files smaller than ``file_processing_threshold_bytes`` are processed inline
     and the response includes chunks and resource IDs.  Larger files are
@@ -74,6 +77,7 @@ async def upload_content(
             file.filename or "upload",
             mime_type=file.content_type,
             s3_key=s3_key,
+            session_id=session_id,
             tenant_id=user.tenant_id if user else None,
             user_id=user.user_id if user else None,
             category=category,
@@ -134,11 +138,16 @@ async def upload_content(
 async def download_file(
     file_id: UUID,
     request: Request,
+    thumbnail: bool = Query(False),
     user: CurrentUser | None = Depends(get_optional_user),
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Serve an uploaded file's bytes from S3 (or local storage)."""
+    """Serve an uploaded file's bytes from S3 (or local storage).
+
+    Pass ``?thumbnail=true`` to get the generated thumbnail instead of the
+    original file.  Falls back to the original if no thumbnail exists.
+    """
     repo = Repository(FileEntity, db, encryption)
     file_entity = await repo.get(file_id)
     if not file_entity:
@@ -147,6 +156,19 @@ async def download_file(
         raise HTTPException(status_code=404, detail="File has no storage URI")
 
     file_service = request.app.state.file_service
+
+    # Serve thumbnail if requested and available
+    if thumbnail and file_entity.thumbnail_uri:
+        data = await file_service.read(file_entity.thumbnail_uri)
+        return Response(
+            content=data,
+            media_type="image/jpeg",
+            headers={
+                "Content-Disposition": f'inline; filename="{file_entity.name}-thumb.jpg"',
+                "Cache-Control": "public, max-age=86400",
+            },
+        )
+
     data = await file_service.read(file_entity.uri)
     return Response(
         content=data,

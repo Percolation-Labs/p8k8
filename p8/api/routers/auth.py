@@ -1,9 +1,36 @@
-"""Auth endpoints — tenant & user management, OAuth, magic link, sessions."""
+"""Auth router — OAuth 2.1 Authorization Server, tenant/user CRUD, magic link.
+
+This router serves dual purposes:
+
+1. **Browser flow** — ``/authorize`` → Google/Apple → ``/callback/{provider}``
+   → set HttpOnly cookies → redirect to app.
+2. **MCP OAuth 2.1 flow** — ``/register`` (DCR) → ``/authorize?client_id=...``
+   → Google/Apple → ``/callback`` → redirect to MCP client's redirect_uri with
+   ``?code=...&state=...`` → ``/token`` (authorization_code grant with PKCE).
+
+The MCP flow reuses the same Google/Apple callback as the browser flow.  The
+callback detects an MCP flow by checking for ``mcp_auth_code`` in the session.
+
+Also serves:
+- ``/.well-known/oauth-authorization-server`` (RFC 8414) for MCP discovery
+- ``/token`` (refresh_token grant for both browser and MCP clients)
+- ``/magic-link`` + ``/verify`` for passwordless login
+- ``/me``, ``/logout``, ``/revoke``
+- ``/mobile/*`` for native app OAuth with deep-link callbacks
+
+Key changes (2025-02):
+  - Added ``POST /register`` for Dynamic Client Registration.
+  - Extended ``GET /authorize`` to support MCP client_id + PKCE params.
+  - Extended ``/callback`` to redirect to MCP client redirect_uri with auth code.
+  - Extended ``POST /token`` to support ``grant_type=authorization_code``.
+"""
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 import jwt
@@ -350,7 +377,6 @@ async def oauth_callback(request: Request, provider: str):
         if not code_record:
             raise HTTPException(400, "Authorization code expired")
 
-        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
         params = {"code": mcp_auth_code}
         if code_record.get("client_state"):
             params["state"] = code_record["client_state"]
@@ -522,8 +548,6 @@ async def mobile_oauth_callback(request: Request, provider: str):
 
     tokens = await auth.issue_tokens(user, tenant_id)
 
-    from urllib.parse import urlencode
-
     params = urlencode({
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
@@ -617,23 +641,20 @@ async def token_endpoint(request: Request):
     # Also support JSON body for backwards compat with existing refresh flow
     content_type = request.headers.get("content-type", "")
     raw_body = (await request.body()).decode("utf-8", errors="replace")
-    logger.warning("Token request: content_type=%s raw_body=%s", content_type, raw_body[:500])
+    logger.debug("Token request: content_type=%s body=%s", content_type, raw_body[:500])
 
     if "application/x-www-form-urlencoded" in content_type:
-        # Re-parse from raw body since request.body() consumed the stream
-        from urllib.parse import parse_qs
         parsed = parse_qs(raw_body, keep_blank_values=True)
         params = {k: v[0] for k, v in parsed.items()}
         grant_type = params.get("grant_type", "refresh_token")
     else:
         try:
-            import json as _json
-            params = _json.loads(raw_body) if raw_body else {}
+            params = json.loads(raw_body) if raw_body else {}
         except Exception:
             params = {}
         grant_type = params.get("grant_type", "refresh_token")
 
-    logger.warning("Token parsed: grant_type=%s keys=%s", grant_type, list(params.keys()))
+    logger.debug("Token parsed: grant_type=%s keys=%s", grant_type, list(params.keys()))
 
     if grant_type == "authorization_code":
         code = params.get("code")
@@ -645,7 +666,6 @@ async def token_endpoint(request: Request):
         # Also check Authorization header for client_secret_basic
         auth_header = request.headers.get("authorization", "")
         if not client_id and auth_header.startswith("Basic "):
-            import base64
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
                 client_id, client_secret = decoded.split(":", 1)
@@ -654,7 +674,7 @@ async def token_endpoint(request: Request):
 
         missing = [k for k, v in [("code", code), ("client_id", client_id), ("code_verifier", code_verifier), ("redirect_uri", redirect_uri)] if not v]
         if missing:
-            logger.warning("Token exchange missing params: %s (got keys: %s)", missing, list(params.keys()))
+            logger.debug("Token exchange missing params: %s (keys: %s)", missing, list(params.keys()))
             return _oauth_error("invalid_request", f"Missing required parameters: {', '.join(missing)}")
 
         # Authenticate client if client_secret provided
@@ -796,13 +816,12 @@ async def patch_me(request: Request, body: PatchUserRequest):
         raise HTTPException(400, "No fields to update")
 
     db = request.app.state.db
-    import json as _json
     set_clauses: list[str] = []
     params: list[object] = [uid]  # $1 = user id
     for i, (field, value) in enumerate(updates.items(), start=2):
         if field == "devices":
             set_clauses.append(f"{field} = ${i}::jsonb")
-            params.append(_json.dumps(value))
+            params.append(json.dumps(value))
         elif field == "interests":
             set_clauses.append(f"{field} = ${i}::text[]")
             params.append(value)

@@ -103,15 +103,18 @@ class RemMixin:
         user_id: UUID | None = None,
         limit: int = 20,
         before_date: str | None = None,
+        include_future: bool = False,
     ) -> list[dict]:
         """Cursor-paginated feed.  *before_date* is an ISO date string
-        (e.g. ``'2025-02-18'``).  Pass ``None`` for the first page."""
+        (e.g. ``'2025-02-18'``).  Pass ``None`` for the first page.
+        Future-dated moments are excluded unless *include_future* is True."""
         from datetime import date as _date
 
         bd = _date.fromisoformat(before_date) if before_date else None
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_moments_feed($1, $2, $3)", user_id, limit, bd
+            "SELECT * FROM rem_moments_feed($1, $2, $3, $4)",
+            user_id, limit, bd, include_future,
         )
         return [dict(r) for r in rows]
 
@@ -158,7 +161,6 @@ class RemMixin:
         user_id: UUID | None = None,
         tenant_id: str | None = None,
         tool_calls: dict | None = None,
-        pai_messages: str | None = None,
         moment_threshold: int = 0,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -172,13 +174,12 @@ class RemMixin:
         """Persist a user+assistant turn atomically. Returns IDs and optional moment name."""
         import json as _json
         tc_json = _json.dumps(tool_calls) if tool_calls else None
-        pai_json = pai_messages  # already a JSON string from caller
         assert self.pool is not None
         row = await self.pool.fetchrow(
             "SELECT * FROM rem_persist_turn("
-            "$1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+            "$1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
             session_id, user_content, assistant_content,
-            user_id, tenant_id, tc_json, pai_json, moment_threshold,
+            user_id, tenant_id, tc_json, moment_threshold,
             input_tokens, output_tokens, latency_ms, model, agent_name,
             encryption_level, user_msg_id, asst_msg_id,
         )

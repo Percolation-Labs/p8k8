@@ -11,7 +11,7 @@ import typer
 
 import p8.services.bootstrap as _svc
 from p8.api.controllers.chat import ChatController
-from p8.api.tools import init_tools
+from p8.api.tools import init_tools, set_tool_context
 
 chat_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
@@ -89,6 +89,7 @@ async def _run_chat(
                     user_id=user_id,
                     name_prefix="cli-chat",
                 )
+                set_tool_context(user_id=user_id, session_id=ctx.session_id)
 
                 turn = await controller.run_turn(ctx, user_input, user_id=user_id, background_compaction=False)
                 typer.echo(f"assistant> {turn.assistant_text}")

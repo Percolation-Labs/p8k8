@@ -1,22 +1,34 @@
 """FastMCP server — registers tools from api/tools/ and resources.
 
-Mounted at /mcp on the FastAPI app using Streamable HTTP transport.
-Auth via RemoteAuthProvider + JWTVerifier(HS256) — validates the app's own
-JWTs.  The main app serves as the OAuth 2.1 Authorization Server.
+Mounted at ``/mcp`` on the FastAPI app using Streamable HTTP transport.
+
+Auth architecture:
+
+  Uses ``RemoteAuthProvider`` + ``JWTVerifier(HS256)`` — the MCP server
+  is a **resource server** that validates the app's own HS256 JWTs but never
+  issues tokens.  The main app (``/auth/*``) is the OAuth 2.1 Authorization
+  Server.  MCP clients discover it via ``/.well-known/oauth-protected-resource``
+  (auto-created by RemoteAuthProvider) → ``/.well-known/oauth-authorization-server``
+  (served by auth router).
+
+  One Google callback URL, one token system, one auth flow.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 
 from fastmcp import FastMCP
 
-from p8.api.tools import get_db, get_encryption
+from p8.api.tools import get_db, get_encryption, set_tool_context
 from p8.api.tools.action import action
 from p8.api.tools.ask_agent import ask_agent
 from p8.api.tools.remind_me import remind_me
 from p8.api.tools.get_moments import get_moments
-from p8.api.tools.save_moments import save_moments
+# save_moments is not needed as an MCP tool — agents use structured output
+# and workers persist moments directly (see DreamingHandler._persist_dream_moments)
+# from p8.api.tools.save_moments import save_moments
 from p8.api.tools.search import search
 from p8.ontology.types import User
 from p8.services.repository import Repository
@@ -93,7 +105,8 @@ def create_mcp_server() -> FastMCP:
     mcp.tool(name="action")(action)
     mcp.tool(name="ask_agent")(ask_agent)
     mcp.tool(name="remind_me")(remind_me)
-    mcp.tool(name="save_moments")(save_moments)
+    # save_moments commented out — agents use structured output in workers
+    # mcp.tool(name="save_moments")(save_moments)
     mcp.tool(name="get_moments")(get_moments)
 
     # Register resources
@@ -114,7 +127,43 @@ def get_mcp_server() -> FastMCP:
     return _mcp_server
 
 
+class _ToolContextMiddleware:
+    """ASGI middleware that extracts user_id from Bearer JWT and sets tool context.
+
+    This ensures MCP tool functions can access user_id via get_user_id()
+    without requiring it as an explicit parameter.
+    Proxies attribute access to the wrapped app so callers (e.g. lifespan)
+    can access .router, .state, etc. transparently.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            auth_header = headers.get(b"authorization", b"").decode()
+            if auth_header.startswith("Bearer "):
+                try:
+                    import jwt as pyjwt
+                    from uuid import UUID
+                    token = auth_header[7:]
+                    settings = get_settings()
+                    payload = pyjwt.decode(
+                        token, settings.auth_secret_key, algorithms=["HS256"],
+                    )
+                    user_id = UUID(payload["sub"])
+                    set_tool_context(user_id=user_id)
+                except Exception:
+                    pass  # Auth validation handled by FastMCP's RemoteAuthProvider
+        await self.app(scope, receive, send)
+
+
 def get_mcp_app():
     """Get the MCP Streamable HTTP ASGI app for mounting."""
     mcp = get_mcp_server()
-    return mcp.http_app(path="/")
+    inner = mcp.http_app(path="/")
+    return _ToolContextMiddleware(inner)

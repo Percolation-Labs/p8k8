@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from p8.api.tools import init_tools
+from p8.api.tools import init_tools, set_tool_context
 from p8.api.tools.save_moments import save_moments
 from p8.ontology.types import Moment, Resource
 from p8.services.repository import Repository
@@ -21,7 +21,8 @@ from tests.integration.dreaming.fixtures import (
 @pytest.fixture(autouse=True)
 async def _init(clean_db, db, encryption):
     """Initialize tools and fixtures."""
-    init_tools(db, encryption, user_id=TEST_USER_ID)
+    init_tools(db, encryption)
+    set_tool_context(user_id=TEST_USER_ID)
     await setup_dreaming_fixtures(db, encryption)
     yield
 

@@ -77,12 +77,13 @@ USAGE
 
 from __future__ import annotations
 
+import builtins
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 if TYPE_CHECKING:
     from pydantic_ai import UsageLimits
@@ -227,6 +228,9 @@ class AgentSchema(BaseModel):
     author: str | None = None
     system_prompt: str | None = None  # extra system prompt appended to description
 
+    # --- Private (not serialized) ---
+    _source_output_model: builtins.type | None = PrivateAttr(default=None)
+
     model_config = {"extra": "allow", "populate_by_name": True}
 
     # -----------------------------------------------------------------
@@ -310,12 +314,19 @@ class AgentSchema(BaseModel):
         """Generate a Pydantic model from schema properties.
 
         Returns ``str`` if structured_output is disabled or no properties.
-        Otherwise creates a dynamic Pydantic model for structured output.
+
+        For code-defined agents (from_model_class), returns a clean model
+        that preserves nested Pydantic types (e.g. list[DreamMoment]).
+        For YAML/DB-loaded agents, falls back to JSON Schema reconstruction.
         """
         if not self.structured_output or not self.properties:
             return str  # type: ignore
 
-        # Resolve $refs if present
+        # Prefer the source model — preserves nested types exactly
+        if self._source_output_model is not None:
+            return self._source_output_model
+
+        # Fallback: reconstruct from JSON Schema (loses nested type detail)
         defs = self._get_defs()
         resolved_props = {
             k: self._resolve_refs(v, defs)
@@ -497,11 +508,29 @@ class AgentSchema(BaseModel):
 
         Uses ``model_json_schema()`` which flattens json_schema_extra
         to the top level.  Parses tool dicts and limits into typed models.
+
+        For structured_output agents, creates a clean output model that
+        preserves nested Pydantic types (e.g. list[DreamMoment]) without
+        the model_config extras (tools, model, etc.).
         """
         js = model_cls.model_json_schema()  # type: ignore[attr-defined]
         # Remove Pydantic noise
         js.pop("title", None)
-        return cls._parse_dict(js)
+        schema = cls._parse_dict(js)
+
+        # Build a clean output model from the original class fields,
+        # preserving nested type annotations (DreamMoment, AffinityFragment, etc.)
+        if schema.structured_output and model_cls is not None and hasattr(model_cls, "model_fields"):
+            assert model_cls is not None
+            fields: dict[str, Any] = {}
+            for fname, finfo in model_cls.model_fields.items():
+                fields[fname] = (finfo.annotation, finfo)
+            output_cls: builtins.type[BaseModel] = create_model(
+                f"{model_cls.__name__}Output", **fields,
+            )
+            schema._source_output_model = output_cls
+
+        return schema
 
     @classmethod
     def from_schema_row(cls, row: Any) -> "AgentSchema":

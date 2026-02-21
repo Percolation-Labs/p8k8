@@ -162,7 +162,7 @@ class Message(CoreModel):
     __redacted_fields__ = ["content"]
 
     session_id: UUID
-    message_type: str = "user"  # user | assistant | system | tool_call | tool_result | observation | memory | think
+    message_type: str = "user"  # user | assistant | system | tool_call | tool_response | observation | memory | think
     content: str | None = None
     token_count: int = 0
     tool_calls: dict | None = None
@@ -245,6 +245,7 @@ class File(CoreModel):
     parsed_content: str | None = None
     parsed_output: dict | None = None
     processing_status: str = "pending"  # pending | processing | completed | failed
+    thumbnail_uri: str | None = None
 
 
 class Feedback(CoreModel):

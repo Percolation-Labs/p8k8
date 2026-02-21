@@ -30,46 +30,7 @@ async def _clean(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# 1. Compaction produces resolvable breadcrumbs
-# ---------------------------------------------------------------------------
-
-
-async def test_compaction_produces_resolvable_breadcrumbs(db, encryption):
-    """After compaction, old assistant messages contain [REM LOOKUP session-{id}-chunk-{N}]
-    and the moment name IS in kv_store (resolvable via rem_lookup)."""
-    memory = MemoryService(db, encryption)
-    session = await create_session(db, encryption)
-
-    # Add 10 messages (5 user + 5 assistant) × 50 tokens = 500 total
-    await seed_messages(memory, session.id, 10, token_count=50)
-
-    # Build a moment manually so compaction has something to reference
-    moment = await memory.build_moment(session.id)
-    assert moment is not None
-    moment_name = moment.name  # e.g. session-{id}-chunk-0
-
-    # Verify the moment is in kv_store (has_kv_sync = true for moments)
-    kv_row = await db.fetchrow(
-        "SELECT * FROM kv_store WHERE entity_key = $1", moment_name,
-    )
-    assert kv_row is not None, f"Moment {moment_name} not found in kv_store"
-
-    # Load context with small budget → forces compaction of old messages
-    ctx = await memory.load_context(session.id, max_tokens=8000, always_last=3)
-
-    # Find compacted messages
-    compacted = [m for m in ctx if "[REM LOOKUP" in m.get("content", "")]
-    assert len(compacted) > 0, "Expected at least one compacted message"
-
-    # All breadcrumbs should reference the moment name, not a msg ID
-    for m in compacted:
-        assert moment_name in m["content"], (
-            f"Breadcrumb should reference moment {moment_name}, got: {m['content']}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 2. Multi-turn session with moments
+# 1. Multi-turn session with moments
 # ---------------------------------------------------------------------------
 
 
@@ -112,21 +73,14 @@ async def test_multi_turn_session_with_moments(db, encryption):
 
 
 # ---------------------------------------------------------------------------
-# 3. Moments visible after pai_messages path
+# 3. Moments visible in load_history (via load_context)
 # ---------------------------------------------------------------------------
 
 
-async def test_moment_visible_after_pai_messages_path(db, encryption):
-    """Create session with pai_messages in metadata, verify moments still appear
-    in load_history() output."""
-    from pydantic_ai.messages import (
-        ModelMessagesTypeAdapter,
-        ModelRequest,
-        ModelResponse,
-        SystemPromptPart,
-        TextPart,
-        UserPromptPart,
-    )
+async def test_moment_visible_in_load_history(db, encryption):
+    """Create session with messages and a moment, verify load_history()
+    returns moments as SystemPromptPart and reconstructs user/assistant messages."""
+    from pydantic_ai.messages import ModelRequest, SystemPromptPart, UserPromptPart
 
     from p8.agentic.adapter import AgentAdapter
     from p8.ontology.types import Schema
@@ -145,21 +99,9 @@ async def test_moment_visible_after_pai_messages_path(db, encryption):
     )
     await moment_repo.upsert(moment)
 
-    # Store pai_messages in session metadata (simulates persist_turn path)
-    pai_messages = [
-        ModelRequest(parts=[UserPromptPart(content="Hello")]),
-        ModelResponse(parts=[TextPart(content="Hi there!")]),
-    ]
-    pai_json = ModelMessagesTypeAdapter.dump_json(pai_messages).decode()
-    await db.execute(
-        "UPDATE sessions SET metadata = jsonb_set("
-        "  COALESCE(metadata, '{}'::jsonb),"
-        "  '{pai_messages}',"
-        "  $1::jsonb"
-        ") WHERE id = $2",
-        pai_json,
-        session.id,
-    )
+    # Persist messages via the standard path
+    await memory.persist_message(session.id, "user", "Hello", token_count=5)
+    await memory.persist_message(session.id, "assistant", "Hi there!", token_count=5)
 
     # Create a minimal agent adapter
     schema = Schema(
@@ -168,16 +110,28 @@ async def test_moment_visible_after_pai_messages_path(db, encryption):
     )
     adapter = AgentAdapter(schema, db, encryption)
 
-    # load_history should include moment injection even via pai_messages path
+    # load_history should include moment + user/assistant messages
     messages = await adapter.load_history(session.id)
-    assert len(messages) >= 3, f"Expected >= 3 messages (1 moment + 2 pai), got {len(messages)}"
+    assert len(messages) >= 3, f"Expected >= 3 messages (1 moment + 2 chat), got {len(messages)}"
 
-    # First message should be the moment injection
-    first = messages[0]
-    assert hasattr(first, "parts")
-    first_content = first.parts[0].content
-    assert "Session context" in first_content
-    assert "TiDB" in first_content
+    # Moment should appear as a SystemPromptPart
+    system_parts = [
+        m for m in messages
+        if isinstance(m, ModelRequest)
+        and any(isinstance(p, SystemPromptPart) for p in m.parts)
+    ]
+    assert len(system_parts) >= 1, "Expected at least 1 moment as SystemPromptPart"
+
+    moment_content = system_parts[0].parts[0].content
+    assert "TiDB" in moment_content
+
+    # User message should be reconstructed
+    user_parts = [
+        m for m in messages
+        if isinstance(m, ModelRequest)
+        and any(isinstance(p, UserPromptPart) for p in m.parts)
+    ]
+    assert len(user_parts) >= 1, "Expected at least 1 user message"
 
 
 # ---------------------------------------------------------------------------

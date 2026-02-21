@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from p8.api.tools import get_db
+from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 
 
 async def remind_me(
@@ -23,7 +23,7 @@ async def remind_me(
     Recurring reminders use a cron expression (e.g. "0 9 * * 1" for every Monday at 9am).
 
     Each reminder becomes a pg_cron job that calls /notifications/send directly.
-    Moments are only created when the notification actually fires.
+    A moment_type='reminder' moment is also created to track the reminder in the feed.
 
     Args:
         name: Short name for the reminder (e.g. "take-vitamins")
@@ -38,6 +38,8 @@ async def remind_me(
     from croniter import croniter
     from p8.settings import get_settings
 
+    if not user_id:
+        user_id = get_user_id()
     if not user_id:
         return {"status": "error", "error": "user_id is required for reminders"}
 
@@ -102,9 +104,47 @@ async def remind_me(
         job_name, cron_expr, job_sql,
     )
 
+    # Persist a reminder moment — starts_timestamp is the future fire date,
+    # created_at is now. Graph edges with relation="reminder" link back to
+    # the source session so daily summaries can aggregate reminder counts.
+    session_id = get_session_id()
+    graph_edges = []
+    if session_id:
+        graph_edges.append({
+            "target": str(session_id),
+            "relation": "reminder",
+            "weight": 1.0,
+            "reason": f"Reminder '{name}' created in this session",
+        })
+
+    encryption = get_encryption()
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+
+    repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name=name,
+        moment_type="reminder",
+        summary=description,
+        starts_timestamp=next_fire,
+        topic_tags=tags or [],
+        graph_edges=graph_edges,
+        user_id=user_id,
+        source_session_id=session_id,
+        metadata={
+            "reminder_id": str(reminder_id),
+            "job_name": job_name,
+            "schedule": cron_expr,
+            "recurrence": recurrence,
+            "next_fire": next_fire.isoformat(),
+        },
+    )
+    [saved] = await repo.upsert(moment)
+
     return {
         "status": "success",
         "reminder_id": str(reminder_id),
+        "moment_id": str(saved.id),
         "job_name": job_name,
         "name": name,
         "schedule": cron_expr,

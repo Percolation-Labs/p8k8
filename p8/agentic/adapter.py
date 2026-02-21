@@ -23,7 +23,6 @@ import yaml
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
@@ -46,7 +45,7 @@ from p8.agentic.types import ContextAttributes, ContextInjector, RoutingState
 from p8.ontology.types import Moment, Schema
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
-from p8.services.memory import MemoryService
+from p8.services.memory import MemoryService, format_moment_context
 from p8.services.repository import Repository
 
 
@@ -194,6 +193,12 @@ class AgentAdapter:
         self.memory = MemoryService(db, encryption)
         self.agent_schema = AgentSchema.from_schema_row(schema)
 
+        # For built-in agents, propagate _source_output_model from code definition
+        # (PrivateAttr is not serialized to DB, so we restore it here)
+        builtin_def = BUILTIN_AGENT_DEFINITIONS.get(self.agent_schema.name)
+        if builtin_def and builtin_def._source_output_model:
+            self.agent_schema._source_output_model = builtin_def._source_output_model
+
     @property
     def config(self) -> AgentSchema:
         """Agent configuration (alias for agent_schema)."""
@@ -220,14 +225,15 @@ class AgentAdapter:
             if time.monotonic() - ts < _CACHE_TTL:
                 return adapter
 
-        repo = Repository(Schema, db, encryption)
-        results = await repo.find(filters={"name": name, "kind": "agent"}, limit=1)
-        if not results:
-            # Fall back to built-in agents — auto-register on first use
-            builtin = await _ensure_builtin(name, db, encryption)
-            if builtin is None:
-                raise ValueError(f"Agent schema not found: {name}")
+        # For built-in agents, always sync code → DB so changes propagate
+        builtin = await _ensure_builtin(name, db, encryption)
+        if builtin is not None:
             results = [builtin]
+        else:
+            repo = Repository(Schema, db, encryption)
+            results = await repo.find(filters={"name": name, "kind": "agent"}, limit=1)
+            if not results:
+                raise ValueError(f"Agent schema not found: {name}")
         adapter = cls(results[0], db, encryption)
         _adapter_cache[key] = (adapter, time.monotonic())
         return adapter
@@ -453,46 +459,12 @@ class AgentAdapter:
         max_tokens: int | None = 8000,
         moment_limit: int = 3,
     ) -> list[ModelMessage]:
-        """Load conversation history as pydantic-ai ModelMessages.
-
-        Tries serialized pai_messages from session metadata first;
-        falls back to reconstructing from DB rows via MemoryService.
-
-        When tenant_id is provided, encrypted message content and moment
-        summaries are decrypted using the tenant's DEK before being sent
-        to the LLM.
-        """
-        messages = await self._load_pai_messages(session_id)
-        if messages is not None:
-            moments = await self._load_session_moments(
-                session_id, limit=moment_limit, tenant_id=tenant_id,
-            )
-            return moments + messages
-
+        """Load conversation history as pydantic-ai ModelMessages via MemoryService."""
         raw = await self.memory.load_context(
             session_id, max_tokens=max_tokens, tenant_id=tenant_id,
+            max_moments=moment_limit,
         )
         return self._rows_to_model_messages(raw)
-
-    async def _load_pai_messages(self, session_id: UUID) -> list[ModelMessage] | None:
-        """Deserialize pydantic-ai messages from session metadata, or None."""
-        log = logging.getLogger(__name__)
-        row = await self.db.fetchrow(
-            "SELECT metadata FROM sessions WHERE id = $1 AND deleted_at IS NULL",
-            session_id,
-        )
-        if not row:
-            return None
-        pai_raw = (row["metadata"] or {}).get("pai_messages")
-        if not pai_raw:
-            return None
-        try:
-            raw_bytes = pai_raw if isinstance(pai_raw, bytes) else pai_raw.encode()
-            messages = ModelMessagesTypeAdapter.validate_json(raw_bytes)
-            return messages or None
-        except Exception as e:
-            log.error("Failed to deserialize pai_messages for session %s: %s", session_id, e)
-            raise
 
     async def _load_session_moments(
         self, session_id: UUID, *, limit: int = 3, tenant_id: str | None = None,
@@ -511,7 +483,7 @@ class AgentAdapter:
             md = self.encryption.decrypt_fields(Moment, dict(mrow), tenant_id)
             messages.append(
                 ModelRequest(parts=[SystemPromptPart(
-                    content=f"[Session context]\n{md.get('summary', '')}"
+                    content=format_moment_context(md),
                 )])
             )
         return messages
@@ -523,8 +495,8 @@ class AgentAdapter:
         - user → ModelRequest with UserPromptPart
         - system → ModelRequest with SystemPromptPart
         - assistant → ModelResponse with TextPart
-        - tool_call → ModelRequest with ToolReturnPart (tool results sent to model)
-        - tool_result → skipped (ephemeral, not persisted by default)
+        - tool_call → skipped (persisted for observability, not replayed to LLM)
+        - tool_response → skipped (persisted for observability, not replayed to LLM)
         - observation → ModelRequest with UserPromptPart (observations are context)
         - memory → ModelRequest with SystemPromptPart (injected memories)
         - think → skipped (internal reasoning)
@@ -533,7 +505,6 @@ class AgentAdapter:
         for row in rows:
             mt = row.get("message_type", "user")
             content = row.get("content") or ""
-            tool_calls = row.get("tool_calls")
 
             if mt == "user":
                 messages.append(
@@ -544,28 +515,9 @@ class AgentAdapter:
                     ModelRequest(parts=[SystemPromptPart(content=content)])
                 )
             elif mt == "assistant":
-                parts: list[TextPart | ToolCallPart] = [TextPart(content=content)]
-                # If this assistant message had tool calls, include them
-                if tool_calls and isinstance(tool_calls, dict):
-                    for tc in tool_calls.get("calls", []):
-                        parts.append(ToolCallPart(
-                            tool_name=tc.get("name", ""),
-                            args=tc.get("arguments", {}),
-                            tool_call_id=tc.get("id"),
-                        ))
-                messages.append(ModelResponse(parts=parts))
-            elif mt == "tool_call":
-                # Tool result message — stored when we persist tool call results
-                if tool_calls and isinstance(tool_calls, dict):
-                    tool_name = tool_calls.get("name", "")
-                    tool_call_id = tool_calls.get("id")
-                    messages.append(
-                        ModelRequest(parts=[ToolReturnPart(
-                            tool_name=tool_name,
-                            content=content,
-                            tool_call_id=tool_call_id or "",
-                        )])
-                    )
+                messages.append(
+                    ModelResponse(parts=[TextPart(content=content)])
+                )
             elif mt == "observation":
                 messages.append(
                     ModelRequest(parts=[UserPromptPart(
@@ -576,9 +528,60 @@ class AgentAdapter:
                 messages.append(
                     ModelRequest(parts=[SystemPromptPart(content=content)])
                 )
-            # think, tool_result → skipped
+            # tool_call, tool_response, think, tool_result → skipped
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Tool call extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_tool_calls(
+        all_messages: list[ModelMessage] | None,
+    ) -> list[dict]:
+        """Extract tool calls paired with their responses from pydantic-ai messages.
+
+        Iterates through the message sequence, finds ToolCallPart entries in
+        ModelResponse objects, then looks for the matching ToolReturnPart in
+        subsequent ModelRequest objects (matched by tool_call_id).
+
+        Returns a list of dicts with call metadata AND the tool response content.
+        The response is persisted in the content column for observability —
+        especially important for ask_agent structured output delegation.
+        """
+        if not all_messages:
+            return []
+
+        # First pass: index all ToolReturnParts by tool_call_id
+        returns: dict[str, str] = {}
+        for msg in all_messages:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart) and part.tool_call_id:
+                        returns[part.tool_call_id] = part.content if isinstance(part.content, str) else str(part.content)
+
+        # Second pass: extract ToolCallParts and pair with returns
+        calls: list[dict] = []
+        for msg in all_messages:
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:  # type: ignore[assignment]
+                    if isinstance(part, ToolCallPart):
+                        args = part.args
+                        if isinstance(args, str):
+                            import json
+                            try:
+                                args = json.loads(args)
+                            except (json.JSONDecodeError, TypeError):
+                                args = {"raw": args}
+                        call_id = part.tool_call_id or ""
+                        calls.append({
+                            "tool_name": part.tool_name,
+                            "tool_call_id": call_id,
+                            "arguments": args if isinstance(args, dict) else {},
+                            "result": returns.get(call_id),
+                        })
+        return calls
 
     # ------------------------------------------------------------------
     # Persistence
@@ -592,7 +595,6 @@ class AgentAdapter:
         *,
         user_id: UUID | None = None,
         tenant_id: str | None = None,
-        tool_calls_data: dict | None = None,
         all_messages: list[ModelMessage] | None = None,
         background_compaction: bool = True,
         moment_threshold: int = 6000,
@@ -602,7 +604,16 @@ class AgentAdapter:
         model: str | None = None,
         agent_name: str | None = None,
     ) -> None:
-        """Persist a conversation turn via rem_persist_turn().
+        """Persist a conversation turn — user, tool_call(s), assistant.
+
+        When all_messages contains tool calls, inserts messages individually
+        in order: user → tool_call(s) → assistant. Tool call rows store both
+        the call metadata (name, args, id) in tool_calls JSONB and the tool
+        response in content. This is especially important for ask_agent
+        delegation where structured output is the artifact.
+
+        When no tool calls are present, uses rem_persist_turn for efficiency
+        (single SQL round-trip).
 
         When tenant_id is provided, message content is encrypted with the
         tenant's DEK and encryption_level is stamped on the message rows.
@@ -610,24 +621,9 @@ class AgentAdapter:
         must be able to decrypt history for the LLM.
         """
         from p8.ontology.types import Message
-
-        pai_json: str | None = None
-        if all_messages:
-            # Filter out pure-system-prompt messages — they're regenerated
-            # each turn by the ContextInjector and storing them causes the
-            # pai_messages payload to grow unnecessarily.
-            filtered = [
-                msg for msg in all_messages
-                if not (
-                    isinstance(msg, ModelRequest)
-                    and all(isinstance(p, SystemPromptPart) for p in msg.parts)
-                )
-            ]
-            pai_json = ModelMessagesTypeAdapter.dump_json(filtered).decode()
-
-        # Resolve encryption mode and encrypt content if tenant has encryption
         from uuid import uuid4
 
+        # Resolve encryption mode
         encryption_level: str | None = None
         store_user = user_prompt
         store_assistant = assistant_text
@@ -636,13 +632,10 @@ class AgentAdapter:
         if tenant_id:
             await self.encryption.get_dek(tenant_id)
             mode = await self.encryption.get_tenant_mode(tenant_id)
-            # Sealed mode cannot work for chat — server must decrypt history
-            # for LLM context. Cap to platform (server-side encryption).
             if mode == "sealed":
                 mode = "platform"
             encryption_level = mode if mode != "disabled" else "disabled"
             if mode in ("platform", "client"):
-                # Pre-generate IDs so encrypt_fields can bind AAD correctly
                 user_msg_id = uuid4()
                 asst_msg_id = uuid4()
                 user_data = self.encryption.encrypt_fields(
@@ -654,16 +647,58 @@ class AgentAdapter:
                 )
                 store_assistant = asst_data.get("content", assistant_text)
 
-        await self.db.rem_persist_turn(
-            session_id, store_user, store_assistant,
-            user_id=user_id, tenant_id=tenant_id,
-            tool_calls=tool_calls_data, pai_messages=pai_json,
-            moment_threshold=moment_threshold if not background_compaction else 0,
-            input_tokens=input_tokens, output_tokens=output_tokens,
-            latency_ms=latency_ms, model=model, agent_name=agent_name,
-            encryption_level=encryption_level,
-            user_msg_id=user_msg_id, asst_msg_id=asst_msg_id,
-        )
+        # Extract tool calls from pydantic-ai messages
+        tool_calls = self._extract_tool_calls(all_messages)
+
+        if tool_calls:
+            # Slow path: insert user, tool_call/tool_response pairs, assistant
+            await self.memory.persist_message(
+                session_id, "user", store_user,
+                user_id=user_id, tenant_id=tenant_id,
+            )
+            for tc in tool_calls:
+                # tool_call row — call metadata, no content
+                await self.memory.persist_message(
+                    session_id, "tool_call", None,
+                    user_id=user_id, tenant_id=tenant_id,
+                    token_count=0,
+                    agent_name=agent_name,
+                    tool_calls={
+                        "name": tc["tool_name"],
+                        "id": tc["tool_call_id"],
+                        "arguments": tc["arguments"],
+                    },
+                )
+                # tool_response row — the result content
+                if tc.get("result") is not None:
+                    await self.memory.persist_message(
+                        session_id, "tool_response", tc["result"],
+                        user_id=user_id, tenant_id=tenant_id,
+                        agent_name=agent_name,
+                        tool_calls={
+                            "name": tc["tool_name"],
+                            "id": tc["tool_call_id"],
+                        },
+                    )
+            # Assistant message with usage metrics
+            await self.memory.persist_message(
+                session_id, "assistant", store_assistant,
+                user_id=user_id, tenant_id=tenant_id,
+                agent_name=agent_name, model=model,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                latency_ms=latency_ms, encryption_level=encryption_level,
+            )
+        else:
+            # Fast path: single SQL round-trip via rem_persist_turn
+            await self.db.rem_persist_turn(
+                session_id, store_user, store_assistant,
+                user_id=user_id, tenant_id=tenant_id,
+                moment_threshold=moment_threshold if not background_compaction else 0,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                latency_ms=latency_ms, model=model, agent_name=agent_name,
+                encryption_level=encryption_level,
+                user_msg_id=user_msg_id, asst_msg_id=asst_msg_id,
+            )
 
         if background_compaction:
             import asyncio

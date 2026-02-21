@@ -24,7 +24,8 @@ namespace: p8
 resources:
   - ../../base
   - namespace.yaml
-  - secrets.yaml
+  # secrets.yaml removed — managed separately via manifests/scripts/sync-secrets.sh
+  # to prevent kubectl apply -k from overwriting patched values with placeholders
   - ../../../../platform/otel-collector
   - ../../../../platform/openbao
 
@@ -57,6 +58,16 @@ configMapGenerator:
       - P8_KMS_PROVIDER=vault
       - P8_KMS_VAULT_URL=http://openbao.p8.svc.cluster.local:8200
       - P8_KMS_VAULT_TRANSIT_KEY=p8-master
+      # Auth token expiry
+      - P8_AUTH_ACCESS_TOKEN_EXPIRY=3600
+      - P8_AUTH_REFRESH_TOKEN_EXPIRY=2592000
+      - P8_AUTH_MAGIC_LINK_EXPIRY=600
+      # Email
+      - P8_EMAIL_PROVIDER=console
+      - P8_EMAIL_FROM=noreply@percolationlabs.ai
+      - P8_SMTP_HOST=
+      - P8_SMTP_PORT=587
+      - P8_MAGIC_LINK_BASE_URL=
 
   - name: p8-version-info
     behavior: merge
@@ -82,21 +93,3 @@ patches:
         path: /spec/storage/size
         value: "20Gi"
 
-  # Inject Phoenix credentials into OTEL collector
-  - target:
-      kind: Deployment
-      name: otel-collector
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/env
-        value:
-          - name: PHOENIX_API_KEY
-            valueFrom:
-              secretKeyRef:
-                name: p8-app-secrets
-                key: PHOENIX_API_KEY
-          - name: PHOENIX_ENDPOINT
-            valueFrom:
-              secretKeyRef:
-                name: p8-app-secrets
-                key: PHOENIX_ENDPOINT

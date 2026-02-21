@@ -21,7 +21,7 @@ import pytest
 
 from p8.services.bootstrap import _export_api_keys
 from p8.settings import Settings
-from p8.api.tools import init_tools
+from p8.api.tools import init_tools, set_tool_context
 from p8.ontology.types import Moment, Resource
 from p8.services.repository import Repository
 from p8.workers.handlers.dreaming import DreamingHandler
@@ -49,7 +49,8 @@ class _Ctx:
 @pytest.fixture(autouse=True)
 async def _setup(clean_db, db, encryption):
     _export_api_keys(Settings())  # Bridge P8_OPENAI_API_KEY → OPENAI_API_KEY
-    init_tools(db, encryption, user_id=TEST_USER_ID)
+    init_tools(db, encryption)
+    set_tool_context(user_id=TEST_USER_ID)
     # Clean up any stale dream moments and sessions from prior test runs
     await db.execute(
         "DELETE FROM moments WHERE moment_type = 'dream' AND user_id = $1",

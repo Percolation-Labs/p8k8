@@ -22,10 +22,17 @@ def get_encryption(request: Request) -> EncryptionService:
 
 
 async def require_api_key(request: Request) -> None:
-    """Validate request auth: API key, valid JWT, or x-user-id header."""
+    """Validate request auth: API key (Bearer or x-api-key), valid JWT, or x-user-id header."""
     settings = request.app.state.settings
     if not settings.api_key:
         return
+
+    # Check x-api-key header first
+    x_api_key = request.headers.get("x-api-key", "")
+    if x_api_key and hmac.compare_digest(x_api_key, settings.api_key):
+        return
+
+    # Check Authorization: Bearer <token>
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]

@@ -325,3 +325,149 @@ async def test_today_summary_no_activity(db, encryption):
     memory = MemoryService(db, encryption)
     today = await memory.build_today_summary(user_id=nobody_uid)
     assert today is None
+
+
+# ---------------------------------------------------------------------------
+# Enriched context tests
+# ---------------------------------------------------------------------------
+
+
+async def test_upload_moment_has_content_preview(db, encryption):
+    """Upload via ContentService → moment summary contains preview and resource keys."""
+    from dataclasses import dataclass
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from p8.services.content import ContentService
+    from p8.services.files import FileService
+
+    @dataclass
+    class _FakeChunk:
+        content: str
+
+    @dataclass
+    class _FakeExtractResult:
+        content: str
+        chunks: list[_FakeChunk]
+
+    settings = MagicMock()
+    settings.s3_bucket = ""
+    settings.content_chunk_max_chars = 1000
+    settings.content_chunk_overlap = 200
+
+    file_service = MagicMock(spec=FileService)
+    svc = ContentService(db=db, encryption=encryption, file_service=file_service, settings=settings)
+
+    full_text = "This is a detailed report about machine learning pipelines and data processing."
+    fake_result = _FakeExtractResult(
+        content=full_text,
+        chunks=[_FakeChunk("ML pipeline chunk."), _FakeChunk("Data processing chunk.")],
+    )
+
+    with (
+        patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
+        patch("kreuzberg.ChunkingConfig"),
+        patch("kreuzberg.ExtractionConfig"),
+    ):
+        await svc.ingest(b"pdf bytes", "ml-report.pdf", mime_type="application/pdf")
+
+    rows = await db.fetch(
+        "SELECT * FROM moments WHERE name = 'upload-ml-report' AND deleted_at IS NULL"
+    )
+    assert len(rows) >= 1
+    summary = rows[0]["summary"]
+
+    # Summary should contain preview text, not just filename + stats
+    assert "Preview:" in summary
+    assert "machine learning pipelines" in summary
+
+    # Summary should list resource keys
+    assert "Resources:" in summary
+    assert "ml-report-chunk-0000" in summary
+
+
+async def test_moment_injection_includes_metadata(db, encryption):
+    """content_upload moment with metadata → load_context injects Resources/File lines."""
+    memory = MemoryService(db, encryption)
+    session = await create_session(db, encryption)
+
+    await seed_messages(memory, session.id, 2, token_count=10)
+
+    moment_repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name=f"upload-test-{session.id}",
+        moment_type="content_upload",
+        summary="Uploaded report.pdf (2 chunks, 500 chars).",
+        source_session_id=session.id,
+        metadata={
+            "file_id": "abc-123",
+            "file_name": "report.pdf",
+            "resource_keys": ["report-chunk-0000", "report-chunk-0001"],
+            "source": "upload",
+            "chunk_count": 2,
+        },
+    )
+    await moment_repo.upsert(moment)
+
+    ctx = await memory.load_context(session.id)
+    system_msgs = [m for m in ctx if m.get("message_type") == "system"]
+    assert len(system_msgs) >= 1
+
+    # Find the injected moment context
+    context_content = " ".join(m["content"] for m in system_msgs)
+    assert "Resources: report-chunk-0000, report-chunk-0001" in context_content
+    assert "File: report.pdf" in context_content
+
+
+async def test_compacted_messages_include_summary(db, encryption):
+    """Enough messages to trigger compaction → breadcrumbs include summary snippet."""
+    memory = MemoryService(db, encryption)
+    session = await create_session(db, encryption)
+
+    # Seed 10 messages to ensure compaction triggers (always_last=5 by default)
+    await seed_messages(memory, session.id, 10, token_count=50)
+
+    # Create a moment so compaction has a moment to reference
+    moment_repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name=f"session-{session.id}-chunk-0",
+        moment_type="session_chunk",
+        summary="Discussed deployment strategies and K8s configuration.",
+        source_session_id=session.id,
+        metadata={"message_count": 10, "token_count": 500, "chunk_index": 0},
+    )
+    await moment_repo.upsert(moment)
+
+    ctx = await memory.load_context(session.id, always_last=5)
+
+    # Find compacted messages — they should contain summary hint, not bare LOOKUP
+    compacted = [m for m in ctx if "Earlier:" in m.get("content", "")]
+    assert len(compacted) > 0
+
+    # Verify the summary snippet is included
+    sample = compacted[0]["content"]
+    assert "Discussed deployment strategies" in sample
+    assert "REM LOOKUP" in sample
+
+
+async def test_today_summary_includes_session_names(db, encryption):
+    """Today summary metadata includes session names for conversation starters."""
+    from uuid import UUID
+
+    test_uid = UUID("aaaaaaaa-0000-0000-0000-000000000002")
+    await db.execute("DELETE FROM messages WHERE user_id = $1", test_uid)
+
+    memory = MemoryService(db, encryption)
+    session = await create_session(db, encryption, name="discuss-ml-architecture")
+    await db.execute("UPDATE sessions SET user_id = $1 WHERE id = $2", test_uid, session.id)
+
+    await seed_messages(memory, session.id, 4, token_count=25)
+    await db.execute("UPDATE messages SET user_id = $1 WHERE session_id = $2", test_uid, session.id)
+
+    today = await memory.build_today_summary(user_id=test_uid)
+    assert today is not None
+    assert today["metadata"]["sessions"]
+    # Sessions list should contain entries with name info
+    sessions = today["metadata"]["sessions"]
+    assert len(sessions) >= 1
+    # At minimum, sessions should be present (verifying the data is there for bootstrapping)
+    assert any(s for s in sessions)

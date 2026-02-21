@@ -32,11 +32,6 @@ spec:
             - name: health
               containerPort: 13133
               protocol: TCP
-          env:
-            - name: PHOENIX_API_KEY
-              value: ""
-            - name: PHOENIX_ENDPOINT
-              value: "http://localhost:6006"
           resources:
             requests:
               cpu: 100m

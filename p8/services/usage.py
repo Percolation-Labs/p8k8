@@ -1,4 +1,39 @@
-"""Usage tracking — plan limits, quota checks, increment."""
+"""Usage tracking — plan limits, quota checks, increment.
+
+Quotas enforce per-user resource limits based on their Stripe plan (free/pro/
+team/enterprise). Each plan defines caps for chat tokens, storage, dreaming
+minutes, cloud folders, file size, worker processing, and dreaming I/O tokens.
+
+Storage
+-------
+- **Where stored:** The ``files`` table (``size_bytes`` column). There is no
+  separate counter — storage usage is computed on-the-fly as
+  ``SUM(size_bytes)`` over non-deleted rows for the user.
+- **Checked:** Before every file upload in ``POST /content/`` (pre-flight).
+  If ``current_used + file_size > limit``, the request is rejected with 429.
+- **Updated:** Implicitly when files are inserted or soft-deleted.
+
+Periodic resources (chat_tokens, dreaming_minutes, worker_bytes_processed, …)
+------------------------------------------------------------------------------
+- **Where stored:** The ``usage_tracking`` table, partitioned by
+  ``(user_id, resource_type, period_start)`` where ``period_start`` is the
+  first day of the current month. Each row tracks ``used`` (accumulated
+  counter) and ``granted_extra`` (add-on credits that extend the base limit).
+- **Checked:** Before the action that consumes the resource. For chat tokens
+  this is a pre-flight check in ``POST /chat/{chat_id}`` — if
+  ``used > limit + granted_extra`` the request is rejected with 429.
+- **Updated:** After the action completes. For chat tokens,
+  ``increment_usage()`` is called post-flight with a token estimate. The
+  underlying ``usage_increment()`` SQL function performs an atomic
+  INSERT … ON CONFLICT upsert to avoid races.
+
+Plan resolution
+---------------
+A user's plan is looked up from ``stripe_customers`` (by ``user_id`` +
+``tenant_id``). The result is cached in-memory for 5 minutes
+(``_plan_cache``). Users with no ``stripe_customers`` row default to "free".
+Unknown plan IDs also fall back to the free tier limits.
+"""
 
 from __future__ import annotations
 
@@ -91,11 +126,11 @@ async def check_quota(
     limits = get_limits(plan_id)
 
     if resource_type == "storage_bytes":
-        used = await db.fetchval(
+        used = int(await db.fetchval(
             "SELECT COALESCE(SUM(size_bytes), 0) FROM files "
             "WHERE user_id = $1 AND deleted_at IS NULL",
             user_id,
-        )
+        ))
         limit = limits.storage_bytes
         return QuotaStatus(used=used, limit=limit, exceeded=used > limit)
 

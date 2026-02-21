@@ -100,6 +100,7 @@ class ChatController:
         name_prefix: str = "chat",
         session_name: str | None = None,
         session_type: str | None = None,
+        added_instruction: str | None = None,
     ) -> ChatContext:
         """Resolve agent, session, history, and build the agent — everything before the run."""
         adapter = await self.resolve_agent(agent_name, user_id=user_id)
@@ -110,11 +111,13 @@ class ChatController:
             name_prefix=name_prefix, session_name=session_name, session_type=session_type,
         )
 
+        extra_sections = [added_instruction] if added_instruction else None
         injector = adapter.build_injector(
             user_id=user_id, user_email=user_email, user_name=user_name,
             session_id=str(sid),
             session_name=session.name,
             session_metadata=session.metadata,
+            extra_sections=extra_sections,
         )
         message_history = await adapter.load_history(
             sid, user_id=user_id, tenant_id=tenant_id,

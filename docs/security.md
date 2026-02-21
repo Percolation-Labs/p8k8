@@ -359,7 +359,7 @@ Non-chat entities (resources, files, moments, ontologies) still use the tenant's
 
 **Two persistence paths** — Messages persisted via Repository (file processing, resource creation, etc.) go through `Repository.upsert()` which handles encryption and `encryption_level` stamping. Chat messages go through `rem_persist_turn()` which encrypts at the Python layer before calling the SQL function. Both paths produce the same result: encrypted content + `encryption_level` in the `messages` table.
 
-**`pai_messages` in session metadata** — pydantic-ai serialized messages are stored as JSONB in the `sessions.metadata` column for fast history replay. This data contains plaintext content and is the primary load path for chat history. The encrypted `messages.content` column serves as the authoritative data-at-rest store and is used as a fallback when `pai_messages` is not available.
+**Chat history** — All chat messages are stored in the `messages` table and loaded via `MemoryService.load_context()` with token budgeting and compaction. There is no secondary copy of message history in session metadata.
 
 ### Mixed history
 

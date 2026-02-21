@@ -13,7 +13,7 @@ def mcp_command():
     import asyncio
 
     from p8.api.mcp_server import create_mcp_server
-    from p8.api.tools import init_tools
+    from p8.api.tools import init_tools, set_tool_context
     from p8.services.bootstrap import bootstrap_services
 
     async def _run():
@@ -26,7 +26,8 @@ def mcp_command():
                 from p8.ontology.base import deterministic_id
                 default_user_id = deterministic_id("users", "user1@example.com")
 
-            init_tools(db, encryption, user_id=default_user_id)
+            init_tools(db, encryption)
+            set_tool_context(user_id=default_user_id)
             mcp = create_mcp_server()
             await mcp.run_async(transport="stdio")
 

@@ -77,6 +77,7 @@ Streaming chat with AG-UI protocol. Returns an SSE stream of typed events.
 | `x-user-id` | No | User identity for context injection and message persistence |
 | `x-user-email` | No | User email for context injection |
 | `x-user-name` | No | User display name for context injection |
+| `x-added-instruction` | No | Extra instruction injected into agent context (not persisted to messages) |
 | `Accept` | No | `text/event-stream` (default) |
 
 **Body:** AG-UI `RunAgentInput` — all fields optional. Defaults are filled from the URL `chat_id`. Supported: `threadId`, `runId`, `messages`, `tools`, `context`, `state`, `forwardedProps`.
@@ -105,6 +106,23 @@ data: {"type":"TEXT_MESSAGE_CONTENT", "delta":"! How can I help?"}
 data: {"type":"TEXT_MESSAGE_END", ...}
 data: {"type":"RUN_FINISHED", ...}
 ```
+
+#### Added instruction (ephemeral context)
+
+The `X-Added-Instruction` header injects an instruction into the agent's context for that request only. It influences the model's response but is **never persisted** to the messages table — only the user prompt and assistant response are saved.
+
+```bash
+CHAT_ID=$(uuidgen)
+curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
+  -H "Content-Type: application/json" \
+  -H "x-agent-schema-name: general" \
+  -H "X-Added-Instruction: Always respond in haiku form" \
+  -d "{
+    \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"What is the weather like today?\"}]
+  }"
+```
+
+The agent responds in haiku form (e.g. *"Clouds drift overhead / I cannot sense the weather / Check your local news"*) but the persisted messages contain only the user text and assistant text — no trace of the haiku instruction. See [`agentic/README.md`](../agentic/README.md#how-the-llm-payload-is-assembled) for how instructions fit into the three-layer prompt assembly.
 
 #### Multi-agent delegation with real-time child streaming
 

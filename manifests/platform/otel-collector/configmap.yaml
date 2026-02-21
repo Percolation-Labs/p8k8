@@ -29,10 +29,6 @@ data:
         spike_limit_mib: 100
 
     exporters:
-      otlphttp/phoenix:
-        endpoint: ${PHOENIX_ENDPOINT}
-        headers:
-          api_key: ${PHOENIX_API_KEY}
       debug:
         verbosity: basic
 
@@ -42,7 +38,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [otlphttp/phoenix, debug]
+          exporters: [debug]
         metrics:
           receivers: [otlp]
           processors: [memory_limiter, batch]

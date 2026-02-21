@@ -795,11 +795,14 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+-- Drop old overload that included p_pai_messages parameter
+DROP FUNCTION IF EXISTS rem_persist_turn(UUID, TEXT, TEXT, UUID, VARCHAR, JSONB, JSONB, INT, INT, INT, INT, VARCHAR, VARCHAR, VARCHAR, UUID, UUID);
+
 -- rem_persist_turn — atomically persist a user+assistant message pair,
--- update session token totals, optionally store pydantic-ai message history,
--- and optionally trigger moment building if threshold exceeded.
+-- update session token totals, and optionally trigger moment building
+-- if threshold exceeded.
 --
--- Batches 2 INSERTs + 2 UPDATEs + optional moment build into one round-trip.
+-- Batches 2 INSERTs + 1 UPDATE + optional moment build into one round-trip.
 -- Returns the user message ID, assistant message ID, and optional moment name.
 CREATE OR REPLACE FUNCTION rem_persist_turn(
     p_session_id       UUID,
@@ -808,7 +811,6 @@ CREATE OR REPLACE FUNCTION rem_persist_turn(
     p_user_id          UUID    DEFAULT NULL,
     p_tenant_id        VARCHAR DEFAULT NULL,
     p_tool_calls       JSONB   DEFAULT NULL,
-    p_pai_messages     JSONB   DEFAULT NULL,
     p_moment_threshold INT     DEFAULT 0,
     p_input_tokens     INT     DEFAULT 0,
     p_output_tokens    INT     DEFAULT 0,
@@ -857,16 +859,7 @@ BEGIN
     UPDATE sessions SET total_tokens = total_tokens + v_user_tokens + v_asst_tokens
     WHERE id = p_session_id;
 
-    -- 4. Store pydantic-ai message history if provided
-    IF p_pai_messages IS NOT NULL THEN
-        UPDATE sessions SET metadata = jsonb_set(
-            COALESCE(metadata, '{}'::jsonb),
-            '{pai_messages}',
-            p_pai_messages
-        ) WHERE id = p_session_id;
-    END IF;
-
-    -- 5. Optionally build moment if threshold > 0
+    -- 4. Optionally build moment if threshold > 0
     v_moment_name := NULL;
     IF p_moment_threshold > 0 THEN
         SELECT bm.moment_name INTO v_moment_name
@@ -1071,10 +1064,12 @@ $$ LANGUAGE sql;
 -- (message count, tokens, session count, moment count) and a deterministic
 -- session UUID derived from (user_id, date) so the client can chat with that day.
 DROP FUNCTION IF EXISTS rem_moments_feed(UUID, INT, DATE);
+DROP FUNCTION IF EXISTS rem_moments_feed(UUID, INT, DATE, BOOLEAN);
 CREATE OR REPLACE FUNCTION rem_moments_feed(
-    p_user_id     UUID DEFAULT NULL,
-    p_limit       INT  DEFAULT 20,
-    p_before_date DATE DEFAULT NULL
+    p_user_id        UUID    DEFAULT NULL,
+    p_limit          INT     DEFAULT 20,
+    p_before_date    DATE    DEFAULT NULL,
+    p_include_future BOOLEAN DEFAULT FALSE
 ) RETURNS TABLE(
     event_type       VARCHAR,
     event_id         UUID,
@@ -1084,18 +1079,28 @@ CREATE OR REPLACE FUNCTION rem_moments_feed(
     moment_type      VARCHAR,
     summary          TEXT,
     session_id       UUID,
+    image            TEXT,
     encryption_level VARCHAR,
     metadata         JSONB
 ) AS $$
 WITH
 -- 1. Find the next p_limit active dates before the cursor.
 --    This bounds all downstream CTEs to a small date window.
+--    Includes dates from both messages AND moments so upload-only days appear.
 active_dates AS (
-    SELECT DISTINCT (m.created_at AT TIME ZONE 'UTC')::date AS d
-    FROM messages m
-    WHERE m.deleted_at IS NULL
-      AND (p_user_id IS NULL OR m.user_id = p_user_id)
-      AND (p_before_date IS NULL OR (m.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
+    SELECT DISTINCT d FROM (
+        SELECT (m.created_at AT TIME ZONE 'UTC')::date AS d
+        FROM messages m
+        WHERE m.deleted_at IS NULL
+          AND (p_user_id IS NULL OR m.user_id = p_user_id)
+          AND (p_before_date IS NULL OR (m.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
+        UNION
+        SELECT (mo.created_at AT TIME ZONE 'UTC')::date AS d
+        FROM moments mo
+        WHERE mo.deleted_at IS NULL
+          AND (p_user_id IS NULL OR mo.user_id = p_user_id)
+          AND (p_before_date IS NULL OR (mo.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
+    ) AS all_dates
     ORDER BY d DESC
     LIMIT p_limit
 ),
@@ -1120,6 +1125,18 @@ daily_moment_counts AS (
         COUNT(*) AS moment_count
     FROM moments mo
     WHERE mo.deleted_at IS NULL
+      AND (p_user_id IS NULL OR mo.user_id = p_user_id)
+      AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
+    GROUP BY 1
+),
+
+daily_reminder_counts AS (
+    SELECT
+        (mo.created_at AT TIME ZONE 'UTC')::date AS d,
+        COUNT(*) AS reminder_count
+    FROM moments mo
+    WHERE mo.deleted_at IS NULL
+      AND mo.moment_type = 'reminder'
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
     GROUP BY 1
@@ -1166,16 +1183,19 @@ daily_summaries AS (
             'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
             COALESCE(p_user_id::text, 'global') || '/' || ds.d::text
         )                                                              AS session_id,
+        NULL::text                                                     AS image,
         NULL::varchar                                                  AS encryption_level,
         jsonb_build_object(
             'message_count', ds.msg_count,
             'total_tokens', ds.total_tokens,
             'session_count', ds.session_count,
             'moment_count', COALESCE(dmc.moment_count, 0),
+            'reminder_count', COALESCE(drc.reminder_count, 0),
             'sessions', COALESCE(dss.sessions, '[]'::jsonb)
         )                                                              AS metadata
     FROM daily_stats ds
     LEFT JOIN daily_moment_counts dmc ON dmc.d = ds.d
+    LEFT JOIN daily_reminder_counts drc ON drc.d = ds.d
     LEFT JOIN daily_sessions dss ON dss.d = ds.d
 ),
 
@@ -1190,6 +1210,7 @@ real_moments AS (
         COALESCE(mo.moment_type, 'unknown')::varchar                   AS moment_type,
         mo.summary                                                     AS summary,
         mo.source_session_id                                           AS session_id,
+        mo.image_uri                                                   AS image,
         mo.encryption_level                                            AS encryption_level,
         jsonb_build_object(
             'ends_timestamp', mo.ends_timestamp,
@@ -1202,6 +1223,7 @@ real_moments AS (
     WHERE mo.deleted_at IS NULL
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
+      AND (p_include_future OR mo.starts_timestamp IS NULL OR mo.starts_timestamp <= CURRENT_TIMESTAMP)
 ),
 
 -- 6. Combined feed — daily summaries sort before real moments on the same date
@@ -1212,7 +1234,7 @@ combined AS (
 )
 
 SELECT event_type, event_id, event_date, event_timestamp,
-       name, moment_type, summary, session_id, encryption_level, metadata
+       name, moment_type, summary, session_id, image, encryption_level, metadata
 FROM combined
 ORDER BY event_date DESC, sort_priority ASC, event_timestamp DESC;
 $$ LANGUAGE sql;

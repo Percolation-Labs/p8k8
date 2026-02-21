@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from p8.api.tools import init_tools
+from p8.api.tools import init_tools, set_tool_context
 
 USER_ADA = UUID("00000000-0000-0000-0000-00000000ada0")
 
@@ -19,7 +19,8 @@ USER_ADA = UUID("00000000-0000-0000-0000-00000000ada0")
 @pytest.fixture(autouse=True)
 async def _setup_tools(db, encryption, clean_db):
     """Initialize tool module state with live DB + encryption."""
-    init_tools(db, encryption, user_id=USER_ADA)
+    init_tools(db, encryption)
+    set_tool_context(user_id=USER_ADA)
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,9 @@ async def test_remind_me_invalid_cron():
 async def test_remind_me_missing_user():
     """Missing user_id returns an error."""
     from p8.api.tools.remind_me import remind_me
+
+    # Clear any user context from fixtures
+    set_tool_context(user_id=None, session_id=None)
 
     result = await remind_me(
         name="no-user",

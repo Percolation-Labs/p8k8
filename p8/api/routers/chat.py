@@ -19,10 +19,10 @@ from p8.agentic.adapter import DEFAULT_AGENT_NAME
 from p8.agentic.delegate import set_child_event_sink
 from p8.api.controllers.chat import ChatController
 from p8.api.deps import get_db, get_encryption, get_optional_user
+from p8.api.tools import set_tool_context
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.usage import check_quota, get_user_plan, increment_usage
-from p8.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,7 @@ async def chat(
         x-user-name: User display name (optional)
         x-session-name: Session display name — upserted on create or update (optional)
         x-session-type: Session mode (chat|workflow|eval) — upserted on create or update (optional)
+        x-added-instruction: Extra instruction injected into agent context (optional, not persisted)
 
     Body: AG-UI RunAgentInput — all fields optional (defaults filled from chat_id).
         Supported: thread_id, run_id, messages, tools, context, state, forwarded_props.
@@ -175,14 +176,15 @@ async def chat(
     tenant_id = (current_user.tenant_id or None) if current_user else None
     session_name = request.headers.get("x-session-name")
     session_type = request.headers.get("x-session-type")
+    added_instruction = request.headers.get("x-added-instruction") or ""
 
     controller = ChatController(db, encryption)
 
-    # Parse session ID — accept UUID or arbitrary string (auto-generates UUID)
+    # Parse session ID — must be a valid UUID
     try:
         session_uuid = UUID(chat_id) if chat_id else None
     except ValueError:
-        session_uuid = None
+        raise HTTPException(status_code=400, detail=f"Invalid chat_id: must be a valid UUID, got '{chat_id}'")
 
     try:
         ctx = await controller.prepare(
@@ -194,6 +196,7 @@ async def chat(
             tenant_id=tenant_id,
             session_name=session_name,
             session_type=session_type,
+            added_instruction=added_instruction or None,
         )
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
@@ -213,6 +216,10 @@ async def chat(
                     "message": "Monthly chat token limit reached. Purchase an add-on at /billing/addon or upgrade your plan.",
                 },
             )
+
+    # Set per-request tool context so tools (remind_me, save_moments, etc.)
+    # can access user_id and session_id without explicit parameters.
+    set_tool_context(user_id=user_id, session_id=ctx.session_id)
 
     # Parse body and fill in AG-UI defaults so callers can omit them
     raw_body = await request.body()
@@ -247,10 +254,10 @@ async def chat(
             elif hasattr(result, "_all_messages"):
                 all_messages = result._all_messages
 
-            # Extract usage from pydantic-ai result
+            # Extract actual API token usage from pydantic-ai result
             usage = result.usage() if hasattr(result, "usage") else None
-            input_tokens = usage.input_tokens if usage and usage.input_tokens else 0
-            output_tokens = usage.output_tokens if usage and usage.output_tokens else 0
+            input_tokens = usage.input_tokens if usage else 0
+            output_tokens = usage.output_tokens if usage else 0
             latency_ms = int((time.monotonic() - stream_start) * 1000)
             model_name = ctx.adapter.config.get_options().get("model", "")
             agent_name_val = ctx.adapter.schema.name
@@ -268,10 +275,10 @@ async def chat(
                 agent_name=agent_name_val,
             )
 
-            # Post-flight: increment chat token usage
+            # Post-flight: increment chat token usage with actual API tokens
             if user_id and plan_id:
-                token_estimate = estimate_tokens(user_prompt) + estimate_tokens(assistant_text)
-                await increment_usage(db, user_id, "chat_tokens", max(token_estimate, 1), plan_id)
+                actual_tokens = input_tokens + output_tokens
+                await increment_usage(db, user_id, "chat_tokens", max(actual_tokens, 1), plan_id)
         except Exception:
             logger.exception("Failed to persist turn or track usage")
         finally:

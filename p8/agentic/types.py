@@ -132,14 +132,7 @@ class ContextAttributes(BaseModel):
             if self.session_name:
                 lines.append(f"Session: {self.session_name}")
             if self.session_metadata:
-                # Exclude pai_messages — serialized message history that causes
-                # exponential growth if re-embedded in the system prompt each turn.
-                filtered_meta = {
-                    k: v for k, v in self.session_metadata.items()
-                    if k != "pai_messages"
-                }
-                if filtered_meta:
-                    lines.append(f"Context: {json.dumps(filtered_meta)}")
+                lines.append(f"Context: {json.dumps(self.session_metadata)}")
             lines.append("Use REM LOOKUP to retrieve full details for any keys listed above.")
         if self.routing_table:
             lines.append(f"Routing: {json.dumps(self.routing_table)}")

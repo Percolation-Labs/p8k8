@@ -1,4 +1,33 @@
-"""Stripe billing service — checkout sessions, portal, webhooks."""
+"""Stripe billing service — checkout sessions, portal, webhooks.
+
+Stripe Webhook Configuration
+-----------------------------
+Webhook endpoint: POST /billing/webhooks
+Created via Stripe CLI (test mode, acct_1T2vF939KSGRMEM5):
+  stripe webhook_endpoints create \\
+    -d "url=https://api.percolationlabs.ai/billing/webhooks" \\
+    -d "enabled_events[]=checkout.session.completed" \\
+    -d "enabled_events[]=customer.subscription.created" \\
+    -d "enabled_events[]=customer.subscription.updated" \\
+    -d "enabled_events[]=customer.subscription.deleted" \\
+    -d "enabled_events[]=invoice.payment_failed" \\
+    -d "enabled_events[]=charge.refunded"
+
+The signing secret (whsec_...) is stored in K8s secret p8-app-secrets
+as P8_STRIPE_WEBHOOK_SECRET.
+
+Testing with Stripe test cards
+-------------------------------
+Use test mode keys (sk_test_ / pk_test_) and these card numbers:
+  4242 4242 4242 4242  — Succeeds (any future exp, any CVC/zip)
+  4000 0025 0000 3155  — Requires 3D Secure authentication
+  4000 0000 0000 9995  — Declined (insufficient funds)
+  4000 0000 0000 0341  — Attaching card fails
+
+Trigger test webhooks locally:
+  stripe listen --forward-to localhost:8000/billing/webhooks
+  stripe trigger checkout.session.completed
+"""
 
 from __future__ import annotations
 
@@ -98,8 +127,8 @@ class StripeService:
             customer=customer_id,
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url=f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{base}/billing/cancel",
+            success_url="remapp://billing/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="remapp://billing/cancel",
             metadata={"p8_user_id": str(user_id), "plan_id": plan_id},
         )
         return session.url  # type: ignore[return-value]
@@ -118,8 +147,8 @@ class StripeService:
             customer=customer_id,
             mode="payment",
             line_items=[{"price": addon["price_id"], "quantity": 1}],
-            success_url=f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{base}/billing/cancel",
+            success_url="remapp://billing/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="remapp://billing/cancel",
             metadata={
                 "p8_user_id": str(user_id),
                 "addon_id": addon_id,

@@ -1,40 +1,58 @@
-"""Auth service — tenant & user lifecycle, JWT tokens, OAuth, magic link.
+"""Auth service — tenant & user lifecycle, JWT tokens, OAuth 2.1 AS, magic link.
 
-Owns tenant creation, user creation, encryption configuration, and
-authentication flows (Google, Apple, magic link).
-Receives db, encryption, and settings from app.state.
+Dual role:
+  1. **Identity provider** — tenant/user CRUD, Google/Apple OAuth callbacks,
+     magic link passwordless flow.
+  2. **OAuth 2.1 Authorization Server** — Dynamic Client Registration (RFC 7591),
+     authorization codes with PKCE (S256), token exchange.  MCP clients
+     (e.g. Claude Desktop) discover the AS via ``/.well-known/oauth-authorization-server``
+     and authenticate through the same Google/Apple callback as the browser flow.
+
+The MCP server (``mcp_server.py``) acts as a **resource server** — it validates
+the HS256 JWTs issued here via ``RemoteAuthProvider`` + ``JWTVerifier`` but never
+issues tokens itself.
+
+OAuth 2.1 state is stored in the ``kv_store`` UNLOGGED table:
+  - ``entity_type='oauth_client'`` — registered OAuth clients (DCR)
+  - ``entity_type='auth_code'``    — authorization codes (single-use, PKCE)
+  - ``entity_type='auth_token'``   — refresh token JTIs + magic link JTIs
+
+
+  - Replaced FastMCP GoogleProvider with RemoteAuthProvider + JWTVerifier(HS256).
+  - Added OAuth 2.1 AS methods: register_client, create/exchange_authorization_code.
+  - Fixed asyncpg JSONB double-encoding: set_authorization_code_user now does
+    read-merge-write as plain TEXT instead of atomic ``||`` with ``$1::jsonb``.
+    See ``_parse_code_record()`` for the recovery logic.
+  - Added ``"devices"`` to Repository._JSONB_COLUMNS so User.devices (stored as
+    JSON string in Postgres) is parsed before Pydantic validation.
 
 Testing Google OAuth
 --------------------
 1. Set P8_GOOGLE_CLIENT_ID and P8_GOOGLE_CLIENT_SECRET in .env
 2. Add redirect URI in Google Cloud Console:
    http://localhost:8000/auth/callback/google
-3. Start server: p8 serve
-4. Open in browser: http://localhost:8000/auth/authorize?provider=google
+3. Start server: ``p8 serve``
+4. Open in browser: ``http://localhost:8000/auth/authorize?provider=google``
 5. Sign in with Google — redirects back to /auth/callback/google
 6. Callback issues tokens as HttpOnly cookies and redirects to /
-7. The / page will 404 (no frontend) — that's expected
-8. Open http://localhost:8000/auth/me in the same browser
-   — cookies are sent automatically, returns your Google user profile
 
-Testing Magic Link
-------------------
-1. Start server: p8 serve
-2. Request a magic link (console provider logs URL to stdout):
-   curl -X POST localhost:8000/auth/magic-link -d '{"email":"test@example.com"}'
-   -H 'Content-Type: application/json'
-3. Copy the link from server output (printed to console in dev mode)
-4. Open the link in browser — verifies token, sets cookies, redirects to /
-5. Open http://localhost:8000/auth/me — returns your user profile
-6. Test token refresh:
-   curl -X POST localhost:8000/auth/token -H 'Content-Type: application/json'
-   -d '{"refresh_token":"<from cookie>"}'
-7. Test logout:
-   curl -X POST localhost:8000/auth/logout --cookie 'refresh_token=<token>'
+Testing MCP OAuth 2.1 (Claude Desktop)
+---------------------------------------
+1. MCP client connects → gets 401 → discovers AS via .well-known
+2. Client registers via ``POST /auth/register``
+3. Client opens ``/auth/authorize?client_id=...&code_challenge=...&state=...``
+4. User authenticates with Google/Apple
+5. Callback redirects to client's redirect_uri with ``?code=...&state=...``
+6. Client exchanges code at ``POST /auth/token`` with PKCE verifier
+7. Client uses Bearer JWT on MCP requests
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import time
 from uuid import UUID, uuid4
@@ -51,17 +69,22 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_code_record(data: object) -> dict:
-    """Parse an authorization code record from kv_store content_summary.
+    """Parse an authorization code record from kv_store ``content_summary``.
 
-    Handles two formats:
-    1. Normal dict — returned as-is.
-    2. Array from JSONB double-encoding bug — asyncpg's JSONB codec can
-       double-encode string parameters, turning a patch into a scalar string.
-       PostgreSQL's ``||`` then produces ``[{original}, "{patch}"]`` instead
-       of a merged object.  We recover by merging all elements.
+    Handles two storage formats:
+
+    1. **Normal dict** — returned as-is.  This is the expected format after
+       ``set_authorization_code_user`` was fixed to use read-merge-write.
+    2. **Array (legacy double-encoding)** — asyncpg's pool-level JSONB codec
+       (``set_type_codec("jsonb", encoder=json.dumps)``) can double-encode
+       string parameters when SQL uses ``$1::jsonb``.  PostgreSQL's ``||``
+       then concatenates ``{original_object}`` and ``"double-encoded-string"``
+       as a JSON array instead of merging objects.  We recover by iterating
+       the array and merging all dict elements (parsing any JSON strings).
+
+    The fix in ``set_authorization_code_user`` prevents new corruption, but
+    this parser remains as a safety net for any codes created before the fix.
     """
-    import json as _json
-
     if isinstance(data, dict):
         return data
     if isinstance(data, list):
@@ -71,7 +94,7 @@ def _parse_code_record(data: object) -> dict:
                 merged.update(item)
             elif isinstance(item, str):
                 try:
-                    parsed = _json.loads(item)
+                    parsed = json.loads(item)
                     if isinstance(parsed, dict):
                         merged.update(parsed)
                 except (ValueError, TypeError):
@@ -80,7 +103,28 @@ def _parse_code_record(data: object) -> dict:
     return {}
 
 
+def _coerce_user_row(data: dict) -> None:
+    """Parse JSONB columns that asyncpg may return as strings.
+
+    The ``devices`` column is JSONB but can come back as a raw JSON string
+    when read via direct SQL (outside Repository, which handles this in
+    ``_decrypt_row``).  This caused a Pydantic validation error in production:
+    ``Input should be a valid list [type=list_type, input_type=str]``.
+
+    Mutates *data* in place.
+    """
+    if isinstance(data.get("devices"), str):
+        data["devices"] = json.loads(data["devices"])
+
+
 class AuthService:
+    """Unified auth service — identity, OAuth 2.1 AS, JWT tokens, magic link.
+
+    Injected into the FastAPI app as ``app.state.auth``.  All state is stored
+    in PostgreSQL (users table + kv_store UNLOGGED table).  No in-memory session
+    state is required — the service is stateless and horizontally scalable.
+    """
+
     def __init__(
         self,
         db: Database,
@@ -92,6 +136,40 @@ class AuthService:
         self.settings = settings or get_settings()
         self.tenants = Repository(Tenant, db, encryption)
         self.users = Repository(User, db, encryption)
+
+    # -- kv_store helpers (DRY JSON read/write for OAuth state) ----------------
+
+    async def _kv_get_json(self, key: str, entity_type: str) -> dict | None:
+        """Read a JSON object from kv_store by key + entity_type."""
+        row = await self.db.fetchrow(
+            "SELECT content_summary FROM kv_store"
+            " WHERE entity_key = $1 AND entity_type = $2",
+            key, entity_type,
+        )
+        if not row:
+            return None
+        return dict(json.loads(row["content_summary"]))
+
+    async def _kv_set_json(self, key: str, entity_type: str, data: dict) -> None:
+        """Upsert a JSON object into kv_store (plain TEXT, avoids JSONB codec)."""
+        await self.db.execute(
+            "INSERT INTO kv_store (entity_key, entity_type, entity_id, content_summary)"
+            " VALUES ($1, $2, $3, $4)"
+            " ON CONFLICT (COALESCE(tenant_id, ''), entity_key)"
+            " DO UPDATE SET content_summary = $4",
+            key, entity_type, uuid4(), json.dumps(data),
+        )
+
+    async def _kv_delete_returning_json(self, key: str, entity_type: str) -> dict | None:
+        """Delete a kv_store row and return its parsed JSON content."""
+        row = await self.db.fetchrow(
+            "DELETE FROM kv_store WHERE entity_key = $1 AND entity_type = $2"
+            " RETURNING content_summary",
+            key, entity_type,
+        )
+        if not row:
+            return None
+        return _parse_code_record(json.loads(row["content_summary"]))
 
     # -----------------------------------------------------------------------
     # Tenant methods (unchanged)
@@ -349,7 +427,11 @@ class AuthService:
     async def find_user_by_provider(
         self, provider: str, provider_user_id: str
     ) -> tuple[User, str] | None:
-        """Find a user by auth provider + provider_user_id across all tenants."""
+        """Find a user by auth provider + provider_user_id across all tenants.
+
+        Uses JSONB metadata query: ``metadata->>'auth_provider'``.
+        Handles devices stored as JSON string (see _coerce_user_row).
+        """
         row = await self.db.fetchrow(
             "SELECT * FROM users WHERE metadata->>'auth_provider' = $1"
             " AND metadata->>'provider_user_id' = $2 AND deleted_at IS NULL",
@@ -363,10 +445,7 @@ class AuthService:
         should_decrypt = await self.encryption.should_decrypt_on_read(tenant_id)
         if should_decrypt:
             data = self.encryption.decrypt_fields(User, data, tenant_id)
-        # devices may be stored as JSON string — parse before validation
-        if isinstance(data.get("devices"), str):
-            import json
-            data["devices"] = json.loads(data["devices"])
+        _coerce_user_row(data)
         return User.model_validate(data), tenant_id
 
     async def handle_google_callback(
@@ -449,8 +528,11 @@ class AuthService:
     async def register_client(self, metadata: dict) -> dict:
         """Register an OAuth client (RFC 7591 Dynamic Client Registration).
 
-        Stores client in kv_store with entity_type='oauth_client'.
+        Stores client in kv_store with ``entity_type='oauth_client'``.
         Returns client_id, client_secret, and echoed metadata.
+
+        MCP clients (e.g. Claude Desktop) call this automatically during
+        the discovery flow before initiating authorization.
         """
         client_id = str(uuid4())
         client_secret = str(uuid4())
@@ -465,35 +547,15 @@ class AuthService:
             "token_endpoint_auth_method": metadata.get("token_endpoint_auth_method", "client_secret_post"),
         }
 
-        import json
-        await self.db.execute(
-            "INSERT INTO kv_store (entity_key, entity_type, entity_id, content_summary)"
-            " VALUES ($1, $2, $3, $4)"
-            " ON CONFLICT (COALESCE(tenant_id, ''), entity_key)"
-            " DO UPDATE SET content_summary = $4",
-            f"oauth_client:{client_id}",
-            "oauth_client",
-            uuid4(),
-            json.dumps(client_record),
-        )
-
+        await self._kv_set_json(f"oauth_client:{client_id}", "oauth_client", client_record)
         return client_record
 
     async def get_client(self, client_id: str) -> dict | None:
         """Retrieve a registered OAuth client by client_id."""
-        import json
-        row = await self.db.fetchrow(
-            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = $2",
-            f"oauth_client:{client_id}",
-            "oauth_client",
-        )
-        if not row:
-            return None
-        return dict(json.loads(row["content_summary"]))
+        return await self._kv_get_json(f"oauth_client:{client_id}", "oauth_client")
 
     def authenticate_client(self, client_id: str, client_secret: str, client_record: dict) -> bool:
-        """Verify client credentials against stored record."""
-        import hmac
+        """Verify client credentials (constant-time comparison)."""
         return hmac.compare_digest(client_record.get("client_secret", ""), client_secret)
 
     async def create_authorization_code(
@@ -507,10 +569,13 @@ class AuthService:
     ) -> str:
         """Generate and store an authorization code with PKCE challenge.
 
-        The code is stored in kv_store with entity_type='auth_code'.
-        provider_state is the state param from the MCP client, forwarded back on redirect.
+        Stored in kv_store with ``entity_type='auth_code'``.  The code is
+        created *before* the user authenticates — ``set_authorization_code_user``
+        attaches the user identity after the OAuth callback completes.
+
+        ``provider_state`` is the MCP client's ``state`` param, forwarded
+        back on the redirect so the client can correlate the response.
         """
-        import json
         code = str(uuid4())
         code_record = {
             "client_id": client_id,
@@ -521,58 +586,49 @@ class AuthService:
             "client_state": provider_state,
         }
 
-        await self.db.execute(
-            "INSERT INTO kv_store (entity_key, entity_type, entity_id, content_summary)"
-            " VALUES ($1, $2, $3, $4)"
-            " ON CONFLICT (COALESCE(tenant_id, ''), entity_key)"
-            " DO UPDATE SET content_summary = $4",
-            f"auth_code:{code}",
-            "auth_code",
-            uuid4(),
-            json.dumps(code_record),
-        )
-
+        await self._kv_set_json(f"auth_code:{code}", "auth_code", code_record)
         return code
 
     async def get_authorization_code(self, code: str) -> dict | None:
-        """Retrieve an authorization code record (does not consume it)."""
-        import json
+        """Retrieve an authorization code record (does not consume it).
+
+        Uses ``_parse_code_record`` for resilience against the JSONB
+        double-encoding bug (see module docstring).
+        """
         row = await self.db.fetchrow(
-            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = $2",
+            "SELECT content_summary FROM kv_store"
+            " WHERE entity_key = $1 AND entity_type = 'auth_code'",
             f"auth_code:{code}",
-            "auth_code",
         )
         if not row:
             return None
         return _parse_code_record(json.loads(row["content_summary"]))
 
     async def consume_authorization_code(self, code: str) -> dict | None:
-        """Retrieve and delete an authorization code (single-use)."""
-        import json
-        row = await self.db.fetchrow(
-            "DELETE FROM kv_store WHERE entity_key = $1 AND entity_type = $2 RETURNING content_summary",
-            f"auth_code:{code}",
-            "auth_code",
-        )
-        if not row:
-            return None
-        return _parse_code_record(json.loads(row["content_summary"]))
+        """Atomically retrieve and delete an authorization code (single-use).
+
+        The DELETE … RETURNING guarantees the code can only be exchanged once.
+        """
+        return await self._kv_delete_returning_json(f"auth_code:{code}", "auth_code")
 
     async def set_authorization_code_user(
         self, code: str, user_id: str, tenant_id: str, email: str | None = None,
     ) -> None:
         """Attach user info to an existing authorization code after OAuth callback.
 
-        Read-merge-write as plain TEXT to avoid asyncpg's JSONB codec
-        double-encoding the parameter (json.dumps applied twice turns the
-        patch into a JSONB scalar string; PostgreSQL's || then produces an
-        array instead of a merged object).
+        Uses **read-merge-write as plain TEXT** to avoid asyncpg's JSONB codec
+        double-encoding the parameter.  The original implementation used an
+        atomic ``content_summary || $1::jsonb`` UPDATE, but asyncpg's pool-level
+        JSONB encoder (``set_type_codec("jsonb", encoder=json.dumps)``) applied
+        ``json.dumps`` a second time, turning the patch dict into a JSONB scalar
+        string.  PostgreSQL's ``||`` then produced an array
+        ``[{original}, "escaped-string"]`` instead of a merged object.
+
+        See ``_parse_code_record()`` and ``tests/unit/test_auth_codes.py``.
         """
-        import json
-        import logging
-        logger = logging.getLogger(__name__)
         row = await self.db.fetchrow(
-            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = 'auth_code'",
+            "SELECT content_summary FROM kv_store"
+            " WHERE entity_key = $1 AND entity_type = 'auth_code'",
             f"auth_code:{code}",
         )
         if not row:
@@ -580,13 +636,11 @@ class AuthService:
             return
         record = _parse_code_record(json.loads(row["content_summary"]))
         record.update({"user_id": user_id, "tenant_id": tenant_id, "email": email})
-        result = await self.db.execute(
+        await self.db.execute(
             "UPDATE kv_store SET content_summary = $1"
             " WHERE entity_key = $2 AND entity_type = 'auth_code'",
-            json.dumps(record),
-            f"auth_code:{code}",
+            json.dumps(record), f"auth_code:{code}",
         )
-        logger.info("set_authorization_code_user: code=%s result=%s", code[:12], result)
 
     async def exchange_authorization_code(
         self,
@@ -595,36 +649,39 @@ class AuthService:
         code_verifier: str,
         redirect_uri: str,
     ) -> dict:
-        """Exchange an authorization code for tokens.
+        """Exchange an authorization code for access + refresh tokens.
 
-        Verifies PKCE (S256), consumes the code, and issues tokens.
-        Raises ValueError on any validation failure.
+        Validates (in order):
+          1. Code exists and is consumed (single-use)
+          2. ``client_id`` matches the code's registered client
+          3. ``redirect_uri`` matches the code's registered redirect
+          4. PKCE: ``SHA256(code_verifier) == stored code_challenge`` (S256)
+
+        Then looks up the user (attached by ``set_authorization_code_user``
+        during the OAuth callback) and issues an HS256 JWT token pair.
+
+        Falls back to a direct DB query if the user lookup via Repository
+        fails (e.g. tenant_id missing), and to a client-only JWT if no
+        user is found at all (so the MCP flow still completes).
+
+        Raises ``ValueError`` on any validation failure.
         """
-        import hashlib
-        import base64
-
         record = await self.consume_authorization_code(code)
         if not record:
             raise ValueError("Invalid or expired authorization code")
 
-        # Verify client_id matches
         if record["client_id"] != client_id:
             raise ValueError("client_id mismatch")
-
-        # Verify redirect_uri matches
         if record["redirect_uri"] != redirect_uri:
             raise ValueError("redirect_uri mismatch")
 
-        # Verify PKCE: SHA256(code_verifier) must equal stored code_challenge
+        # PKCE S256 verification
         digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
         computed_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         if computed_challenge != record["code_challenge"]:
             raise ValueError("PKCE verification failed")
 
-        # Look up user and issue tokens.
-        # user_id/tenant_id are set by the callback via set_authorization_code_user.
-        # If missing (session lost during OAuth redirect), fall back to direct DB
-        # lookup or issue a client-only token so the MCP flow still completes.
+        # Look up user — set by callback via set_authorization_code_user
         user_id = record.get("user_id")
         tenant_id = record.get("tenant_id") or ""
 
@@ -632,22 +689,22 @@ class AuthService:
         if user_id and tenant_id:
             user = await self.get_user(UUID(user_id), tenant_id=tenant_id)
         if not user and user_id:
-            # Fallback: query user directly without tenant scoping
+            # Fallback: direct query without tenant scoping (handles edge case
+            # where tenant_id was lost during session)
             row = await self.db.fetchrow(
-                "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL", UUID(user_id),
+                "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL",
+                UUID(user_id),
             )
             if row:
                 data = dict(row)
                 tenant_id = str(data.get("tenant_id", ""))
-                if isinstance(data.get("devices"), str):
-                    import json as _json
-                    data["devices"] = _json.loads(data["devices"])
+                _coerce_user_row(data)
                 user = User.model_validate(data)
 
         if user and tenant_id:
             return await self.issue_tokens(user, tenant_id)
 
-        # Fallback: issue a JWT with client_id as subject (valid for JWTVerifier)
+        # Last resort: issue a minimal JWT with client_id as subject
         now = int(time.time())
         payload = {
             "sub": client_id,

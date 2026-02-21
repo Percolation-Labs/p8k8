@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from p8.api.deps import CurrentUser, get_current_user, get_db
+from p8.api.deps import CurrentUser, get_current_user, get_db, get_optional_user
 from p8.services.database import Database
 from p8.services.stripe import StripeService
 from p8.services.usage import get_all_usage, get_user_plan
