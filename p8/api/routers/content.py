@@ -12,9 +12,13 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Form
+from fastapi.responses import Response
 
-from p8.api.deps import CurrentUser, get_db, get_optional_user
+from p8.api.deps import CurrentUser, get_db, get_encryption, get_optional_user
+from p8.ontology.types import File as FileEntity
 from p8.services.database import Database
+from p8.services.encryption import EncryptionService
+from p8.services.repository import Repository
 from p8.services.usage import check_quota, get_user_plan
 
 log = logging.getLogger(__name__)
@@ -124,3 +128,28 @@ async def upload_content(
         "task_id": str(task_id),
         "status": "queued",
     }
+
+
+@router.get("/files/{file_id}")
+async def download_file(
+    file_id: UUID,
+    request: Request,
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Serve an uploaded file's bytes from S3 (or local storage)."""
+    repo = Repository(FileEntity, db, encryption)
+    file_entity = await repo.get(file_id)
+    if not file_entity:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not file_entity.uri:
+        raise HTTPException(status_code=404, detail="File has no storage URI")
+
+    file_service = request.app.state.file_service
+    data = await file_service.read(file_entity.uri)
+    return Response(
+        content=data,
+        media_type=file_entity.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{file_entity.name}"'},
+    )
