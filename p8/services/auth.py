@@ -50,6 +50,36 @@ from p8.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 
+def _parse_code_record(data: object) -> dict:
+    """Parse an authorization code record from kv_store content_summary.
+
+    Handles two formats:
+    1. Normal dict — returned as-is.
+    2. Array from JSONB double-encoding bug — asyncpg's JSONB codec can
+       double-encode string parameters, turning a patch into a scalar string.
+       PostgreSQL's ``||`` then produces ``[{original}, "{patch}"]`` instead
+       of a merged object.  We recover by merging all elements.
+    """
+    import json as _json
+
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        merged: dict = {}
+        for item in data:
+            if isinstance(item, dict):
+                merged.update(item)
+            elif isinstance(item, str):
+                try:
+                    parsed = _json.loads(item)
+                    if isinstance(parsed, dict):
+                        merged.update(parsed)
+                except (ValueError, TypeError):
+                    pass
+        return merged
+    return {}
+
+
 class AuthService:
     def __init__(
         self,
@@ -514,7 +544,7 @@ class AuthService:
         )
         if not row:
             return None
-        return dict(json.loads(row["content_summary"]))
+        return _parse_code_record(json.loads(row["content_summary"]))
 
     async def consume_authorization_code(self, code: str) -> dict | None:
         """Retrieve and delete an authorization code (single-use)."""
@@ -526,23 +556,34 @@ class AuthService:
         )
         if not row:
             return None
-        return dict(json.loads(row["content_summary"]))
+        return _parse_code_record(json.loads(row["content_summary"]))
 
     async def set_authorization_code_user(
         self, code: str, user_id: str, tenant_id: str, email: str | None = None,
     ) -> None:
         """Attach user info to an existing authorization code after OAuth callback.
 
-        Uses an atomic JSON merge to avoid GET+UPDATE race conditions.
+        Read-merge-write as plain TEXT to avoid asyncpg's JSONB codec
+        double-encoding the parameter (json.dumps applied twice turns the
+        patch into a JSONB scalar string; PostgreSQL's || then produces an
+        array instead of a merged object).
         """
         import json
         import logging
         logger = logging.getLogger(__name__)
-        patch = json.dumps({"user_id": user_id, "tenant_id": tenant_id, "email": email})
+        row = await self.db.fetchrow(
+            "SELECT content_summary FROM kv_store WHERE entity_key = $1 AND entity_type = 'auth_code'",
+            f"auth_code:{code}",
+        )
+        if not row:
+            logger.warning("set_authorization_code_user: code=%s not found", code[:12])
+            return
+        record = _parse_code_record(json.loads(row["content_summary"]))
+        record.update({"user_id": user_id, "tenant_id": tenant_id, "email": email})
         result = await self.db.execute(
-            "UPDATE kv_store SET content_summary = content_summary::jsonb || $1::jsonb"
+            "UPDATE kv_store SET content_summary = $1"
             " WHERE entity_key = $2 AND entity_type = 'auth_code'",
-            patch,
+            json.dumps(record),
             f"auth_code:{code}",
         )
         logger.info("set_authorization_code_user: code=%s result=%s", code[:12], result)
