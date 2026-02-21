@@ -18,6 +18,8 @@
 
 # ------------------------------------------------------------------------------
 # Stage 1: Builder - Install dependencies with uv
+# Two-phase sync: deps cached separately from source (uv Docker best practice)
+# https://docs.astral.sh/uv/guides/integration/docker/
 # ------------------------------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
@@ -31,18 +33,23 @@ RUN apt-get update && \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Disable bytecode compilation to avoid timeout on large files
-ENV UV_COMPILE_BYTECODE=0
+# Disable bytecode compilation; force copy mode (no hard-links across filesystems)
+ENV UV_COMPILE_BYTECODE=0 \
+    UV_LINK_MODE=copy
 
-# Copy dependency files first for better layer caching
-COPY pyproject.toml uv.lock ./
-
-# Copy source code (needed for package installation)
-COPY p8/ ./p8/
-
-# Install dependencies and the p8 package into .venv
+# Phase 1: Install ONLY third-party deps (cached until pyproject.toml/uv.lock change)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --frozen --no-dev --no-install-project --no-editable
+
+# Phase 2: Copy source and install the project (non-editable → into site-packages)
+# --reinstall-package p8 ensures source changes are always picked up even if
+# pyproject.toml hasn't changed (uv cache keys on pyproject.toml, not source).
+COPY pyproject.toml uv.lock ./
+COPY p8/ ./p8/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --reinstall-package p8
 
 # ------------------------------------------------------------------------------
 # Stage 2: Runtime - Minimal production image
@@ -75,11 +82,8 @@ RUN apt-get update && \
 RUN useradd -m -u 1000 -s /bin/bash p8 && \
     chown -R p8:p8 /app
 
-# Copy virtual environment from builder
+# Copy virtual environment from builder (includes p8 in site-packages, self-contained)
 COPY --from=builder --chown=p8:p8 /app/.venv /app/.venv
-
-# Copy source code from builder
-COPY --from=builder --chown=p8:p8 /app/p8 /app/p8
 
 # Copy SQL init scripts
 COPY --chown=p8:p8 sql/ /app/sql/
