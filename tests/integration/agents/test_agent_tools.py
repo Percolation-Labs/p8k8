@@ -522,7 +522,7 @@ def test_yaml_file_roundtrip():
     from p8.agentic.agent_schema import AgentSchema
 
     schema = AgentSchema.from_yaml_file(
-        Path(__file__).resolve().parents[2] / ".schema" / "sample-agent.yaml"
+        Path(__file__).resolve().parents[3] / ".schema" / "sample-agent.yaml"
     )
     assert schema.name == "sample-agent"
     assert "knowledge base" in schema.description

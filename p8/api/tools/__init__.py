@@ -32,12 +32,14 @@ def init_tools(
 
 
 def get_db() -> Database:
-    assert _db is not None, "Tools not initialized — call init_tools() in lifespan"
+    if _db is None:
+        raise RuntimeError("Tools not initialized — call init_tools() in lifespan")
     return _db
 
 
 def get_encryption() -> EncryptionService:
-    assert _encryption is not None, "Tools not initialized — call init_tools() in lifespan"
+    if _encryption is None:
+        raise RuntimeError("Tools not initialized — call init_tools() in lifespan")
     return _encryption
 
 

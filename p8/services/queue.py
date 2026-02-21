@@ -1,6 +1,6 @@
 """Queue service — enqueue, claim, complete, fail tasks with quota integration.
 
-Wraps the SQL functions from qms.sql with Python-level quota checks and
+Wraps the SQL functions from 03_qms.sql with Python-level quota checks and
 usage tracking. Follows the same patterns as EmbeddingService.
 """
 

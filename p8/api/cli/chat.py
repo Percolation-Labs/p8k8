@@ -82,15 +82,18 @@ async def _run_chat(
                 break
 
             # Full prepare → run cycle per turn (reloads history each turn)
-            ctx = await controller.prepare(
-                agent_name,
-                session_id=sid,
-                user_id=user_id,
-                name_prefix="cli-chat",
-            )
+            try:
+                ctx = await controller.prepare(
+                    agent_name,
+                    session_id=sid,
+                    user_id=user_id,
+                    name_prefix="cli-chat",
+                )
 
-            turn = await controller.run_turn(ctx, user_input, user_id=user_id, background_compaction=False)
-            typer.echo(f"assistant> {turn.assistant_text}")
+                turn = await controller.run_turn(ctx, user_input, user_id=user_id, background_compaction=False)
+                typer.echo(f"assistant> {turn.assistant_text}")
+            except Exception as e:
+                typer.echo(f"[error] {e}", err=True)
 
 
 @chat_app.callback()

@@ -6,8 +6,8 @@
 # Run alongside qms_demo.py to see state changes in real-time.
 #
 # Prerequisites:
-#   kubectl port-forward -n p8 svc/p8-postgres-rw 5489:5432 &
-#   # or docker-compose up (uses same port 5489)
+#   kubectl port-forward -n p8 svc/p8-postgres-rw 5488:5432 &
+#   # or docker-compose up (uses port 5488 for local dev)
 #
 # Usage:
 #   ./tests/.sim/qms_monitor.sh
@@ -26,7 +26,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 # ── config ──
-DB_URL="${P8_DATABASE_URL:-postgresql://p8:p8_dev@localhost:5489/p8}"
+DB_URL="${P8_DATABASE_URL:-postgresql://p8:p8_dev@localhost:5488/p8}"
 CTX="${KUBE_CONTEXT:-p8-w-1}"
 NS="${KUBE_NAMESPACE:-p8}"
 INTERVAL=2
@@ -70,7 +70,7 @@ header() { echo -e "\n${BOLD}${CYAN}  $1${RESET}"; echo -e "  ${DIM}$(printf '%.
 # ── verify DB connectivity ──
 if ! $PSQL -c "SELECT 1" >/dev/null 2>&1; then
   echo -e "${RED}Cannot connect to PostgreSQL at $DB_HOST:$DB_PORT/$DB_NAME${RESET}"
-  echo -e "${DIM}Start port-forward:  kubectl --context=$CTX -n $NS port-forward svc/p8-postgres-rw 5489:5432 &${RESET}"
+  echo -e "${DIM}Start port-forward:  kubectl --context=$CTX -n $NS port-forward svc/p8-postgres-rw 5488:5432 &${RESET}"
   exit 1
 fi
 

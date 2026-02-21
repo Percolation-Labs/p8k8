@@ -1,11 +1,11 @@
 -- =============================================================================
--- install_entities.sql — Entity tables, table schema seeds, embeddings tables
+-- 01_install_entities.sql — Entity tables, table schema seeds, embeddings tables
 --
 -- Runs FIRST. Creates all entity tables that the core installer depends on.
 -- Entity definitions can mutate across versions (via Alembic migrations)
 -- without affecting the core install.
 --
--- Table metadata lives in the schemas table with kind='table'. install.sql
+-- Table metadata lives in the schemas table with kind='table'. 02_install.sql
 -- reads these rows to dynamically apply triggers, indexes, and maintenance.
 -- Adding a new entity table = CREATE TABLE + seed_table_schemas() entry.
 --
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS storage_grants (
 -- ---------------------------------------------------------------------------
 -- seed_table_schemas() — register entity tables in schemas with kind='table'
 --
--- Each row's json_schema holds table metadata used by install.sql:
+-- Each row's json_schema holds table metadata used by 02_install.sql:
 --   has_kv_sync     — sync to kv_store (requires 'name' column)
 --   has_embeddings  — has companion embeddings_<table>
 --   embedding_field — field to embed (NULL = no embeddings)
@@ -566,7 +566,7 @@ CREATE TABLE IF NOT EXISTS redaction_mappings (
 
 -- ---------------------------------------------------------------------------
 -- Schema History (Time Machine)
--- Audit trail for schema changes. Trigger defined in install.sql.
+-- Audit trail for schema changes. Trigger defined in 02_install.sql.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS schema_timemachine (

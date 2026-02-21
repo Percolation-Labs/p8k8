@@ -63,7 +63,7 @@ Workers check quotas before processing and track usage after completion.
 
 | File | Purpose |
 |------|---------|
-| `sql/qms.sql` | Table, functions, indexes, pg_cron jobs |
+| `sql/03_qms.sql` | Table, functions, indexes, pg_cron jobs |
 | `services/queue.py` | QueueService — Python API |
 | `services/usage.py` | PlanLimits + UsageService |
 | `workers/processor.py` | TieredWorker with handler registry |

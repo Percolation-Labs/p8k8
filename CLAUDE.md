@@ -38,15 +38,17 @@ p8/
 │   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments)
 ├── settings.py
 sql/
-├── install_entities.sql  # Entity tables + embeddings tables
-└── install.sql           # KV store, REM functions, triggers, indexes
+├── 01_install_entities.sql  # Entity tables + embeddings tables
+├── 02_install.sql           # KV store, REM functions, triggers, indexes
+├── 03_qms.sql               # Queue management system
+└── 04_payments.sql          # Stripe payment tables
 manifests/                # K8s manifests for Hetzner deployment
 docker/                   # Dockerfile.pg18 for local dev postgres
 ```
 
 ## REM Query Modes
 
-All in `p8/services/database/`. See `sql/install.sql` for function signatures.
+All in `p8/services/database/`. See `sql/02_install.sql` for function signatures.
 
 | Mode | Function | Use Case |
 |------|----------|----------|
@@ -61,8 +63,10 @@ All in `p8/services/database/`. See `sql/install.sql` for function signatures.
 
 Two idempotent SQL scripts, run in order by `p8 migrate`:
 
-1. `sql/install_entities.sql` — extensions, entity tables, embeddings companion tables
-2. `sql/install.sql` — kv_store, embedding_queue, helper functions, REM functions, triggers, indexes, pg_cron jobs
+1. `sql/01_install_entities.sql` — extensions, entity tables, embeddings companion tables
+2. `sql/02_install.sql` — kv_store, embedding_queue, helper functions, REM functions, triggers, indexes, pg_cron jobs
+3. `sql/03_qms.sql` — queue management system (task_queue, claim/fail/complete, pg_cron)
+4. `sql/04_payments.sql` — Stripe payment tables
 
 ## CLI
 
@@ -112,8 +116,10 @@ docker buildx build --platform linux/amd64 \
 # Create namespace + SQL init configmap
 kubectl --context=p8-w-1 create namespace p8 --dry-run=client -o yaml | kubectl apply -f -
 kubectl --context=p8-w-1 -n p8 create configmap p8-postgres-init-sql \
-  --from-file=install_entities.sql=sql/install_entities.sql \
-  --from-file=install.sql=sql/install.sql \
+  --from-file=01_install_entities.sql=sql/01_install_entities.sql \
+  --from-file=02_install.sql=sql/02_install.sql \
+  --from-file=03_qms.sql=sql/03_qms.sql \
+  --from-file=04_payments.sql=sql/04_payments.sql \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Create secrets from .env (or edit overlays/hetzner/secrets.yaml)
@@ -124,7 +130,7 @@ kubectl --context=p8-w-1 -n p8 create secret generic p8-database-credentials \
 # Deploy the full stack
 kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
 
-# Local dev
-docker compose up -d
-P8_DATABASE_URL=postgresql://p8:p8_dev@localhost:5488/p8 uv run p8 serve
+# Local dev (docker-compose runs sql/ init scripts on first start)
+docker compose up -d --build
+uv run p8 serve
 ```

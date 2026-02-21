@@ -52,6 +52,10 @@ packages = ["p8"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "llm: tests that call a real LLM (skipped by default, run with -m llm)",
+]
+addopts = "-m 'not llm'"
 
 [tool.ruff]
 line-length = 100

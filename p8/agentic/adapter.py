@@ -299,11 +299,8 @@ class AgentAdapter:
             if server_name in local_servers:
                 server = mcp_server
                 if server is None:
-                    try:
-                        from p8.api.mcp_server import get_mcp_server
-                        server = get_mcp_server()
-                    except Exception:
-                        pass
+                    from p8.api.mcp_server import get_mcp_server
+                    server = get_mcp_server()
                 if server is None and mcp_url:
                     server = mcp_url
 
@@ -481,6 +478,7 @@ class AgentAdapter:
 
     async def _load_pai_messages(self, session_id: UUID) -> list[ModelMessage] | None:
         """Deserialize pydantic-ai messages from session metadata, or None."""
+        log = logging.getLogger(__name__)
         row = await self.db.fetchrow(
             "SELECT metadata FROM sessions WHERE id = $1 AND deleted_at IS NULL",
             session_id,
@@ -494,8 +492,9 @@ class AgentAdapter:
             raw_bytes = pai_raw if isinstance(pai_raw, bytes) else pai_raw.encode()
             messages = ModelMessagesTypeAdapter.validate_json(raw_bytes)
             return messages or None
-        except Exception:
-            return None
+        except Exception as e:
+            log.error("Failed to deserialize pai_messages for session %s: %s", session_id, e)
+            raise
 
     async def _load_session_moments(
         self, session_id: UUID, *, limit: int = 3, tenant_id: str | None = None,
@@ -616,7 +615,17 @@ class AgentAdapter:
 
         pai_json: str | None = None
         if all_messages:
-            pai_json = ModelMessagesTypeAdapter.dump_json(all_messages).decode()
+            # Filter out pure-system-prompt messages — they're regenerated
+            # each turn by the ContextInjector and storing them causes the
+            # pai_messages payload to grow unnecessarily.
+            filtered = [
+                msg for msg in all_messages
+                if not (
+                    isinstance(msg, ModelRequest)
+                    and all(isinstance(p, SystemPromptPart) for p in msg.parts)
+                )
+            ]
+            pai_json = ModelMessagesTypeAdapter.dump_json(filtered).decode()
 
         # Resolve encryption mode and encrypt content if tenant has encryption
         from uuid import uuid4

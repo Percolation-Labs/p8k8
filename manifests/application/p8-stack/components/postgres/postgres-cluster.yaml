@@ -21,9 +21,13 @@ spec:
       postInitApplicationSQLRefs:
         configMapRefs:
           - name: p8-postgres-init-sql
-            key: install_entities.sql
+            key: 01_install_entities.sql
           - name: p8-postgres-init-sql
-            key: install.sql
+            key: 02_install.sql
+          - name: p8-postgres-init-sql
+            key: 03_qms.sql
+          - name: p8-postgres-init-sql
+            key: 04_payments.sql
 
   # Storage — use cluster default storage class on Hetzner
   storage:

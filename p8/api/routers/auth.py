@@ -227,6 +227,14 @@ async def oauth_authorize(request: Request, provider: str):
 @router.post("/callback/{provider}")
 async def oauth_callback(request: Request, provider: str):
     """Handle OAuth callback, issue tokens, set cookies, redirect."""
+    # MCP OAuth flows use the same Google callback URL but go through
+    # /mcp/authorize (FastMCP), not /auth/authorize (authlib).
+    # Detect by checking if authlib stored state in the session.
+    state = request.query_params.get("state", "")
+    if state and not any(k.startswith(f"_state_{provider}_") for k in request.session):
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(f"/mcp/auth/callback/{provider}?{request.url.query}")
+
     oauth = _get_oauth(request)
     client = getattr(oauth, provider, None)
     if client is None:

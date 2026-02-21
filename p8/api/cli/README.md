@@ -23,7 +23,7 @@ p8 serve --workers 4            # production
 
 ### migrate
 
-Run database bootstrap scripts (`install_entities.sql` + `install.sql`).
+Run database bootstrap scripts (`sql/01..04`).
 
 ```bash
 p8 migrate
@@ -56,13 +56,52 @@ p8 upsert servers data/servers.yaml            # YAML → servers
 
 Convention:
 - **Markdown** → `ontologies` by default. One Ontology per file (name = filename stem, content = file body). Ontologies are small, within embedding limits — no chunking.
-- **Resources** support chunking by convention (file → chunks via content service). TODO when `services/content.py` lands.
+- **Resources** — files ingested via ContentService: extract text, chunk, create File + Resource entities with embeddings.
 - **JSON/YAML** → explicit table name required. Data validated against the model class.
 
 By default, rows are **public** (no tenant_id or user_id). Only use `--tenant-id` / `--user-id` if you need data to be private — tenant-scoped rows are encrypted at rest and filtered by tenant in all queries.
 
 ```bash
 p8 upsert docs/ --tenant-id acme     # private to tenant "acme"
+```
+
+#### Ingesting an ontology
+
+The ontology is a folder of small markdown files (< 500 tokens each) that form a linked knowledge graph. Each file becomes one `ontologies` row with `name = filename stem` and `content = file body`.
+
+```bash
+# Upsert the full ontology
+p8 upsert docs/ontology/
+
+# Upsert one category
+p8 upsert docs/ontology/rem-queries/
+
+# Upsert a single page
+p8 upsert docs/ontology/rem-queries/overview.md
+
+# Verify all internal links resolve
+p8 verify-links docs/ontology/
+```
+
+Files use `[text](target)` markdown links where the target is an entity key (another page's filename stem or any KV store key). After ingesting, pages are queryable via all REM modes — `LOOKUP` by name, `SEARCH` by meaning, `TRAVERSE` to follow links.
+
+Three ingestion paths:
+
+| Path | Input | Target table | Behavior |
+|------|-------|-------------|----------|
+| Markdown | `.md` file or folder | `ontologies` (default) | One entity per file, no chunking |
+| Structured | `.yaml` / `.json` file | Explicit (e.g., `schemas`) | Validated against model, bulk upsert |
+| Resources | Any other file/folder | `resources` | Extract text, chunk, create File + Resource entities |
+
+See `docs/ontology/README.md` for the full ontology design, link conventions, and category structure.
+
+### verify-links
+
+Verify that markdown links in ontology files resolve to valid targets.
+
+```bash
+p8 verify-links docs/ontology/              # check against local files
+p8 verify-links docs/ontology/ --db         # also check KV store
 ```
 
 ### schema
@@ -89,6 +128,35 @@ p8 chat --session <uuid>             # resume session
 p8 chat --user-id user-123           # with user context
 ```
 
+### mcp
+
+Run the MCP server over stdio transport for local development with Claude Code, Cursor, etc.
+
+```bash
+p8 mcp                               # starts stdio MCP server
+```
+
+Configure your IDE with `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "p8": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "p8", "mcp"],
+      "env": {
+        "P8_MCP_AUTH_ENABLED": "false"
+      }
+    }
+  }
+}
+```
+
+When `P8_MCP_AUTH_ENABLED=false`, the server binds to the Jamie Rivera test user
+(`user1@example.com`) so all tool calls work without explicit auth. See `api/README.md`
+for the full MCP setup and testing guide.
+
 ## Architecture
 
 ```
@@ -99,7 +167,11 @@ api/cli/
 ├── query.py        # p8 query
 ├── upsert.py       # p8 upsert
 ├── schema.py       # p8 schema list/get/delete/verify/register
-└── chat.py         # p8 chat
+├── chat.py         # p8 chat
+├── moments.py      # p8 moments / p8 moments timeline / p8 moments compact
+├── encryption.py   # p8 encryption status/configure/test
+├── mcp.py          # p8 mcp (stdio transport)
+└── verify_links.py # p8 verify-links
 ```
 
 ## Design
@@ -128,3 +200,5 @@ typer callback → asyncio.run(_run_*()) → bootstrap_services() → service me
 | `schema verify` | `verify_all(db)` |
 | `schema register` | `register_models(db)` |
 | `chat` | `ChatController.prepare()` + `ChatController.run_turn()` |
+| `mcp` | `bootstrap_services()` + `init_tools()` + `FastMCP.run_async(stdio)` |
+| `verify-links` | `utils.links.verify_links()` |

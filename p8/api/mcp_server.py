@@ -49,8 +49,8 @@ async def user_profile(user_id: str) -> str:
 
 
 def _create_auth(settings: Settings):
-    """Create Google OAuth provider if credentials are configured."""
-    if not settings.google_client_id:
+    """Create Google OAuth provider if credentials are configured and auth is enabled."""
+    if not settings.mcp_auth_enabled or not settings.google_client_id:
         return None
 
     from fastmcp.server.auth.providers.google import GoogleProvider
@@ -58,7 +58,10 @@ def _create_auth(settings: Settings):
     return GoogleProvider(
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
-        base_url=f"{settings.api_base_url}/mcp",
+        base_url=settings.api_base_url,
+        issuer_url=settings.api_base_url,
+        redirect_path="/auth/callback/google",
+        require_authorization_consent=False,
     )
 
 

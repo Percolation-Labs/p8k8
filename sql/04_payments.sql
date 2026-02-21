@@ -1,10 +1,10 @@
 -- =============================================================================
--- payments.sql — Stripe payment tables
+-- 04_payments.sql — Stripe payment tables
 --
 -- Three tables for Stripe integration: customer mapping, payment intent
 -- tracking, and idempotent webhook event log.
 --
--- Run AFTER install_entities.sql (depends on uuid-ossp extension).
+-- Run AFTER 01_install_entities.sql (depends on uuid-ossp extension).
 -- =============================================================================
 
 

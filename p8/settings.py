@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         "REM is a multi-modal knowledge base. Use `search` for queries, "
         "`action` to emit events, and `ask_agent` for delegation."
     )
+    mcp_auth_enabled: bool = True  # set P8_MCP_AUTH_ENABLED=false to disable OAuth
 
     # Encryption / KMS
     system_tenant_id: str = "__system__"

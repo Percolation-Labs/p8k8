@@ -1,7 +1,7 @@
 -- =============================================================================
--- qms.sql — Queue Management System: task_queue table, functions, indexes, cron
+-- 03_qms.sql — Queue Management System: task_queue table, functions, indexes, cron
 --
--- Runs AFTER install.sql. Provides a unified background processing queue
+-- Runs AFTER 02_install.sql. Provides a unified background processing queue
 -- with tiered workers (micro/small/medium/large), retry with exponential
 -- backoff, and pg_cron scheduled enqueuing.
 --

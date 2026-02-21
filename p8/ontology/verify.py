@@ -58,7 +58,7 @@ def _expected_triggers(table: str, has_kv: bool, has_embed: bool) -> list[str]:
 def _derive_kv_summary(model: type[CoreModel]) -> str | None:
     """Derive the kv_summary_expr from model field declarations.
 
-    Follows the same logic as seed_table_schemas() in install_entities.sql:
+    Follows the same logic as seed_table_schemas() in 01_install_entities.sql:
     - Encrypted content → "name" (KV stores name only, not ciphertext)
     - Has content + description + name → COALESCE(content, description, name)
     - Has description + name → COALESCE(description, name)

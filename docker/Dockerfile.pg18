@@ -1,6 +1,6 @@
-FROM ghcr.io/cloudnative-pg/postgresql:18-standard-bookworm
-
-USER root
+# Local dev + test Postgres with pgvector, pg_cron, pg_net.
+# For CNPG/K8s, use the CNPG base image variant instead.
+FROM postgres:18-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git postgresql-server-dev-18 ca-certificates \
@@ -25,7 +25,7 @@ RUN apt-get purge -y build-essential git postgresql-server-dev-18 ca-certificate
     libcurl4-openssl-dev \
     && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-COPY sql/install_entities.sql /docker-entrypoint-initdb.d/01-entities.sql
-COPY sql/install.sql /docker-entrypoint-initdb.d/02-core.sql
-
-USER 26
+COPY sql/01_install_entities.sql /docker-entrypoint-initdb.d/01_install_entities.sql
+COPY sql/02_install.sql          /docker-entrypoint-initdb.d/02_install.sql
+COPY sql/03_qms.sql              /docker-entrypoint-initdb.d/03_qms.sql
+COPY sql/04_payments.sql         /docker-entrypoint-initdb.d/04_payments.sql

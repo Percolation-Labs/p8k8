@@ -1,18 +1,11 @@
-"""Tests for ontology/verify.py — DDL verification and model registration.
-
-Unit tests mock the database; integration tests require a live postgres.
-"""
+"""Unit tests for ontology/verify.py — DDL verification and model registration (all mocked, no DB)."""
 
 from __future__ import annotations
 
 import json
-import os
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from p8.ontology.types import ALL_ENTITY_TYPES, KV_TABLES, Schema, Server
 from p8.ontology.verify import (
@@ -154,7 +147,6 @@ class TestVerifyModelMocked:
     @pytest.mark.asyncio
     async def test_missing_column(self):
         """Model declares columns not in DB → error."""
-        # Give DB only CoreModel fields, missing Schema-specific ones
         db = _make_mock_db(
             columns=["id", "created_at", "updated_at"],
             triggers=["trg_schemas_updated_at", "trg_schemas_kv", "trg_schemas_embed", "trg_schemas_timemachine"],
@@ -162,7 +154,6 @@ class TestVerifyModelMocked:
         issues = await verify_model(Schema, db)
         missing = [i for i in issues if i.check == "missing_column"]
         assert len(missing) > 0
-        # Should detect 'name', 'kind', etc.
         missing_names = {i.message.split("'")[1] for i in missing}
         assert "name" in missing_names
         assert "kind" in missing_names
@@ -355,46 +346,3 @@ class TestRegisterCLI:
             result = runner.invoke(app, ["schema", "register"])
         assert result.exit_code == 0
         assert "Registered 13 model(s)" in result.output
-
-
-# ============================================================================
-# Integration tests — require live DB
-# Run with: pytest tests/test_verify.py -k integration
-# ============================================================================
-
-
-@pytest.fixture(autouse=True)
-async def _clean(clean_db):
-    yield
-
-
-class TestVerifyIntegration:
-    """Integration tests — require a running postgres with p8 schema."""
-
-    @pytest.mark.asyncio
-    async def test_all_models_pass_on_clean_db(self, db):
-        """All core models should verify clean against a freshly migrated DB."""
-        issues = await verify_all(db)
-        errors = [i for i in issues if i.level == "error"]
-        if errors:
-            for e in errors:
-                print(f"  [{e.level}] {e.table}: {e.check} — {e.message}")
-        assert len(errors) == 0
-
-    @pytest.mark.asyncio
-    async def test_register_models_idempotent(self, db):
-        """register_models should upsert all 13 models without error."""
-        count = await register_models(db)
-        assert count == len(ALL_ENTITY_TYPES)
-
-        # Running again should produce the same count (idempotent)
-        count2 = await register_models(db)
-        assert count2 == count
-
-    @pytest.mark.asyncio
-    async def test_register_then_verify(self, db):
-        """After register_models, verify should report 0 schema metadata errors."""
-        await register_models(db)
-        issues = await verify_all(db)
-        metadata_errors = [i for i in issues if i.check == "schema_metadata_mismatch"]
-        assert len(metadata_errors) == 0

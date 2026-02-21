@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from p8.services.database import Database  # noqa: E402
-from p8.services.database.query_engine import RemQuery, RemQueryEngine, RemQueryParser  # noqa: E402
-from p8.services.database.rem_prompt import REM_GRAMMAR, build_rem_prompt  # noqa: E402
-from p8.settings import Settings  # noqa: E402
+from p8.services.database import Database
+from p8.services.database.query_engine import RemQuery, RemQueryEngine, RemQueryParser
+from p8.services.database.rem_prompt import REM_GRAMMAR, build_rem_prompt
+from p8.settings import Settings
 
 
 # ============================================================================

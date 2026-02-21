@@ -1,17 +1,12 @@
-"""Tests for CLI commands — query, upsert, chat."""
+"""Unit tests for CLI commands — query, upsert, chat (all mocked, no DB)."""
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from typer.testing import CliRunner
 
@@ -26,7 +21,7 @@ runner = CliRunner()
 
 
 def _mock_services():
-    """Create mock services tuple matching async_services() yield (5-tuple)."""
+    """Create mock services tuple matching async_services() yield (6-tuple)."""
     db = MagicMock()
     db.connect = AsyncMock()
     db.close = AsyncMock()
@@ -352,8 +347,6 @@ class TestChatCLI:
         mock_adapter = MagicMock()
         mock_adapter.schema.name = "parent-agent"
 
-        # Simulate a delegation response: the assistant text includes
-        # the child agent's response (as would happen after ask_agent)
         mock_ctx = ChatContext(
             adapter=mock_adapter,
             session_id=UUID("00000000-0000-0000-0000-000000000003"),
@@ -384,52 +377,3 @@ class TestChatCLI:
             )
         assert result.exit_code == 0
         assert "answer is 42" in result.output
-
-
-# ============================================================================
-# Integration tests (require live DB) — run with: pytest tests/test_cli.py -k integration
-# ============================================================================
-
-
-@pytest.fixture(autouse=True)
-async def _clean(clean_db):
-    yield
-
-
-class TestQueryIntegration:
-    """Integration tests — require a running postgres with p8 schema."""
-
-    @pytest.mark.asyncio
-    async def test_query_roundtrip(self, db):
-        """Insert data, then verify rem_query works (used by CLI)."""
-        from tests.conftest import det_id
-        sid = det_id("schemas", "cli-test-entity")
-        await db.execute(
-            "INSERT INTO schemas (id, name, kind, description, content, json_schema)"
-            " VALUES ($1, 'cli-test-entity', 'model',"
-            " 'A CLI test', 'test content', '{}'::jsonb)"
-            " ON CONFLICT (id) DO UPDATE SET description = EXCLUDED.description",
-            sid,
-        )
-        results = await db.rem_query('LOOKUP "cli-test-entity"')
-        assert len(results) >= 1
-        assert any(r["data"]["key"] == "cli-test-entity" for r in results)
-
-    @pytest.mark.asyncio
-    async def test_fuzzy_roundtrip(self, db):
-        from tests.conftest import det_id
-        sid = det_id("schemas", "cli-fuzzy-test")
-        await db.execute(
-            "INSERT INTO schemas (id, name, kind, description, content, json_schema)"
-            " VALUES ($1, 'cli-fuzzy-test', 'model',"
-            " 'A fuzzy test', 'fuzzy content', '{}'::jsonb)"
-            " ON CONFLICT (id) DO UPDATE SET description = EXCLUDED.description",
-            sid,
-        )
-        results = await db.rem_query('FUZZY "cli fuzzy" LIMIT 5')
-        assert isinstance(results, list)
-
-    @pytest.mark.asyncio
-    async def test_sql_roundtrip(self, db):
-        results = await db.rem_query("SELECT name FROM schemas LIMIT 3")
-        assert isinstance(results, list)

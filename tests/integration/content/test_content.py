@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from p8.services.content import ContentService, IngestResult, load_structured
 from p8.settings import Settings

@@ -26,7 +26,7 @@ from p8.ontology.types import Moment, Resource
 from p8.services.repository import Repository
 from p8.workers.handlers.dreaming import DreamingHandler
 
-from tests.dreaming.fixtures import (
+from tests.integration.dreaming.fixtures import (
     MOMENT_ARCH,
     MOMENT_ML,
     RESOURCE_ARCH,
@@ -68,6 +68,7 @@ async def _setup(clean_db, db, encryption):
     yield
 
 
+@pytest.mark.llm
 async def test_dreaming_agent_e2e(db, encryption):
     """Full pipeline: load context → run agent → verify session + dream moments."""
     handler = DreamingHandler()

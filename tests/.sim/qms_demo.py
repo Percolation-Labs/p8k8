@@ -7,13 +7,13 @@ enqueues tasks, and watches state transitions in real-time.
 
 Usage:
     # Ensure port-forward or docker-compose is running
-    kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5489:5432 &
+    kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5488:5432 &
 
     # Run demo
     python tests/.sim/qms_demo.py
 
     # Or with custom DB URL
-    P8_DATABASE_URL=postgresql://user:pass@localhost:5489/p8db python tests/.sim/qms_demo.py
+    P8_DATABASE_URL=postgresql://user:pass@localhost:5488/p8db python tests/.sim/qms_demo.py
 
 Environment:
     Reads from .env in project root (P8_DATABASE_URL).
@@ -45,7 +45,7 @@ except ImportError:
     print("pip install asyncpg  (required for this demo)")
     sys.exit(1)
 
-_raw_url = os.environ.get("P8_DATABASE_URL", "postgresql://p8:p8_dev@localhost:5489/p8")
+_raw_url = os.environ.get("P8_DATABASE_URL", "postgresql://p8:p8_dev@localhost:5488/p8")
 # Disable SSL for port-forwarded connections (kubectl tunnel is already encrypted)
 DATABASE_URL = _raw_url + ("&" if "?" in _raw_url else "?") + "sslmode=disable"
 
@@ -475,11 +475,11 @@ Two pg_cron jobs run inside PostgreSQL (no K8s CronJobs needed):
             for j in jobs:
                 print(f"  {j['jobid']:<4} {j['jobname']:<25} {j['schedule']:<14} {j['command'][:50]}")
         else:
-            print(f"  {YELLOW}No pg_cron jobs found — run sql/qms.sql to install{RESET}")
+            print(f"  {YELLOW}No pg_cron jobs found — run sql/03_qms.sql to install{RESET}")
     except asyncpg.InsufficientPrivilegeError:
         print(f"  {DIM}(cron.job requires superuser — connect as postgres to view){RESET}")
         explain("""
-Jobs are installed via sql/qms.sql:
+Jobs are installed via sql/03_qms.sql:
   cron.schedule('qms-recover-stale',   '*/5 * * * *', 'SELECT recover_stale_tasks(15)')
   cron.schedule('qms-dreaming-enqueue', '0 * * * *',  'SELECT enqueue_dreaming_tasks()')
 """)

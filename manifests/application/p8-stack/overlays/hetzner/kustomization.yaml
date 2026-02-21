@@ -10,8 +10,10 @@
 #
 # Generate postgres init ConfigMap first:
 #   kubectl create configmap p8-postgres-init-sql \
-#     --from-file=install_entities.sql=sql/install_entities.sql \
-#     --from-file=install.sql=sql/install.sql \
+#     --from-file=01_install_entities.sql=sql/01_install_entities.sql \
+#     --from-file=02_install.sql=sql/02_install.sql \
+#     --from-file=03_qms.sql=sql/03_qms.sql \
+#     --from-file=04_payments.sql=sql/04_payments.sql \
 #     -n p8 --dry-run=client -o yaml | kubectl apply -f -
 
 apiVersion: kustomize.config.k8s.io/v1beta1

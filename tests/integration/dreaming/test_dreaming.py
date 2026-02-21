@@ -13,7 +13,7 @@ import pytest
 from p8.services.encryption import EncryptionService
 from p8.workers.handlers.dreaming import DATA_TOKEN_BUDGET, DreamingHandler
 
-from tests.dreaming.fixtures import (
+from tests.integration.dreaming.fixtures import (
     TEST_USER_ID,
     setup_dreaming_fixtures,
 )

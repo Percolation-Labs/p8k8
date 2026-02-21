@@ -11,7 +11,7 @@ from p8.api.tools.save_moments import save_moments
 from p8.ontology.types import Moment, Resource
 from p8.services.repository import Repository
 
-from tests.dreaming.fixtures import (
+from tests.integration.dreaming.fixtures import (
     RESOURCE_ML,
     TEST_USER_ID,
     setup_dreaming_fixtures,

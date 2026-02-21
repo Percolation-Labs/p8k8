@@ -2,6 +2,55 @@
 
 HTTP layer (FastAPI) and CLI (Typer). Both are thin — all business logic lives in `services/`.
 
+## Getting started (cold start)
+
+```bash
+# 1. Install dependencies
+uv sync
+
+# 2. Create .env (copy from .env.example and set your OpenAI key)
+cp .env.example .env
+# Then edit .env and set:
+#   P8_OPENAI_API_KEY=sk-...   ← REQUIRED for chat (LLM) and embeddings
+
+# 3. Build and start Postgres + OpenBao (KMS)
+#    Docker init runs all sql/ scripts automatically (no manual migrate needed)
+docker compose up -d --build
+```
+
+**Critical env vars:**
+
+| Variable | Required | Why |
+|----------|----------|-----|
+| `P8_OPENAI_API_KEY` | Yes | Powers LLM chat (GPT-4.1) and embeddings (text-embedding-3-small) |
+| `P8_DATABASE_URL` | No | Defaults to `postgresql://p8:p8_dev@localhost:5488/p8` (matches docker-compose) |
+| `P8_KMS_PROVIDER` | No | Defaults to `local` (file-based master key at `.keys/.dev-master.key`) |
+
+Everything else is optional for local dev. See `.env.example` for OAuth, push notifications, S3, Stripe, etc.
+
+```bash
+# 4. Start the API server
+uv run p8 serve --reload
+
+# 5. Verify it works
+curl http://localhost:8000/health
+# → {"status":"ok"}
+
+# 6. Chat with the default agent
+uv run p8 chat
+# or via API (AG-UI protocol):
+curl -N -X POST http://localhost:8000/chat/test-1 \
+  -H "Content-Type: application/json" \
+  -H "x-agent-schema-name: general" \
+  -d '{
+    "threadId": "test-1", "runId": "run-1",
+    "messages": [{"id": "msg-1", "role": "user", "content": "hello"}],
+    "tools": [], "context": [], "forwardedProps": {}, "state": null
+  }'
+```
+
+`p8 migrate` is available for applying schema changes to an existing database, but docker-compose handles init from scratch.
+
 ## Starting the server
 
 ```bash
@@ -12,7 +61,7 @@ p8 serve --port 9000 --reload   # dev mode with auto-reload
 Or directly via uvicorn:
 
 ```bash
-uvicorn api.main:app --reload
+uvicorn p8.api.main:app --reload
 ```
 
 ## Endpoints
@@ -31,7 +80,7 @@ Streaming chat with AG-UI protocol. Returns an SSE stream of typed events.
 | `x-user-name` | No | User display name for context injection |
 | `Accept` | No | `text/event-stream` (default) |
 
-**Body:** AG-UI `RunAgentInput` — `thread_id`, `run_id`, `messages`, `tools`, `context`, `state`.
+**Body:** AG-UI `RunAgentInput` — `threadId`, `runId`, `messages`, `tools`, `context`, `state`.
 
 #### Basic chat
 
@@ -43,11 +92,11 @@ curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "x-agent-schema-name: sample-agent" \
   -H "Accept: text/event-stream" \
   -d "{
-    \"thread_id\": \"${CHAT_ID}\",
-    \"run_id\": \"$(uuidgen)\",
-    \"state\": {},
+    \"threadId\": \"${CHAT_ID}\",
+    \"runId\": \"$(uuidgen)\",
+    \"state\": null,
     \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"Hello\"}],
-    \"tools\": [], \"context\": [], \"forwarded_props\": {}
+    \"tools\": [], \"context\": [], \"forwardedProps\": {}
   }"
 ```
 
@@ -92,15 +141,15 @@ curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   -H "x-agent-schema-name: sample-agent" \
   -H "Accept: text/event-stream" \
   -d "{
-    \"thread_id\": \"${CHAT_ID}\",
-    \"run_id\": \"$(uuidgen)\",
-    \"state\": {},
+    \"threadId\": \"${CHAT_ID}\",
+    \"runId\": \"$(uuidgen)\",
+    \"state\": null,
     \"messages\": [{
       \"id\": \"$(uuidgen)\",
       \"role\": \"user\",
       \"content\": \"Use the ask_agent tool to delegate to echo-child: say hello\"
     }],
-    \"tools\": [], \"context\": [], \"forwarded_props\": {}
+    \"tools\": [], \"context\": [], \"forwardedProps\": {}
   }"
 ```
 
@@ -142,18 +191,18 @@ data: {"type":"RUN_FINISHED", ...}
 **Architecture:**
 
 ```
-Client ←SSE— StreamingResponse ← _merged_event_stream()
-                                    ├── AGUIAdapter.run_stream()  → AG-UI events (parent)
-                                    └── child_event_sink (Queue)  → CustomEvent (child)
+Client <-SSE- StreamingResponse <- _merged_event_stream()
+                                    |-- AGUIAdapter.run_stream()  -> AG-UI events (parent)
+                                    +-- child_event_sink (Queue)  -> CustomEvent (child)
                                         via asyncio.wait(FIRST_COMPLETED)
 
 ask_agent() [called by parent during tool execution]:
-    ├── get_child_event_sink()           # ContextVar: reads the Queue
-    └── agent.iter(prompt)               # child agent (pydantic-ai)
-          ├── ModelRequestNode.stream()  → PartDeltaEvent
-          │     → queue.put({"type":"child_content", ...})   # real-time!
-          └── CallToolsNode.stream()     → FunctionToolCallEvent
-                → queue.put({"type":"child_tool_start/result", ...})
+    |-- get_child_event_sink()           # ContextVar: reads the Queue
+    +-- agent.iter(prompt)               # child agent (pydantic-ai)
+          |-- ModelRequestNode.stream()  -> PartDeltaEvent
+          |     -> queue.put({"type":"child_content", ...})   # real-time!
+          +-- CallToolsNode.stream()     -> FunctionToolCallEvent
+                -> queue.put({"type":"child_tool_start/result", ...})
 ```
 
 Key: child events arrive **during** tool execution (not buffered until after). The
@@ -208,13 +257,169 @@ curl http://localhost:8000/schemas/{schema_id}
 curl -X DELETE http://localhost:8000/schemas/{schema_id}
 ```
 
-### Content — `POST /content/`
+### Content — `/content/`
 
 ```bash
-# Upload a file for extraction + chunking
+# Upload a file for extraction + chunking (inline or queued based on size)
 curl -X POST http://localhost:8000/content/ \
   -F "file=@document.pdf" \
   -F "category=docs"
+
+# Download a file by ID
+curl http://localhost:8000/content/files/{file_id} -o output.pdf
+```
+
+### Moments — `/moments/`
+
+```bash
+# Paginated feed with virtual daily summaries
+curl "http://localhost:8000/moments/feed?limit=20"
+curl "http://localhost:8000/moments/feed?before_date=2025-02-18"
+
+# Today's summary
+curl http://localhost:8000/moments/today
+
+# Session timeline (interleaved messages + moments)
+curl http://localhost:8000/moments/session/{session_id}
+
+# Get single moment
+curl http://localhost:8000/moments/{moment_id}
+
+# List with filters
+curl "http://localhost:8000/moments/?moment_type=session_chunk&limit=50"
+```
+
+### Auth — `/auth/`
+
+```bash
+# Create tenant
+curl -X POST http://localhost:8000/auth/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"name": "acme", "encryption_mode": "platform"}'
+
+# Get tenant
+curl http://localhost:8000/auth/tenants/{tenant_id}
+
+# Configure encryption mode
+curl -X POST http://localhost:8000/auth/tenants/{tenant_id}/encryption \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "client"}'
+
+# Create user under tenant
+curl -X POST http://localhost:8000/auth/tenants/{tenant_id}/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@acme.com"}'
+
+# List users in tenant
+curl http://localhost:8000/auth/tenants/{tenant_id}/users
+
+# One-step signup (personal tenant + user)
+curl -X POST http://localhost:8000/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+
+# OAuth — redirect to provider
+curl http://localhost:8000/auth/authorize?provider=google
+curl http://localhost:8000/auth/authorize?provider=apple
+
+# Magic link (always 200 — no email leak)
+curl -X POST http://localhost:8000/auth/magic-link \
+  -H "Content-Type: application/json" \
+  -d '{"email": "alice@example.com"}'
+
+# Token refresh (from body or cookie)
+curl -X POST http://localhost:8000/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "..."}'
+
+# Revoke refresh token
+curl -X POST http://localhost:8000/auth/revoke \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "..."}'
+
+# Current user profile (JWT required)
+curl http://localhost:8000/auth/me -H "Authorization: Bearer ..."
+
+# Update profile (register device tokens, change name, etc.)
+curl -X PATCH http://localhost:8000/auth/me \
+  -H "Authorization: Bearer ..." \
+  -H "Content-Type: application/json" \
+  -d '{"devices": [{"platform": "apns", "token": "...", "device_name": "iPhone"}]}'
+
+# Logout (clears cookies, revokes refresh)
+curl -X POST http://localhost:8000/auth/logout
+```
+
+Mobile OAuth (browser-based, redirects to `remapp://` deep link):
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /auth/mobile/authorize/{provider}` | Initiate OAuth from mobile app |
+| `GET/POST /auth/mobile/callback/{provider}` | Handle callback, redirect to app with tokens |
+| `GET /auth/mobile/authorize/google-drive` | Initiate Google Drive scope OAuth |
+| `GET/POST /auth/mobile/callback/google-drive` | Store Drive refresh token |
+| `POST /auth/mobile/google/drive-disconnect` | Revoke stored Drive grant |
+| `GET /auth/mobile/google/drive-status` | Check if user has active Drive grant |
+
+### Billing — `/billing/`
+
+Stripe integration (JWT auth, no API key). Only available when `P8_STRIPE_SECRET_KEY` is set.
+
+```bash
+# Subscription status
+curl http://localhost:8000/billing/subscription -H "Authorization: Bearer ..."
+
+# Usage across metered resources
+curl http://localhost:8000/billing/usage -H "Authorization: Bearer ..."
+
+# Create checkout session
+curl -X POST http://localhost:8000/billing/checkout \
+  -H "Authorization: Bearer ..." \
+  -H "Content-Type: application/json" \
+  -d '{"plan_id": "pro"}'
+
+# Create add-on checkout (e.g. chat token pack)
+curl -X POST http://localhost:8000/billing/addon \
+  -H "Authorization: Bearer ..." \
+  -H "Content-Type: application/json" \
+  -d '{"addon_id": "chat_tokens_50k"}'
+
+# Billing portal
+curl -X POST http://localhost:8000/billing/portal -H "Authorization: Bearer ..."
+
+# Stripe webhook (signature-verified, no auth)
+# POST /billing/webhooks — called by Stripe
+```
+
+### Share — `/share/`
+
+Share moments between users via graph_edges.
+
+```bash
+# Share a moment with a user
+curl -X POST http://localhost:8000/share/ \
+  -H "Content-Type: application/json" \
+  -d '{"moment_id": "...", "target_user_id": "..."}'
+
+# Unshare
+curl -X DELETE http://localhost:8000/share/ \
+  -H "Content-Type: application/json" \
+  -d '{"moment_id": "...", "target_user_id": "..."}'
+
+# List who a moment is shared with
+curl http://localhost:8000/share/moment/{moment_id}
+
+# List moments shared with me
+curl "http://localhost:8000/share/with-me?user_id=..."
+```
+
+### Notifications — `/notifications/`
+
+```bash
+# Send push notification to users (called by pg_cron reminders via pg_net)
+curl -X POST http://localhost:8000/notifications/send \
+  -H "Content-Type: application/json" \
+  -d '{"user_ids": ["..."], "title": "Reminder", "body": "Take your vitamins"}'
 ```
 
 ### Embeddings — `/embeddings/`
@@ -229,33 +434,99 @@ curl -X POST http://localhost:8000/embeddings/generate \
   -d '{"texts": ["hello world", "database migration"]}'
 ```
 
-### Auth — `/auth/`
-
-```bash
-# Create tenant
-curl -X POST http://localhost:8000/auth/tenants \
-  -d '{"name": "acme", "encryption_mode": "platform"}'
-
-# Create user under tenant
-curl -X POST http://localhost:8000/auth/tenants/{tenant_id}/users \
-  -d '{"name": "Alice", "email": "alice@acme.com"}'
-
-# One-step signup (personal tenant + user)
-curl -X POST http://localhost:8000/auth/signup \
-  -d '{"name": "Alice", "email": "alice@example.com"}'
-```
-
 ### Admin — `/admin/`
 
 ```bash
 curl http://localhost:8000/admin/health
 curl -X POST http://localhost:8000/admin/rebuild-kv
 curl http://localhost:8000/admin/queue
+curl http://localhost:8000/admin/queue/stats
 ```
 
-### MCP — `/mcp`
+### MCP — `/mcp` (HTTP) / `p8 mcp` (stdio)
 
-FastMCP server (Streamable HTTP). Tools: `search`, `action`, `ask_agent`. Resource: `user://profile/{user_id}`.
+FastMCP server exposing p8 tools and resources. Two transports:
+
+| Transport | Endpoint | Use case |
+|-----------|----------|----------|
+| Streamable HTTP | `/mcp` (mounted on FastAPI) | Production, remote clients |
+| stdio | `p8 mcp` | Local dev, Claude Code, IDE integrations |
+
+**Tools:** `search`, `action`, `ask_agent`, `remind_me`, `save_moments`, `get_moments`
+**Resources:** `user://profile/{user_id}`
+
+Google OAuth enabled when `P8_GOOGLE_CLIENT_ID` is configured and `P8_MCP_AUTH_ENABLED=true` (default).
+
+#### Local MCP setup (Claude Code / Cursor / etc.)
+
+1. Make sure Postgres is running:
+
+```bash
+docker compose up -d --build
+```
+
+2. Create `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "p8": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "p8", "mcp"],
+      "env": {
+        "P8_MCP_AUTH_ENABLED": "false"
+      }
+    }
+  }
+}
+```
+
+Setting `P8_MCP_AUTH_ENABLED=false` disables OAuth and automatically binds tools to the
+Jamie Rivera test user (`user1@example.com`). This means all tool calls (search, get_moments,
+save_moments, etc.) operate in that user's scope without needing to pass `user_id` explicitly.
+
+3. Restart your MCP client (e.g. `/mcp` in Claude Code) to pick up the config.
+
+#### Seeding test data
+
+The Jamie Rivera fixture provides a complete 7-day dataset (sessions, messages, moments, files):
+
+```bash
+uv run python tests/data/fixtures/jamie_rivera/seed.py --mode db
+```
+
+#### Testing tools
+
+Once connected, test each tool:
+
+```
+# REM queries
+search("FUZZY p8")
+search("LOOKUP jamie-caching-adr-note")
+search("SEARCH machine learning FROM ontologies LIMIT 5")
+
+# Moments
+get_moments(limit=5)
+get_moments(moment_type="voice_note", limit=3)
+save_moments(moments=[{"name": "test-moment", "summary": "A test", "topic_tags": ["test"]}])
+
+# Events
+action(type="observation", payload={"confidence": 0.9, "reasoning": "test"})
+
+# Agent delegation
+ask_agent(agent_name="general", input_text="hello")
+
+# Reminders (requires pg_cron)
+remind_me(name="test", description="Test reminder", crontab="0 9 * * *")
+```
+
+Encrypted fields (e.g. moment summaries) will appear as base64 ciphertext in results —
+this confirms the encryption pipeline is working correctly.
+
+### Health — `GET /health`
+
+Root health check (matches Dockerfile HEALTHCHECK path). No auth required.
 
 ## API / CLI parity
 
@@ -264,7 +535,7 @@ Every operation is available through both interfaces. Both call the same service
 | Operation | API | CLI |
 |-----------|-----|-----|
 | REM query | `POST /query/raw` | `p8 query '<query>'` |
-| Structured query | `POST /query/` | `p8 query '<query>'` (parsed by RemQueryEngine) |
+| Structured query | `POST /query/` | `p8 query '<query>'` |
 | Schema list | `GET /schemas/` | `p8 schema list` |
 | Schema get | `GET /schemas/{id}` | `p8 schema get <id>` |
 | Schema upsert | `POST /schemas/` | `p8 upsert schemas <file>` |
@@ -274,11 +545,19 @@ Every operation is available through both interfaces. Both call the same service
 | Bulk upsert | `POST /schemas/` (per item) | `p8 upsert <table> <file>` |
 | Markdown ingest | — | `p8 upsert <file.md>` |
 | Content upload | `POST /content/` | `p8 upsert resources <file>` |
+| File download | `GET /content/files/{id}` | — (use API) |
+| Moments feed | `GET /moments/feed` | `p8 moments` |
+| Session timeline | `GET /moments/session/{id}` | `p8 moments timeline <id>` |
+| Moment compaction | — | `p8 moments compact <id>` |
+| Chat | `POST /chat/{id}` | `p8 chat [--agent name] [--debug]` |
+| Encryption status | `GET /auth/tenants/{id}` | `p8 encryption status` |
+| Encryption config | `POST /auth/tenants/{id}/encryption` | `p8 encryption configure <id>` |
+| Encryption test | — | `p8 encryption test` |
 | Embed queue | `POST /embeddings/process` | — (use API) |
 | Embed generate | `POST /embeddings/generate` | — (use API) |
-| Chat | `POST /chat/{id}` | `p8 chat` |
+| MCP server | `/mcp` (Streamable HTTP) | `p8 mcp` (stdio) |
 | Migrate | — | `p8 migrate` |
-| Serve | `uvicorn api.main:app` | `p8 serve` |
+| Serve | `uvicorn p8.api.main:app` | `p8 serve` |
 | Health | `GET /admin/health` | — (use API) |
 | Rebuild KV | `POST /admin/rebuild-kv` | — (use API) |
 
@@ -287,31 +566,42 @@ Every operation is available through both interfaces. Both call the same service
 ```
 api/
 ├── main.py             # FastAPI app factory + lifespan (delegates to services/bootstrap.py)
-├── deps.py             # FastAPI Depends() helpers (get_db, get_encryption)
-├── mcp_server.py       # FastMCP server: search, action, ask_agent
+├── deps.py             # FastAPI Depends() helpers (get_db, get_encryption, get_current_user)
+├── mcp_server.py       # FastMCP server: search, action, ask_agent, remind_me, save_moments, get_moments
 ├── controllers/
 │   └── chat.py         # ChatController — shared logic for API + CLI chat
 ├── cli/                # Typer CLI — thin wrappers over services
 │   ├── __init__.py     # App + subcommand registration
+│   ├── __main__.py     # python -m p8.api.cli entry point
 │   ├── serve.py        # p8 serve
 │   ├── migrate.py      # p8 migrate
 │   ├── query.py        # p8 query
 │   ├── upsert.py       # p8 upsert
 │   ├── schema.py       # p8 schema list/get/delete/verify/register
-│   └── chat.py         # p8 chat
+│   ├── chat.py         # p8 chat [--agent] [--debug]
+│   ├── moments.py      # p8 moments / p8 moments timeline / p8 moments compact
+│   ├── encryption.py   # p8 encryption status/configure/test/test-isolation
+│   └── mcp.py          # p8 mcp (stdio transport)
 ├── routers/            # FastAPI routers — thin wrappers over services
-│   ├── chat.py         # /chat/{chat_id}
+│   ├── chat.py         # /chat/{chat_id} — AG-UI streaming + child delegation
 │   ├── query.py        # /query/, /query/raw
 │   ├── schemas.py      # /schemas/ CRUD
-│   ├── content.py      # /content/ file upload
-│   ├── admin.py        # /admin/health, rebuild-kv, queue
-│   ├── auth.py         # /auth/ tenant & user management
+│   ├── content.py      # /content/ file upload + /content/files/{id} download
+│   ├── moments.py      # /moments/ feed, today, timeline, list, get
+│   ├── auth.py         # /auth/ tenants, users, OAuth, magic link, sessions
+│   ├── payments.py     # /billing/ Stripe subscription, checkout, portal, webhooks
+│   ├── share.py        # /share/ moment sharing via graph_edges
+│   ├── notifications.py # /notifications/ push notification relay
+│   ├── admin.py        # /admin/ health, rebuild-kv, queue, queue/stats
 │   └── embeddings.py   # /embeddings/ process & generate
 └── tools/              # MCP tool implementations
     ├── __init__.py     # Module-level state (init_tools)
-    ├── search.py       # search tool
-    ├── action.py       # action tool
-    └── ask_agent.py    # ask_agent tool (delegation)
+    ├── search.py       # search — REM query execution
+    ├── action.py       # action — typed event emission
+    ├── ask_agent.py    # ask_agent — multi-agent delegation
+    ├── remind_me.py    # remind_me — scheduled push reminders via pg_cron
+    ├── save_moments.py # save_moments — create moments
+    └── get_moments.py  # get_moments — retrieve moments
 ```
 
 Both `cli/` and `routers/` are thin. All logic lives in `services/`.

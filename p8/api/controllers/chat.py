@@ -135,21 +135,20 @@ class ChatController:
         user_id: UUID | None = None,
         background_compaction: bool = True,
     ) -> ChatTurn:
-        """Run a single agent turn and persist the result."""
-        try:
-            result = await ctx.agent.run(
-                user_prompt,
-                message_history=ctx.message_history or None,
-                instructions=ctx.injector.instructions,
-            )
-            assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
-            all_messages = (
-                result.all_messages() if hasattr(result, "all_messages")
-                else getattr(result, "_all_messages", None)
-            )
-        except Exception as e:
-            assistant_text = f"[error] {e}"
-            all_messages = None
+        """Run a single agent turn and persist the result.
+
+        Raises on agent errors — callers (CLI, API) handle as appropriate.
+        """
+        result = await ctx.agent.run(
+            user_prompt,
+            message_history=ctx.message_history or None,
+            instructions=ctx.injector.instructions,
+        )
+        assistant_text = str(result.output) if hasattr(result, "output") else str(result.data)
+        all_messages = (
+            result.all_messages() if hasattr(result, "all_messages")
+            else getattr(result, "_all_messages", None)
+        )
 
         await ctx.adapter.persist_turn(
             ctx.session_id, user_prompt, assistant_text,

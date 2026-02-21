@@ -1,7 +1,7 @@
 -- =============================================================================
--- install.sql — Core infrastructure: functions, triggers, indexes, KV, queue
+-- 02_install.sql — Core infrastructure: functions, triggers, indexes, KV, queue
 --
--- Runs AFTER install_entities.sql. Depends on entity tables and
+-- Runs AFTER 01_install_entities.sql. Depends on entity tables and
 -- kind='table' schema rows existing (seeded by seed_table_schemas()).
 --
 -- All table iteration is driven by: schemas WHERE kind = 'table'

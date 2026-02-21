@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "p8": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "p8", "mcp"],
+      "env": {
+        "P8_MCP_AUTH_ENABLED": "false"
+      }
+    },
+    "p8-http": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp/"
+    }
+  }
+}

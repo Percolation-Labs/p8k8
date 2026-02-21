@@ -119,13 +119,52 @@ def create_app() -> FastAPI:
     async def root_health():
         return {"status": "ok"}
 
-    # Mount .well-known at app root (in addition to /auth prefix)
+    # .well-known/oauth-authorization-server for the app's own OAuth (mobile/web)
     @app.get("/.well-known/oauth-authorization-server")
     async def root_well_known(request: Request):
         return await auth.well_known_oauth(request)
 
     # Mount MCP server at /mcp (Streamable HTTP)
-    app.mount("/mcp", get_mcp_app())
+    mcp_app = get_mcp_app()
+    app.mount("/mcp", mcp_app)
+
+    # RFC 8414 — MCP clients resolve issuer "http://host/mcp" to
+    # "http://host/.well-known/oauth-authorization-server/mcp".
+    # Proxy the metadata from FastMCP's own well-known endpoint.
+    if boot_settings.mcp_auth_enabled and boot_settings.google_client_id:
+        # RFC 9728 — Protected Resource Metadata.
+        # MCP clients discover auth via /.well-known/oauth-protected-resource{path}.
+        @app.get("/.well-known/oauth-protected-resource/mcp/")
+        @app.get("/.well-known/oauth-protected-resource/mcp")
+        async def mcp_protected_resource(request: Request):
+            base = str(request.base_url).rstrip("/")
+            return {
+                "resource": f"{base}/mcp/",
+                "authorization_servers": [f"{base}/mcp"],
+                "scopes_supported": ["openid"],
+                "bearer_methods_supported": ["header"],
+            }
+
+        # RFC 8414 — Authorization Server Metadata.
+        # MCP clients resolve issuer "http://host/mcp" to
+        # "http://host/.well-known/oauth-authorization-server/mcp".
+        @app.get("/.well-known/oauth-authorization-server/mcp")
+        @app.get("/.well-known/oauth-authorization-server/mcp/")
+        async def mcp_oauth_metadata(request: Request):
+            base = str(request.base_url).rstrip("/")
+            return {
+                "issuer": f"{base}/mcp",
+                "authorization_endpoint": f"{base}/mcp/authorize",
+                "token_endpoint": f"{base}/mcp/token",
+                "registration_endpoint": f"{base}/mcp/register",
+                "revocation_endpoint": f"{base}/mcp/revoke",
+                "scopes_supported": ["openid"],
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+                "code_challenge_methods_supported": ["S256"],
+                "client_id_metadata_document_supported": True,
+            }
 
     return app
 

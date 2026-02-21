@@ -191,7 +191,7 @@ class DreamingHandler:
                 if hasattr(result, "all_messages")
                 else []
             )
-            model_name = adapter.config.model_name or "openai:gpt-4.1-mini"
+            model_name = adapter.config.model or "openai:gpt-4.1-mini"
             memory = MemoryService(ctx.db, ctx.encryption)
             await self._persist_agent_messages(
                 memory, session_id, all_messages, user_id,

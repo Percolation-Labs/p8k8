@@ -44,3 +44,11 @@ app.add_typer(moments_app, name="moments")
 from p8.api.cli.encryption import encryption_app  # noqa: E402
 
 app.add_typer(encryption_app, name="encryption")
+
+from p8.api.cli.mcp import mcp_app  # noqa: E402
+
+app.add_typer(mcp_app, name="mcp")
+
+from p8.api.cli.verify_links import verify_links_app  # noqa: E402
+
+app.add_typer(verify_links_app, name="verify-links")
