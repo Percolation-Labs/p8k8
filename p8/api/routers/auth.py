@@ -341,7 +341,9 @@ async def oauth_callback(request: Request, provider: str):
     mcp_auth_code = request.session.pop("mcp_auth_code", None)
     if mcp_auth_code:
         # Attach user to the pending authorization code
-        await auth.set_authorization_code_user(mcp_auth_code, str(user.id), tenant_id)
+        await auth.set_authorization_code_user(
+            mcp_auth_code, str(user.id), tenant_id, email=user.email,
+        )
 
         # Retrieve the code record to get the client's redirect_uri and state
         code_record = await auth.get_authorization_code(mcp_auth_code)
