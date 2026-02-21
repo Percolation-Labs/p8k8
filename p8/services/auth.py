@@ -333,6 +333,10 @@ class AuthService:
         should_decrypt = await self.encryption.should_decrypt_on_read(tenant_id)
         if should_decrypt:
             data = self.encryption.decrypt_fields(User, data, tenant_id)
+        # devices may be stored as JSON string — parse before validation
+        if isinstance(data.get("devices"), str):
+            import json
+            data["devices"] = json.loads(data["devices"])
         return User.model_validate(data), tenant_id
 
     async def handle_google_callback(
