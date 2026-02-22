@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     embedding_model: str = "openai:text-embedding-3-small"
     openai_api_key: str = ""
     embedding_dimensions: int = 1536
+    embedding_min_similarity: float = 0.3  # default threshold for SEARCH; DB functions also default to 0.3
     embedding_batch_size: int = 20
     embedding_poll_interval: float = 2.0
     embedding_worker_enabled: bool = True  # False when pg_cron + pg_net handles scheduling
@@ -88,6 +89,8 @@ class Settings(BaseSettings):
 
     # API key (simple bearer token for service-to-service auth)
     api_key: str = ""  # set P8_API_KEY to require Bearer token on all endpoints
+    master_key: str = ""    # P8_MASTER_KEY — full access, bypasses all filters
+    tenant_keys: str = ""   # P8_TENANT_KEYS — JSON {"tenant_id": "key", ...}
 
     # Auth / JWT
     auth_secret_key: str = "changeme-in-production"
@@ -127,6 +130,9 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
+
+    # Web search (Tavily)
+    tavily_api_key: str = ""
 
     model_config = {"env_prefix": "P8_", "env_file": ".env", "extra": "ignore"}
 

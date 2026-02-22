@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS resources (
     ordinal         INT,
     content         TEXT,
     category        VARCHAR(100),
+    image_uri       TEXT,
+    comment         TEXT,
     related_entities TEXT[],
     -- system fields
     tenant_id       VARCHAR(100),
@@ -609,6 +611,13 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS thumbnail_uri TEXT;
 ALTER TABLE feedback ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
 ALTER TABLE storage_grants ADD COLUMN IF NOT EXISTS encryption_level VARCHAR(20);
+
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS image_uri TEXT;
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS comment TEXT;
+CREATE INDEX IF NOT EXISTS idx_resources_category ON resources (category) WHERE deleted_at IS NULL;
+
+ALTER TABLE moments ADD COLUMN IF NOT EXISTS rating SMALLINT CHECK (rating >= 1 AND rating <= 5);
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS rating SMALLINT CHECK (rating >= 1 AND rating <= 5);
 
 
 -- ---------------------------------------------------------------------------

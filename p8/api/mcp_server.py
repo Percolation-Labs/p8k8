@@ -30,6 +30,8 @@ from p8.api.tools.get_moments import get_moments
 # and workers persist moments directly (see DreamingHandler._persist_dream_moments)
 # from p8.api.tools.save_moments import save_moments
 from p8.api.tools.search import search
+from p8.api.tools.update_user_metadata import update_user_metadata
+from p8.api.tools.web_search import web_search
 from p8.ontology.types import User
 from p8.services.repository import Repository
 from p8.settings import Settings, get_settings
@@ -108,6 +110,8 @@ def create_mcp_server() -> FastMCP:
     # save_moments commented out — agents use structured output in workers
     # mcp.tool(name="save_moments")(save_moments)
     mcp.tool(name="get_moments")(get_moments)
+    mcp.tool(name="web_search")(web_search)
+    mcp.tool(name="update_user_metadata")(update_user_metadata)
 
     # Register resources
     mcp.resource("user://profile/{user_id}")(user_profile)
@@ -128,10 +132,14 @@ def get_mcp_server() -> FastMCP:
 
 
 class _ToolContextMiddleware:
-    """ASGI middleware that extracts user_id from Bearer JWT and sets tool context.
+    """ASGI middleware that resolves a SecurityContext and sets tool context.
 
-    This ensures MCP tool functions can access user_id via get_user_id()
-    without requiring it as an explicit parameter.
+    Resolution order mirrors resolve_security_context():
+    1. Master key → MASTER
+    2. Tenant key → TENANT
+    3. JWT → USER (also extracts user_id for backward compat)
+    4. x-user-id header → USER (dev mode)
+
     Proxies attribute access to the wrapped app so callers (e.g. lifespan)
     can access .router, .state, etc. transparently.
     """
@@ -144,21 +152,81 @@ class _ToolContextMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
+            import hmac
+            from uuid import UUID
+            from p8.api.security import PermissionLevel, SecurityContext
+
             headers = dict(scope.get("headers", []))
             auth_header = headers.get(b"authorization", b"").decode()
-            if auth_header.startswith("Bearer "):
+            bearer_token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            x_api_key = headers.get(b"x-api-key", b"").decode()
+            settings = get_settings()
+
+            ctx: SecurityContext | None = None
+            user_id: UUID | None = None
+
+            # 1. Master key
+            if settings.master_key:
+                for candidate in (bearer_token, x_api_key):
+                    if candidate and hmac.compare_digest(candidate, settings.master_key):
+                        ctx = SecurityContext.master()
+                        break
+
+            # 2. Tenant keys
+            if not ctx and settings.tenant_keys:
+                try:
+                    tenant_map = json.loads(settings.tenant_keys)
+                except (json.JSONDecodeError, TypeError):
+                    tenant_map = {}
+                for candidate in (bearer_token, x_api_key):
+                    if candidate:
+                        for tid, tkey in tenant_map.items():
+                            if hmac.compare_digest(candidate, tkey):
+                                ctx = SecurityContext(level=PermissionLevel.TENANT, tenant_id=tid)
+                                break
+                    if ctx:
+                        break
+
+            # 3. JWT → USER
+            if not ctx and bearer_token:
                 try:
                     import jwt as pyjwt
-                    from uuid import UUID
-                    token = auth_header[7:]
-                    settings = get_settings()
                     payload = pyjwt.decode(
-                        token, settings.auth_secret_key, algorithms=["HS256"],
+                        bearer_token, settings.auth_secret_key, algorithms=["HS256"],
                     )
                     user_id = UUID(payload["sub"])
-                    set_tool_context(user_id=user_id)
+                    ctx = SecurityContext(
+                        level=PermissionLevel.USER,
+                        user_id=user_id,
+                        tenant_id=payload.get("tenant_id", ""),
+                        email=payload.get("email", ""),
+                        provider=payload.get("provider", ""),
+                        scopes=payload.get("scopes", []),
+                    )
                 except Exception:
-                    pass  # Auth validation handled by FastMCP's RemoteAuthProvider
+                    pass
+
+            # 4. x-user-id header (dev mode)
+            if not ctx:
+                raw = headers.get(b"x-user-id", b"").decode()
+                if raw:
+                    try:
+                        user_id = UUID(raw)
+                        ctx = SecurityContext(
+                            level=PermissionLevel.USER,
+                            user_id=user_id,
+                            tenant_id=headers.get(b"x-tenant-id", b"").decode(),
+                            email=headers.get(b"x-user-email", b"").decode(),
+                            provider="header",
+                        )
+                    except ValueError:
+                        pass
+
+            # Extract user_id from context for backward compat
+            if ctx and ctx.user_id:
+                user_id = ctx.user_id
+
+            set_tool_context(user_id=user_id, security=ctx)
         await self.app(scope, receive, send)
 
 

@@ -38,7 +38,6 @@ async def test_remind_me_onetime_iso(db):
         description="Go to the dentist at 3pm",
         crontab="2026-04-15T15:00:00",
         tags=["health"],
-        user_id=USER_ADA,
     )
 
     assert result["status"] == "success"
@@ -80,7 +79,6 @@ async def test_remind_me_recurring_cron(db):
         description="Take your daily vitamins",
         crontab="0 9 * * *",
         tags=["health", "daily"],
-        user_id=USER_ADA,
     )
 
     assert result["status"] == "success"
@@ -117,7 +115,6 @@ async def test_remind_me_invalid_cron():
         name="bad-schedule",
         description="This should fail",
         crontab="not-a-cron",
-        user_id=USER_ADA,
     )
 
     assert result["status"] == "error"
@@ -157,7 +154,6 @@ async def test_remind_me_payload_in_job(db):
         description="Daily standup in 5 minutes",
         crontab="55 8 * * 1-5",
         tags=["work"],
-        user_id=USER_ADA,
     )
 
     assert result["status"] == "success"
@@ -192,7 +188,6 @@ async def test_remind_me_weekly_cron(db):
         name="weekly-review",
         description="Weekly planning review",
         crontab="0 9 * * 1",
-        user_id=USER_ADA,
     )
 
     assert result["status"] == "success"
