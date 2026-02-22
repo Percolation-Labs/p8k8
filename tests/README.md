@@ -201,7 +201,7 @@ Background reflective agent that generates dream moments from recent activity.
 | Test | What it covers |
 |------|----------------|
 | `test_dreaming` | Dreaming handler — context building from recent sessions, agent invocation with mocked model, moment persistence |
-| `test_dreaming_e2e` | End-to-end dreaming with `FunctionModel` — all 3 phases (reflect, search, save), graph edge creation |
+| `test_dreaming_e2e` | End-to-end dreaming with `FunctionModel` — both phases (consolidation + agent), graph edge creation |
 | `test_save_moments` | `save_moments` MCP tool — dream moment creation, affinity→graph_edges, bidirectional back-edges on targets, graceful missing target |
 | `test_merge_graph_edges` | Graph edge merging — dedup, weight update, empty lists, field preservation, default relation |
 

@@ -39,7 +39,7 @@ The key insight: first order loads and generates, second order searches and conn
 
 ## Trigger
 
-`enqueue_dreaming_tasks()` runs via pg_cron every hour (`0 * * * *`). It finds users with new messages since their last dreaming run by joining `users → sessions → messages` against the most recent `task_queue` entry of type `dreaming`. Users who already have a pending/processing dreaming task are skipped.
+`enqueue_dreaming_tasks()` runs via pg_cron every hour (`0 * * * *`). It finds users with new activity since their last dreaming run using a UNION of two paths: (1) new messages via `users → sessions → messages`, and (2) new completed file uploads via `users → files` (where `processing_status = 'completed'`). Both paths are compared against the most recent `task_queue` entry of type `dreaming`. Users who already have a pending/processing dreaming task are skipped.
 
 ```sql
 INSERT INTO task_queue (task_type, tier, user_id, tenant_id, payload)
@@ -53,18 +53,17 @@ A worker claims the task via `QueueService.claim("small", worker_id)`. Before pr
 
 ### Phase 1 — First-order dreaming (consolidation)
 
-`DreamingHandler._build_session_moments()` finds all sessions with activity within the date-based window (`NOW() - lookback_days`, default 24 hours) and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
-
-The date window is configurable via the task payload `lookback_days` (default 1). This is the grain — all activity within the window is eligible for consolidation.
+`DreamingHandler._build_session_moments()` finds the 10 most recently updated sessions for the user (`ORDER BY updated_at DESC LIMIT 10`) and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
 
 ### Phase 2 — Second-order dreaming (semantic affinity)
 
 `DreamingHandler._run_dreaming_agent()`:
 
-1. **Load context** — Gathers recent activity within the same date-based window, subject to a ~38K token budget (30% of the 128K model context). Token budget is estimated via `tiktoken` to ensure the context fits:
+1. **Load context** — Gathers recent activity within a date-based window (`NOW() - lookback_days`), subject to a ~38K token budget (30% of the 128K model context). Token budget is estimated via `tiktoken` to ensure the context fits:
    - Up to 50 moments (summaries, tags, graph edges)
    - Up to 5 recent sessions with up to 20 messages each (truncated to 500 chars)
-   - Up to 10 referenced resources discovered via moment `graph_edges` (truncated to 2K chars)
+   - Up to 10 recent file uploads (directly from `files` table, `processing_status = 'completed'`)
+   - Up to 10 referenced resources discovered via moment `graph_edges` (truncated to 2K chars, deduplicated against already-loaded files)
 
 2. **Create session** — A dreaming session is created with `mode='dreaming'`, `agent_name='dreaming-agent'`, named `dreaming-{user_id}`.
 
@@ -92,7 +91,7 @@ The flow:
 2. Read current `graph_edges` from the **source table** (authoritative)
 3. Merge the new `dreamed_from` edge
 4. Write merged edges back to the **source table** only
-5. `kv_store` picks up the change on the next `rem_sync_kv_store()` run
+5. `kv_store` picks up the change via the entity table trigger (or the next `rebuild_kv_store()` if the trigger was missed)
 
 This means after dreaming, you can query back-edges directly on the source:
 

@@ -29,15 +29,17 @@ Minimal agentic framework where **ontology is everything**. Every entity — mod
 ```
 p8/
 ├── ontology/       # CoreModel (base.py), built-in types (types.py), verify
-├── services/       # database/, repository, embeddings, encryption, kms, memory, content
+├── services/       # database/, repository, embeddings, encryption, kms, memory, content, queue, usage
 ├── agentic/        # adapter, streaming, delegate, routing, types
 ├── api/
 │   ├── main.py         # FastAPI app factory + lifespan
-│   ├── mcp_server.py   # FastMCP: search, action, ask_agent
+│   ├── mcp_server.py   # FastMCP: search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me
 │   ├── controllers/    # ChatController (shared API+CLI logic)
-│   ├── routers/        # chat, query, schemas, moments, admin, auth, content, embeddings
+│   ├── routers/        # chat, query, schemas, moments, admin, auth, content, embeddings, resources, notifications, share, payments
 │   ├── tools/          # MCP tool implementations
-│   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments)
+│   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments, dream)
+├── workers/        # TieredWorker processor, task handlers (dreaming, file_processing, news, scheduled)
+├── utils/          # Parsing, token estimation, ID generation
 ├── settings.py
 sql/
 ├── 01_install_entities.sql  # Entity tables + embeddings tables
@@ -63,7 +65,7 @@ All in `p8/services/database/`. See `sql/02_install.sql` for function signatures
 
 ## Database
 
-Two idempotent SQL scripts, run in order by `p8 migrate`:
+Four idempotent SQL scripts, run in order by `p8 migrate`:
 
 1. `sql/01_install_entities.sql` — extensions, entity tables, embeddings companion tables
 2. `sql/02_install.sql` — kv_store, embedding_queue, helper functions, REM functions, triggers, indexes, pg_cron jobs
@@ -100,9 +102,9 @@ p8 moments timeline SESSION_ID
 Two deployment recipes exist for the p8 stack:
 
 - **AWS recipe** (`reminiscent/` repo): SQS queue + KEDA SQS trigger + ExternalSecrets from AWS Parameter Store + S3 native events. Full CDK setup.
-- **Hetzner recipe** (this repo): PostgreSQL queue (`files.processing_status`) + KEDA postgresql trigger + plain K8s Secrets from `.env`. Lighter weight, no NATS.
+- **Hetzner recipe** (this repo): PostgreSQL queue (`task_queue`) + KEDA postgresql trigger + plain K8s Secrets from `.env`. Lighter weight, no NATS.
 
-**Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled file worker (2GB RAM) + optional dreaming CronJob.
+**Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled tiered workers (file_processing, dreaming, news, scheduled).
 
 ## Default Test User
 

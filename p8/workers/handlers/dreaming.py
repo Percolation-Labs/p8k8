@@ -305,6 +305,10 @@ class DreamingHandler:
 
         return saved
 
+    _ALLOWED_ENTITY_TABLES = frozenset({
+        "resources", "moments", "files", "schemas", "sessions",
+    })
+
     @staticmethod
     async def _merge_edge_on_target(db, target_key: str, new_edge: dict) -> None:
         """Look up entity by key via kv_store index, merge a back-edge onto the source table.
@@ -312,7 +316,7 @@ class DreamingHandler:
         kv_store is UNLOGGED and ephemeral — only used here to resolve
         (entity_type, entity_id) from the key.  The actual graph_edges are
         read from and written to the source table so they survive rebuilds.
-        kv_store is refreshed on the next rem_sync_kv_store() run.
+        kv_store is refreshed via entity table triggers (or rebuild_kv_store()).
         """
         # Resolve key → source table + id via the KV index
         rows = await db.fetch(
@@ -325,6 +329,11 @@ class DreamingHandler:
 
         entity_type = rows[0]["entity_type"]
         entity_id = rows[0]["entity_id"]
+
+        # Validate entity_type against known tables to prevent SQL injection
+        if entity_type not in DreamingHandler._ALLOWED_ENTITY_TABLES:
+            log.warning("Unexpected entity_type %r from kv_store for key %s, skipping", entity_type, target_key)
+            return
 
         # Read current graph_edges from the SOURCE table (authoritative)
         source_rows = await db.fetch(

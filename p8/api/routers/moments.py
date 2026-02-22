@@ -15,6 +15,43 @@ from p8.services.memory import MemoryService
 router = APIRouter()
 
 
+async def _decrypt_feed_rows(
+    rows: list[dict], db: Database, encryption: EncryptionService,
+) -> list[dict]:
+    """Decrypt platform-encrypted summaries in feed/reminder results.
+
+    Only attempts decryption for rows with encryption_level='platform'.
+    Daily summaries and unencrypted moments pass through unchanged.
+    """
+    platform_rows = [r for r in rows if r.get("encryption_level") == "platform"]
+    if not platform_rows:
+        return rows
+
+    # Collect tenant_ids that need DEKs
+    moment_ids = [r["event_id"] for r in platform_rows]
+    tenant_rows = await db.fetch(
+        "SELECT id, tenant_id FROM moments WHERE id = ANY($1::uuid[])",
+        moment_ids,
+    )
+    tenant_map = {str(r["id"]): r["tenant_id"] for r in tenant_rows if r["tenant_id"]}
+
+    # Pre-warm DEK cache for all needed tenants
+    for tid in set(tenant_map.values()):
+        await encryption.get_dek(tid)
+
+    result = []
+    for row in rows:
+        if row.get("encryption_level") == "platform" and row.get("summary"):
+            tid = tenant_map.get(str(row.get("event_id")))
+            if tid:
+                dec = encryption.decrypt_fields(
+                    Moment, {"id": row["event_id"], "summary": row["summary"]}, tid,
+                )
+                row = {**row, "summary": dec["summary"]}
+        result.append(row)
+    return result
+
+
 @router.get("/feed")
 async def moments_feed(
     user: CurrentUser | None = Depends(get_optional_user),
@@ -22,6 +59,7 @@ async def moments_feed(
     before_date: str | None = Query(None, description="ISO date cursor, e.g. 2025-02-18"),
     include_future: bool = Query(False, description="Include future-dated moments (default false)"),
     db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
 ):
     """Cursor-paginated moments feed with virtual daily summary cards.
 
@@ -35,12 +73,13 @@ async def moments_feed(
     Daily summaries carry a deterministic session UUID derived from
     (user_id, date) so the client can open a chat for that day.
     """
-    return await db.rem_moments_feed(
+    rows = await db.rem_moments_feed(
         user_id=user.user_id if user else None,
         limit=limit,
         before_date=before_date,
         include_future=include_future,
     )
+    return await _decrypt_feed_rows(rows, db, encryption)
 
 
 @router.get("/today")
@@ -79,11 +118,16 @@ async def session_timeline(
     if not needs_decrypt:
         return [dict(r) for r in rows]
 
-    # Resolve tenant_id for DEK — needed for actual decryption
+    # Resolve tenant_id for DEK — check messages first, fall back to moments
     tenant_row = await db.fetchrow(
         "SELECT tenant_id FROM messages WHERE session_id = $1 AND tenant_id IS NOT NULL LIMIT 1",
         session_id,
     )
+    if not tenant_row:
+        tenant_row = await db.fetchrow(
+            "SELECT tenant_id FROM moments WHERE source_session_id = $1 AND tenant_id IS NOT NULL AND tenant_id != '' LIMIT 1",
+            session_id,
+        )
     tenant_id = tenant_row["tenant_id"] if tenant_row else None
     if not tenant_id:
         return [dict(r) for r in rows]
@@ -126,6 +170,7 @@ async def list_reminders(
     due_on: str | None = Query(None, description="Filter by due/fire date (ISO date, e.g. 2026-02-23). The date the reminder is scheduled to fire."),
     user: CurrentUser | None = Depends(get_optional_user),
     db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
 ):
     """List reminder moments with optional created_on / due_on filters.
 
@@ -160,14 +205,28 @@ async def list_reminders(
 
     rows = await db.fetch(
         f"""SELECT id, name, summary, metadata, topic_tags,
-                   starts_timestamp, created_at, graph_edges
+                   starts_timestamp, created_at, graph_edges,
+                   encryption_level, tenant_id
             FROM moments
             WHERE {where}
             ORDER BY created_at DESC{limit_clause}""",
         *args,
     )
 
-    reminders = [dict(r) for r in rows]
+    from p8.services.repository import Repository
+
+    repo = Repository(Moment, db, encryption)
+    await repo._ensure_deks(rows)
+    reminders = []
+    for row in rows:
+        data = dict(row)
+        if data.get("encryption_level") == "platform" and data.get("tenant_id"):
+            dec = encryption.decrypt_fields(Moment, data, data["tenant_id"])
+            data["summary"] = dec["summary"]
+        # Drop internal columns from response
+        data.pop("encryption_level", None)
+        data.pop("tenant_id", None)
+        reminders.append(data)
     return {"reminders": reminders, "count": len(reminders)}
 
 

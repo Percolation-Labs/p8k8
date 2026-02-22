@@ -20,22 +20,26 @@ async def _clean(clean_db):
 
 
 def _insert_resource(client, name: str, category: str, **kwargs):
-    """Helper: insert a resource via SQL."""
+    """Helper: insert a resource via SQL with escaped values."""
     uri = kwargs.get("uri", f"https://example.com/{name}")
     image_uri = kwargs.get("image_uri", "")
     comment = kwargs.get("comment", "")
     content = kwargs.get("content", f"Content for {name}")
     user_id = kwargs.get("user_id", "")
 
-    user_clause = f"'{user_id}'::uuid" if user_id else "NULL"
-    image_clause = f"'{image_uri}'" if image_uri else "NULL"
-    comment_clause = f"'{comment}'" if comment else "NULL"
+    def _esc(val: str) -> str:
+        """Escape single quotes for SQL string literals."""
+        return val.replace("'", "''")
+
+    user_clause = f"'{_esc(user_id)}'::uuid" if user_id else "NULL"
+    image_clause = f"'{_esc(image_uri)}'" if image_uri else "NULL"
+    comment_clause = f"'{_esc(comment)}'" if comment else "NULL"
 
     resp = client.post("/query/", json={
         "mode": "SQL",
         "query": f"""
             INSERT INTO resources (name, uri, content, category, image_uri, comment, user_id, related_entities)
-            VALUES ('{name}', '{uri}', '{content}', '{category}', {image_clause}, {comment_clause}, {user_clause}, '{{}}')
+            VALUES ('{_esc(name)}', '{_esc(uri)}', '{_esc(content)}', '{_esc(category)}', {image_clause}, {comment_clause}, {user_clause}, '{{}}')
             RETURNING id::text
         """,
     })

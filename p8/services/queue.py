@@ -12,7 +12,6 @@ from datetime import datetime
 from uuid import UUID
 
 from p8.services.database import Database
-from p8.utils.parsing import extract_payload
 
 log = logging.getLogger(__name__)
 

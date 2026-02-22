@@ -15,7 +15,7 @@
 
 CREATE TABLE IF NOT EXISTS task_queue (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_type       VARCHAR(50) NOT NULL,     -- file_processing | dreaming | scheduled
+    task_type       VARCHAR(50) NOT NULL,     -- file_processing | dreaming | news | scheduled
     tier            VARCHAR(20) NOT NULL DEFAULT 'small',  -- micro | small | medium | large
     tenant_id       VARCHAR(100),
     user_id         UUID,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     task_id         UUID NOT NULL,
     task_type       VARCHAR(50),
     user_id         UUID,
-    event           VARCHAR(30) NOT NULL,   -- enqueued | claimed | completed | failed | retrying | recovered | quota_exceeded
+    event           VARCHAR(30) NOT NULL,   -- claimed | completed | failed | retrying | recovered | quota_exceeded | error
     worker_id       VARCHAR(100),
     error           TEXT,
     detail          JSONB,

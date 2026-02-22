@@ -11,6 +11,7 @@ Moments are the core content units in the feed. Each moment has a `moment_type` 
 | `content_upload` | File upload pipeline | Visible | Uploaded file (PDF, image, voice, etc.) |
 | `notification` | `/notifications/send` | Visible | Push notification that was delivered |
 | `dream` | Dreaming CronJob | Visible | AI-generated insight from background processing |
+| `digest` | News handler | Visible | Daily news digest compiled from user interests/feeds |
 | `reminder` | `remind_me` MCP tool | **Hidden** | Future-dated reminder (see below) |
 
 ## Grain and Consolidation
@@ -21,9 +22,9 @@ The grain matters because a single moment should not represent a single session.
 
 ### How consolidation works
 
-1. **Date-based window** — The dreamer hourly cron job (`enqueue_dreaming_tasks`) finds users with new activity since their last run. All queries use a date-based cutoff (`NOW() - lookback_days`), not a fixed number of sessions. The default window is 24 hours but this is configurable per task payload.
-2. **Phase 1 (first-order)** — `rem_build_moment()` finds all sessions with activity within the date window and creates `session_chunk` moments that consolidate conversation segments exceeding a token threshold (default 6000 tokens). These are deterministic, SQL-only summaries.
-3. **Phase 2 (second-order)** — The dreaming agent reads all recent activity (moments, sessions, resources) within the date window and produces 1–3 `dream` moments that synthesize cross-session themes and connections.
+1. **Hourly trigger** — The dreamer hourly cron job (`enqueue_dreaming_tasks`) finds users with new activity (messages or completed file uploads) since their last run.
+2. **Phase 1 (first-order)** — `rem_build_moment()` runs against the user's 10 most recently updated sessions and creates `session_chunk` moments that consolidate conversation segments exceeding a token threshold (default 6000 tokens). These are deterministic, SQL-only summaries.
+3. **Phase 2 (second-order)** — The dreaming agent reads all recent activity (moments, sessions, file uploads, referenced resources) within a date-based window (`NOW() - lookback_days`, default 24h) and produces 1–3 `dream` moments that synthesize cross-session themes and connections.
 4. **Virtual "Today"** — `rem_moments_feed()` computes a `today` summary card on-the-fly from message counts, tokens, session counts, and moment counts for each active date. This is never stored — it's synthesized per query.
 
 The result: for any given day, the feed shows a **Today card** (virtual summary), 0–N **activity chunks** (consolidated conversation segments), and 1–3 **dream moments** (AI-generated cross-session insights).

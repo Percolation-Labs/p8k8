@@ -289,8 +289,17 @@ async def chat(
         # Option 2: build adapter, run_stream, wrap with multiplexer
         adapter = await AGUIAdapter.from_request(request, agent=ctx.agent)
 
+        # Workaround for pydantic-ai 1.62.0 bug: when user_prompt is None
+        # (AGUIAdapter flow), static system prompts from Agent(system_prompt=...)
+        # are not included in the request to the LLM. Inject the system prompt
+        # as a SystemPromptPart in message_history so it's always present.
+        from pydantic_ai.messages import ModelRequest, SystemPromptPart
+        sys_prompt = ctx.adapter.agent_schema.get_system_prompt()
+        history = list(ctx.message_history) if ctx.message_history else []
+        history.insert(0, ModelRequest(parts=[SystemPromptPart(content=sys_prompt)]))
+
         agui_stream = adapter.run_stream(
-            message_history=ctx.message_history or None,
+            message_history=history,
             on_complete=on_complete,
             instructions=ctx.injector.instructions,
         )

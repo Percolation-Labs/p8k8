@@ -48,16 +48,15 @@ class NewsHandler:
 
         # ── 2. Run platoon ────────────────────────────────────────
         import os
-        import platoon
-        from platoon.config import resolve_for_user, resolve_keys
+        from platoon.config import resolve_for_user
         from platoon.providers import FeedProvider
 
         # Bridge P8_TAVILY_API_KEY → P8_TAVILY_KEY so platoon picks it up.
         # Settings uses P8_TAVILY_API_KEY; platoon checks P8_TAVILY_KEY.
         tavily_key = (
-            os.environ.get("P8_TAVILY_KEY", "")
-            or os.environ.get("P8_TAVILY_API_KEY", "")
-            or getattr(ctx, "settings", None) and ctx.settings.tavily_api_key
+            os.environ.get("P8_TAVILY_KEY")
+            or os.environ.get("P8_TAVILY_API_KEY")
+            or (getattr(ctx, "settings", None) and ctx.settings.tavily_api_key)
             or ""
         )
 

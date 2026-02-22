@@ -37,6 +37,9 @@ class WorkerContext:
     queue: QueueService
     worker_id: str
     tier: str
+    file_service: object = None  # type: ignore[assignment]
+    content_service: object = None  # type: ignore[assignment]
+    settings: object = None  # type: ignore[assignment]
 
 
 class TaskHandler:
@@ -103,10 +106,9 @@ class TieredWorker:
                 tier=self.tier,
             )
 
-            # Store services for handler access
-            ctx.file_service = file_service  # type: ignore[attr-defined]
-            ctx.content_service = content_service  # type: ignore[attr-defined]
-            ctx.settings = settings  # type: ignore[attr-defined]
+            ctx.file_service = file_service
+            ctx.content_service = content_service
+            ctx.settings = settings
 
             self._running = True
             log.info(
