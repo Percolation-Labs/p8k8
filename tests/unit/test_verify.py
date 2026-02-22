@@ -186,7 +186,23 @@ class TestVerifyModelMocked:
 
     @pytest.mark.asyncio
     async def test_stale_embedding_table_warning(self):
-        """Model has no __embedding_field__ but embeddings table exists → warning."""
+        """Embedding table exists + schema says has_embeddings=true but model disagrees → warning."""
+        schema_meta = _build_json_schema(Server)
+        schema_meta["has_embeddings"] = True  # schema row says yes, model says no
+        db = _make_mock_db(
+            columns=list(Server.model_fields.keys()),
+            embed_table_exists=True,
+            schema_row={"json_schema": json.dumps(schema_meta)},
+            triggers=["trg_servers_updated_at", "trg_servers_kv"],
+        )
+        issues = await verify_model(Server, db)
+        stale = [i for i in issues if i.check == "stale_embedding_table"]
+        assert len(stale) == 1
+        assert stale[0].level == "warning"
+
+    @pytest.mark.asyncio
+    async def test_stale_embedding_table_no_warning_when_schema_agrees(self):
+        """Embedding table exists but both model and schema say no embeddings → no warning."""
         db = _make_mock_db(
             columns=list(Server.model_fields.keys()),
             embed_table_exists=True,
@@ -195,8 +211,7 @@ class TestVerifyModelMocked:
         )
         issues = await verify_model(Server, db)
         stale = [i for i in issues if i.check == "stale_embedding_table"]
-        assert len(stale) == 1
-        assert stale[0].level == "warning"
+        assert len(stale) == 0
 
     @pytest.mark.asyncio
     async def test_unregistered_schema(self):

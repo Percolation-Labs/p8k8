@@ -158,7 +158,19 @@ async def verify_model(model: type[CoreModel], db) -> list[Issue]:
     if embedding_field is not None and not embed_exists:
         issues.append(Issue(table, "error", "missing_embedding_table", f"Embedding table '{embed_table}' expected but missing"))
     if embedding_field is None and embed_exists:
-        issues.append(Issue(table, "warning", "stale_embedding_table", f"Embedding table '{embed_table}' exists but model has no __embedding_field__"))
+        # Check if the schema row also says has_embeddings=false — if so,
+        # the embedding table is a known leftover and not worth warning about.
+        _schema_check = await db.fetchrow(
+            "SELECT json_schema FROM schemas WHERE name = $1 AND kind = 'table'",
+            table,
+        )
+        _js = _schema_check["json_schema"] if _schema_check else None
+        if isinstance(_js, str):
+            import json as _json
+            _js = _json.loads(_js)
+        _has_emb = (_js or {}).get("has_embeddings", True) if _schema_check else True
+        if _has_emb:
+            issues.append(Issue(table, "warning", "stale_embedding_table", f"Embedding table '{embed_table}' exists but model has no __embedding_field__"))
 
     # 4. Schema row registered
     schema_row = await db.fetchrow(
