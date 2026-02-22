@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from p8.ontology.types import Message, Moment
+from p8.ontology.types import Message, Moment, Session
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.repository import Repository
@@ -221,6 +221,128 @@ class MemoryService:
             session_id,
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Moment + Session creation (companion session pattern)
+    # ------------------------------------------------------------------
+
+    async def create_moment_session(
+        self,
+        *,
+        name: str,
+        moment_type: str,
+        summary: str,
+        metadata: dict | None = None,
+        session_id: UUID | None = None,
+        user_id: UUID | None = None,
+        tenant_id: str | None = None,
+        topic_tags: list[str] | None = None,
+        image_uri: str | None = None,
+        starts_timestamp=None,
+        ends_timestamp=None,
+        graph_edges: list[dict] | None = None,
+        session_description: str | None = None,
+    ) -> tuple[Moment, Session]:
+        """Create a moment and ensure it has a companion session with context.
+
+        Every moment gets a 1:1 companion session so users can start a
+        conversation about it.  The session stores the moment's name,
+        summary, and metadata so the agent has context via ContextInjector
+        even before any messages exist.
+
+        If ``session_id`` is provided and the session already exists, its
+        metadata is enriched with the new moment info (supports multiple
+        uploads to the same session).
+
+        Returns (moment, session) tuple.
+        """
+        meta = metadata or {}
+
+        # 1. Create the moment
+        moment = Moment(
+            name=name,
+            moment_type=moment_type,
+            summary=summary,
+            image_uri=image_uri,
+            source_session_id=session_id,
+            starts_timestamp=starts_timestamp,
+            ends_timestamp=ends_timestamp,
+            topic_tags=topic_tags or [],
+            graph_edges=graph_edges or [],
+            metadata=meta,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        [moment] = await self.moment_repo.upsert(moment)
+
+        # 2. Ensure companion session
+        session_repo = Repository(Session, self.db, self.encryption)
+        session_meta = {
+            "moment_id": str(moment.id),
+            "moment_name": name,
+            "moment_type": moment_type,
+            **{k: v for k, v in meta.items() if k != "moment_id"},
+        }
+
+        if session_id:
+            existing = await session_repo.get(session_id)
+            if existing:
+                # Merge into existing session metadata
+                merged = existing.metadata or {}
+                uploads = merged.get("uploads", [])
+                uploads.append(session_meta)
+                merged["uploads"] = uploads
+                # Accumulate resource_keys for easy agent lookup
+                all_keys = merged.get("resource_keys", [])
+                all_keys.extend(meta.get("resource_keys", []))
+                merged["resource_keys"] = all_keys
+                merged["latest_moment_id"] = str(moment.id)
+                merged["latest_summary"] = summary[:200]
+                existing.metadata = merged
+                if not existing.description and summary:
+                    existing.description = summary[:500]
+                await session_repo.upsert(existing)
+                # Update moment to point to this session
+                if not moment.source_session_id:
+                    await self.db.execute(
+                        "UPDATE moments SET source_session_id = $1 WHERE id = $2",
+                        session_id, moment.id,
+                    )
+                    moment.source_session_id = session_id
+                session = existing
+            else:
+                session = Session(
+                    id=session_id,
+                    name=name,
+                    description=(session_description or summary)[:500] if summary else None,
+                    mode=moment_type,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    metadata={**session_meta, "uploads": [session_meta]},
+                )
+                await session_repo.upsert(session)
+                moment.source_session_id = session_id
+                await self.db.execute(
+                    "UPDATE moments SET source_session_id = $1 WHERE id = $2",
+                    session_id, moment.id,
+                )
+        else:
+            session = Session(
+                name=name,
+                description=(session_description or summary)[:500] if summary else None,
+                mode=moment_type,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                metadata={**session_meta, "uploads": [session_meta]},
+            )
+            [session] = await session_repo.upsert(session)
+            await self.db.execute(
+                "UPDATE moments SET source_session_id = $1 WHERE id = $2",
+                session.id, moment.id,
+            )
+            moment.source_session_id = session.id
+
+        return moment, session
 
     # ------------------------------------------------------------------
     # Internal helpers

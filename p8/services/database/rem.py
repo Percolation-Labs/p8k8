@@ -35,12 +35,13 @@ class RemMixin:
         tenant_id: str | None = None,
         user_id: UUID | None = None,
         provider: str = "openai",
-        min_similarity: float = 0.7,
+        min_similarity: float = 0.3,
         limit: int = 10,
+        category: str | None = None,
     ) -> list[dict]:
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_search($1::vector, $2, $3, $4, $5, $6, $7, $8)",
+            "SELECT * FROM rem_search($1::vector, $2, $3, $4, $5, $6, $7, $8, $9)",
             str(embedding),
             table,
             field,
@@ -49,6 +50,7 @@ class RemMixin:
             min_similarity,
             limit,
             user_id,
+            category,
         )
         return [dict(r) for r in rows]
 
@@ -76,15 +78,21 @@ class RemMixin:
         user_id: UUID | None = None,
         max_depth: int = 1,
         rel_type: str | None = None,
+        load: bool = False,
     ) -> list[dict]:
+        """Recursive graph walk. Default lazy mode returns keys + summaries.
+        Set load=True to join source tables for full entity data (like LOOKUP)."""
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_traverse($1, $2, $3, $4, $5)",
+            "SELECT * FROM rem_traverse("
+            "$1::varchar, $2::varchar, $3::uuid, $4::int, $5::varchar, $6::bool, $7::bool)",
             key,
             tenant_id,
             user_id,
             max_depth,
             rel_type,
+            False,  # p_keys_only — always false, we use p_load instead
+            load,
         )
         return [dict(r) for r in rows]
 
@@ -214,7 +222,7 @@ class RemMixin:
         tenant_id: str | None = None,
         since: str | None = None,
         query_embedding: list[float] | None = None,
-        min_similarity: float = 0.7,
+        min_similarity: float = 0.3,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:

@@ -15,14 +15,23 @@ from pathlib import Path
 from uuid import UUID
 
 from p8.ontology.base import CoreModel
-from p8.ontology.types import File, Moment, Ontology, Resource, Session
+from p8.ontology.types import File, Ontology, Resource
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.files import FileService
+from p8.services.memory import MemoryService
 from p8.services.repository import Repository
 from p8.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class ContentProcessingError(Exception):
+    """Raised when content extraction/processing fails with a classifiable cause."""
+
+    def __init__(self, message: str, *, code: str = "processing_failed"):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass
@@ -42,6 +51,28 @@ class BulkUpsertResult:
 
     count: int
     table: str
+
+
+_LINK_SKIP_PREFIXES = ("http://", "https://", "mailto:", "#", "data:")
+
+
+def _links_to_edges(links: list[tuple[int, str, str]]) -> list[dict]:
+    """Convert extracted markdown links to graph_edges dicts.
+
+    Each ``[text](target)`` becomes ``{"target": stem, "relation": "links_to", "weight": 1.0}``.
+    URLs, anchors, and data URIs are skipped.  Duplicates are deduplicated by target.
+    """
+    seen: set[str] = set()
+    edges: list[dict] = []
+    for _line, _text, target in links:
+        if any(target.startswith(p) for p in _LINK_SKIP_PREFIXES):
+            continue
+        stem = Path(target).stem
+        if stem in seen:
+            continue
+        seen.add(stem)
+        edges.append({"target": stem, "relation": "links_to", "weight": 1.0})
+    return edges
 
 
 @dataclass
@@ -111,14 +142,48 @@ class ContentService:
             stem, uri, chunk_texts, file_entity.id, filename,
             category=category, tenant_id=tenant_id, user_id=user_id, tags=tag_list,
         )
-        moment = await self._create_upload_moment(
-            stem, filename, file_entity, resource_entities, full_text,
-            thumb_data=thumb_data,
-            session_id=session_id, tenant_id=tenant_id, user_id=user_id,
-        )
-        result_session_id = await self._ensure_upload_session(
-            filename, moment, resource_entities,
-            session_id=session_id, tenant_id=tenant_id, user_id=user_id,
+
+        # Build moment + companion session via unified create_moment_session
+        resource_keys = [r.name for r in resource_entities]
+        file_id_str = str(file_entity.id)
+        is_image = mime_type and mime_type.startswith("image/")
+
+        # Build summary
+        char_count = len(full_text) if full_text else 0
+        parts = [f"Uploaded {filename} ({len(resource_entities)} chunks, {char_count} chars)."]
+        if resource_keys:
+            parts.append(f"Resources: {', '.join(resource_keys[:5])}")
+        if full_text:
+            preview = (full_text[:200] + "…") if len(full_text) > 200 else full_text
+            parts.append(f"Preview: {preview}")
+        summary = "\n".join(parts)
+
+        # Build image_uri for thumbnails
+        image_uri = None
+        if is_image and thumb_data:
+            import base64
+            b64 = base64.b64encode(thumb_data).decode()
+            image_uri = f"data:image/jpeg;base64,{b64}"
+
+        moment_metadata = {
+            "file_id": file_id_str,
+            "file_name": filename,
+            "resource_keys": resource_keys,
+            "source": "upload",
+            "chunk_count": len(resource_entities),
+            **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
+        }
+
+        memory = MemoryService(self.db, self.encryption)
+        moment, session = await memory.create_moment_session(
+            name=f"upload-{stem}",
+            moment_type="content_upload",
+            summary=summary,
+            metadata=moment_metadata,
+            image_uri=image_uri,
+            session_id=UUID(session_id) if session_id else None,
+            tenant_id=tenant_id,
+            user_id=user_id,
         )
 
         return IngestResult(
@@ -126,7 +191,7 @@ class ContentService:
             resources=resource_entities,
             chunk_count=len(chunk_texts),
             total_chars=len(full_text) if full_text else 0,
-            session_id=result_session_id,
+            session_id=session.id,
         )
 
     # ── Ingest sub-steps ─────────────────────────────────────────────────
@@ -287,86 +352,6 @@ print(json.dumps(output))
         repo = Repository(Resource, self.db, self.encryption)
         return await repo.upsert(resources)
 
-    async def _create_upload_moment(
-        self,
-        stem: str, filename: str,
-        file_entity: File, resources: list[Resource], full_text: str,
-        *,
-        thumb_data: bytes | None = None,
-        session_id: str | None, tenant_id: str | None, user_id: UUID | None,
-    ) -> Moment:
-        """Record a content_upload moment with content preview and resource keys."""
-        import base64
-
-        char_count = len(full_text) if full_text else 0
-        resource_keys = [r.name for r in resources]
-
-        # Build enriched summary with preview and resource keys
-        parts = [f"Uploaded {filename} ({len(resources)} chunks, {char_count} chars)."]
-        if resource_keys:
-            parts.append(f"Resources: {', '.join(resource_keys[:5])}")
-        if full_text:
-            preview = (full_text[:200] + "…") if len(full_text) > 200 else full_text
-            parts.append(f"Preview: {preview}")
-
-        # For image uploads: embed thumbnail as base64 data URI (typically ~3KB),
-        # plus store the API path for full-res access
-        image_uri = None
-        file_id_str = str(file_entity.id)
-        is_image = file_entity.mime_type and file_entity.mime_type.startswith("image/")
-
-        if is_image and thumb_data:
-            b64 = base64.b64encode(thumb_data).decode()
-            image_uri = f"data:image/jpeg;base64,{b64}"
-
-        moment = Moment(
-            name=f"upload-{stem}",
-            moment_type="content_upload",
-            summary="\n".join(parts),
-            image_uri=image_uri,
-            source_session_id=UUID(session_id) if session_id else None,
-            metadata={
-                "file_id": file_id_str,
-                "file_name": filename,
-                "resource_keys": resource_keys,
-                "source": "upload",
-                "chunk_count": len(resources),
-                **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
-            },
-            tenant_id=tenant_id, user_id=user_id,
-        )
-        repo = Repository(Moment, self.db, self.encryption)
-        [moment] = await repo.upsert(moment)
-        return moment
-
-    async def _ensure_upload_session(
-        self,
-        filename: str, moment: Moment, resources: list[Resource],
-        *, session_id: str | None, tenant_id: str | None, user_id: UUID | None,
-    ) -> UUID | None:
-        """Create an upload session if none was provided, and link the moment to it."""
-        if session_id:
-            return UUID(session_id)
-
-        session = Session(
-            name=f"upload: {filename}",
-            agent_name="content-upload", mode="upload",
-            user_id=user_id, tenant_id=tenant_id,
-            metadata={
-                "resource_keys": [r.name for r in resources],
-                "moment_id": str(moment.id),
-                "source": filename,
-            },
-        )
-        repo = Repository(Session, self.db, self.encryption)
-        [session] = await repo.upsert(session)
-
-        await self.db.execute(
-            "UPDATE moments SET source_session_id = $1 WHERE id = $2",
-            session.id, moment.id,
-        )
-        return session.id
-
     # ── Audio / Image processors ──────────────────────────────────────────
 
     async def _process_audio(
@@ -374,10 +359,11 @@ print(json.dumps(output))
     ) -> tuple[str, list[str]]:
         """Transcribe audio via OpenAI Whisper, then re-chunk as text."""
         if not self.settings.openai_api_key:
-            logger.warning("No openai_api_key configured — skipping audio transcription")
-            return ("", [])
+            raise ContentProcessingError("Audio transcription requires an OpenAI API key", code="no_api_key")
 
         full_text = await self._transcribe_audio(data, mime_type)
+        if not full_text.strip():
+            return ("", [])
         # Re-chunk the transcript through the standard document path
         _, chunks = await self._process_document(
             full_text.encode(), "text/plain", chunk_max, chunk_overlap,
@@ -392,10 +378,17 @@ print(json.dumps(output))
         from pydub.utils import make_chunks
 
         fmt = mime_type.split("/")[-1]
-        if fmt == "mpeg":
-            fmt = "mp3"
+        # Normalize common MIME sub-types to pydub format names
+        fmt_map = {"mpeg": "mp3", "x-m4a": "m4a", "mp4": "m4a", "x-wav": "wav", "ogg": "ogg"}
+        fmt = fmt_map.get(fmt, fmt)
 
-        audio = AudioSegment.from_file(BytesIO(data), format=fmt)
+        try:
+            audio = AudioSegment.from_file(BytesIO(data), format=fmt)
+        except Exception as e:
+            raise ContentProcessingError(
+                f"Could not decode audio ({mime_type}): {e}", code="audio_decode_failed",
+            ) from e
+
         segments = split_on_silence(
             audio,
             min_silence_len=self.settings.audio_min_silence_len,
@@ -404,19 +397,33 @@ print(json.dumps(output))
         if len(segments) <= 1:
             segments = make_chunks(audio, self.settings.audio_chunk_duration_ms)
 
+        # Filter out segments shorter than 0.5s — Whisper rejects very short audio
+        segments = [s for s in segments if len(s) >= 500]
+        if not segments:
+            logger.info("All audio segments too short to transcribe (%d ms total)", len(audio))
+            return ""
+
         transcriptions: list[str] = []
         async with httpx.AsyncClient(timeout=120) as client:
-            for segment in segments:
+            for i, segment in enumerate(segments):
                 buf = BytesIO()
                 segment.export(buf, format="wav")
                 buf.seek(0)
-                resp = await client.post(
-                    "https://api.openai.com/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
-                    data={"model": "whisper-1", "response_format": "text"},
-                    files={"file": ("chunk.wav", buf, "audio/wav")},
-                )
-                resp.raise_for_status()
+                try:
+                    resp = await client.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
+                        data={"model": "whisper-1", "response_format": "text"},
+                        files={"file": ("chunk.wav", buf, "audio/wav")},
+                    )
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    logger.warning("Whisper API error on segment %d/%d: %s %s",
+                                   i + 1, len(segments), e.response.status_code, e.response.text[:200])
+                    raise ContentProcessingError(
+                        f"Transcription failed (segment {i + 1}/{len(segments)}): {e.response.status_code}",
+                        code="transcription_failed",
+                    ) from e
                 transcriptions.append(resp.text.strip())
 
         return " ".join(transcriptions)
@@ -506,15 +513,24 @@ print(json.dumps(output))
         """Read markdown files and upsert as entities (default: ontologies).
 
         Each file becomes one entity: name=stem, content=body.
+        Markdown links ``[text](target)`` are parsed into ``graph_edges``
+        so the knowledge graph is traversable via ``rem_traverse()``.
         """
+        from p8.utils.links import extract_links
+
         cls = model_class or Ontology
         entities = []
         for fp in paths:
             text = await self.file_service.read_text(fp)
             stem = Path(fp).stem
+
+            # Parse markdown links → graph_edges
+            graph_edges = _links_to_edges(extract_links(text))
+
             entity = cls.model_validate({
                 "name": stem,
                 "content": text,
+                "graph_edges": graph_edges,
                 **({"tenant_id": tenant_id} if tenant_id else {}),
                 **({"user_id": user_id} if user_id else {}),
             })

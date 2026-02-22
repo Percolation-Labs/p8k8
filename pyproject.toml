@@ -36,6 +36,9 @@ dependencies = [
 [project.scripts]
 p8 = "p8.api.cli:app"
 
+[project.optional-dependencies]
+platoon = ["p8-platoon>=0.2"]
+
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",

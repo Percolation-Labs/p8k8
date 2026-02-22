@@ -163,7 +163,7 @@ def test_schema_upsert_full_chain(client):
     assert resp3.status_code == 200
     results = resp3.json()
     assert len(results) >= 1
-    assert any(r["data"]["key"] == "chain-test-agent" for r in results)
+    assert any(r["data"]["name"] == "chain-test-agent" for r in results)
 
     # 4. Embedding queue — schema has __embedding_field__='description', trigger should queue
     resp4 = client.post("/query/", json={

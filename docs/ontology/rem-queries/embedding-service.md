@@ -27,7 +27,10 @@ Each entity type declares `__embedding_field__`:
 | Ontology | `content` | Domain knowledge for semantic retrieval |
 | Resource | `content` | Document chunks |
 | Schema | `description` | Agent/model descriptions |
-| Message | `content` | Chat history for context search |
+| Moment | `summary` | Consolidated activity summaries for search |
+| Session | `description` | Session metadata for search |
+
+Messages are **not** embedded individually — they are consolidated into moments first, which are then embedded. This avoids the cost of embedding every message while keeping activity searchable.
 
 ## Size constraints
 

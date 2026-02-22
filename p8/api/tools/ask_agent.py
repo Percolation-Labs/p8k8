@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from uuid import UUID
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -133,7 +132,6 @@ async def ask_agent(
     agent_name: str,
     input_text: str,
     input_data: dict[str, Any] | None = None,
-    user_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Invoke another agent by name and return its response.
 
@@ -154,7 +152,6 @@ async def ask_agent(
         agent_name: Agent schema name (must exist in schemas table with kind='agent')
         input_text: The prompt to send to the agent
         input_data: Optional structured input data (appended to prompt as JSON)
-        user_id: Optional user ID for context
 
     Returns:
         Dict with status, output, text_response, agent_schema, and

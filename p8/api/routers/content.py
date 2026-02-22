@@ -72,17 +72,32 @@ async def upload_content(
 
     if len(data) <= threshold:
         # ── Inline processing ──────────────────────────────────────────
-        result = await content_service.ingest(
-            data,
-            file.filename or "upload",
-            mime_type=file.content_type,
-            s3_key=s3_key,
-            session_id=session_id,
-            tenant_id=user.tenant_id if user else None,
-            user_id=user.user_id if user else None,
-            category=category,
-            tags=tag_list,
-        )
+        from p8.services.content import ContentProcessingError
+
+        try:
+            result = await content_service.ingest(
+                data,
+                file.filename or "upload",
+                mime_type=file.content_type,
+                s3_key=s3_key,
+                session_id=session_id,
+                tenant_id=user.tenant_id if user else None,
+                user_id=user.user_id if user else None,
+                category=category,
+                tags=tag_list,
+            )
+        except ContentProcessingError as e:
+            log.warning("Content processing failed: %s (code=%s)", e, e.code)
+            raise HTTPException(
+                status_code=422,
+                detail={"error": e.code, "message": str(e)},
+            )
+        except Exception as e:
+            log.exception("Unexpected error during content ingestion")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "ingestion_failed", "message": str(e)},
+            )
         return {
             "file": result.file.model_dump(mode="json"),
             "chunk_count": result.chunk_count,

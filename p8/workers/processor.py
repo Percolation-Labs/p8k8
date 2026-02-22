@@ -60,12 +60,15 @@ def _register_default_handlers() -> None:
     """Register built-in handlers."""
     from p8.workers.handlers.dreaming import DreamingHandler
     from p8.workers.handlers.file_processing import FileProcessingHandler
+    from p8.workers.handlers.news import NewsHandler
     from p8.workers.handlers.scheduled import ScheduledHandler
 
     if "file_processing" not in _HANDLER_REGISTRY:
         register_handler("file_processing", FileProcessingHandler())  # type: ignore[arg-type]
     if "dreaming" not in _HANDLER_REGISTRY:
         register_handler("dreaming", DreamingHandler())  # type: ignore[arg-type]
+    if "news" not in _HANDLER_REGISTRY:
+        register_handler("news", NewsHandler())  # type: ignore[arg-type]
     if "scheduled" not in _HANDLER_REGISTRY:
         register_handler("scheduled", ScheduledHandler())  # type: ignore[arg-type]
 
@@ -149,6 +152,12 @@ class TieredWorker:
             await queue.track_usage(task_id, result or {})
         except Exception as e:
             log.exception("Task %s (%s) failed", task_id, task_type)
+            await queue.emit_event(
+                task_id, "error",
+                worker_id=self.worker_id,
+                error=str(e),
+                detail={"task_type": task_type, "handler": type(handler).__name__},
+            )
             await queue.fail(task_id, str(e))
 
     def stop(self) -> None:

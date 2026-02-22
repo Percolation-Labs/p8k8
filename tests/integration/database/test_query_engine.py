@@ -109,6 +109,16 @@ class TestRemQueryParserTraverse:
         assert q.params["max_depth"] == 2
         assert q.params["rel_type"] == "member"
 
+    def test_load_flag(self):
+        q = self.parser.parse('TRAVERSE "overview" DEPTH 2 LOAD')
+        assert q.params["start_key"] == "overview"
+        assert q.params["max_depth"] == 2
+        assert q.params["load"] is True
+
+    def test_load_flag_default_absent(self):
+        q = self.parser.parse('TRAVERSE "overview"')
+        assert "load" not in q.params
+
 
 class TestRemQueryParserSQL:
     def setup_method(self):
@@ -195,7 +205,7 @@ class TestRemQueryEngineDispatch:
         engine = RemQueryEngine(mock_db, Settings())
         await engine.execute('TRAVERSE "sarah-chen" DEPTH 2 TYPE member')
         mock_db.rem_traverse.assert_called_once_with(
-            "sarah-chen", tenant_id=None, user_id=None, max_depth=2, rel_type="member"
+            "sarah-chen", tenant_id=None, user_id=None, max_depth=2, rel_type="member", load=False
         )
 
     @pytest.mark.asyncio
@@ -360,8 +370,8 @@ class TestQueryEngineIntegration:
         )
         results = await db.rem_query('LOOKUP "query-test-agent"')
         assert len(results) >= 1
-        # rem_lookup returns KV store data: {id, key, type, summary, ...}
-        assert any(r["data"]["key"] == "query-test-agent" for r in results)
+        # rem_lookup returns full entity row: {id, name, kind, ...}
+        assert any(r["data"]["name"] == "query-test-agent" for r in results)
 
     async def test_fuzzy_roundtrip(self, db):
         """Insert a schema, then FUZZY search for it."""

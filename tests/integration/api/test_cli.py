@@ -29,7 +29,7 @@ class TestQueryIntegration:
         )
         results = await db.rem_query('LOOKUP "cli-test-entity"')
         assert len(results) >= 1
-        assert any(r["data"]["key"] == "cli-test-entity" for r in results)
+        assert any(r["data"]["name"] == "cli-test-entity" for r in results)
 
     @pytest.mark.asyncio
     async def test_fuzzy_roundtrip(self, db):

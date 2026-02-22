@@ -7,7 +7,7 @@ Semantic similarity search via pgvector. Finds entities whose embedded content i
 ```sql
 rem_search(p_query_embedding, p_table_name, p_field_name DEFAULT 'content',
            p_tenant_id DEFAULT NULL, p_provider DEFAULT 'openai',
-           p_min_similarity DEFAULT 0.7, p_limit DEFAULT 10, p_user_id DEFAULT NULL)
+           p_min_similarity DEFAULT 0.3, p_limit DEFAULT 10, p_user_id DEFAULT NULL)
 ```
 
 ## How it works

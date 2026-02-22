@@ -52,3 +52,7 @@ app.add_typer(mcp_app, name="mcp")
 from p8.api.cli.verify_links import verify_links_app  # noqa: E402
 
 app.add_typer(verify_links_app, name="verify-links")
+
+from p8.api.cli.dreaming import register_dream_command  # noqa: E402
+
+register_dream_command(app)

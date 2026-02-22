@@ -389,7 +389,7 @@ BEGIN
 
     (p8_deterministic_id('schemas', 'messages'),
      'messages',       'table', 'Chat history messages',
-     '{"has_kv_sync": false, "has_embeddings": true,  "embedding_field": "content",        "is_encrypted": true,  "kv_summary_expr": null}'::jsonb),
+     '{"has_kv_sync": false, "has_embeddings": false, "embedding_field": null,             "is_encrypted": true,  "kv_summary_expr": null}'::jsonb),
 
     (p8_deterministic_id('schemas', 'servers'),
      'servers',        'table', 'Remote tool server registry',

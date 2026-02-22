@@ -588,3 +588,54 @@ async def test_dreaming_handler_increments_usage(db, encryption):
     assert row["used"] == phase2_io, (
         f"Tracked usage ({row['used']}) should match Phase 2 io_tokens ({phase2_io})"
     )
+
+
+# ── 11. Web searches daily quota ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_web_searches_daily_limits(db):
+    """web_searches_daily: free=10, pro=50."""
+    assert get_limits("free").web_searches_daily == 10
+    assert get_limits("pro").web_searches_daily == 50
+    assert get_limits("team").web_searches_daily == 100
+    assert get_limits("enterprise").web_searches_daily == 500
+
+
+@pytest.mark.asyncio
+async def test_web_searches_daily_quota(db):
+    """web_searches_daily uses daily period and enforces limit."""
+    uid = uuid4()
+
+    # Fresh — no usage
+    status = await check_quota(db, uid, "web_searches_daily", "free")
+    assert status.limit == 10
+    assert status.used == 0
+    assert status.exceeded is False
+
+    # Increment below limit
+    await increment_usage(db, uid, "web_searches_daily", 5, "free")
+    status = await check_quota(db, uid, "web_searches_daily", "free")
+    assert status.used == 5
+    assert status.exceeded is False
+
+    # Increment past limit
+    await increment_usage(db, uid, "web_searches_daily", 6, "free")
+    status = await check_quota(db, uid, "web_searches_daily", "free")
+    assert status.used == 11
+    assert status.exceeded is True
+
+
+@pytest.mark.asyncio
+async def test_web_searches_daily_period_isolation(db):
+    """Usage from yesterday does not affect today's web search quota."""
+    uid = uuid4()
+    # Seed usage for yesterday
+    await db.execute(
+        "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
+        "VALUES ($1, $2, CURRENT_DATE - 1, 10)",
+        uid, "web_searches_daily",
+    )
+    # Today should show 0
+    status = await check_quota(db, uid, "web_searches_daily", "free")
+    assert status.used == 0
+    assert status.exceeded is False

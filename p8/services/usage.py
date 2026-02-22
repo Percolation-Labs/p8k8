@@ -2,7 +2,8 @@
 
 Quotas enforce per-user resource limits based on their Stripe plan (free/pro/
 team/enterprise). Each plan defines caps for chat tokens, storage, dreaming
-minutes, cloud folders, file size, worker processing, and dreaming I/O tokens.
+minutes, cloud folders, file size, worker processing, dreaming I/O tokens,
+and web searches.
 
 Storage
 -------
@@ -17,8 +18,9 @@ Periodic resources (chat_tokens, dreaming_minutes, worker_bytes_processed, …)
 ------------------------------------------------------------------------------
 - **Where stored:** The ``usage_tracking`` table, partitioned by
   ``(user_id, resource_type, period_start)`` where ``period_start`` is the
-  first day of the current month. Each row tracks ``used`` (accumulated
-  counter) and ``granted_extra`` (add-on credits that extend the base limit).
+  first day of the current month (or current day for daily resources like
+  ``web_searches_daily``). Each row tracks ``used`` (accumulated counter)
+  and ``granted_extra`` (add-on credits that extend the base limit).
 - **Checked:** Before the action that consumes the resource. For chat tokens
   this is a pre-flight check in ``POST /chat/{chat_id}`` — if
   ``used > limit + granted_extra`` the request is rejected with 429.
@@ -62,14 +64,19 @@ class PlanLimits:
     max_file_size_bytes: int    # per-file upload limit
     worker_bytes_processed: int # monthly file processing budget
     dreaming_io_tokens: int     # monthly dreaming token budget
+    web_searches_daily: int     # per day (Tavily API)
+    news_searches_daily: int    # per day (platoon feed digest)
 
 
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "free":       PlanLimits(25_000,    10 * GB, 30,  1,   24, 10 * MB,  100 * MB,  10_000),
-    "pro":        PlanLimits(100_000,   50 * GB, 120, 5,   12, 100 * MB,    1 * GB,  50_000),
-    "team":       PlanLimits(100_000,  100 * GB, 180, 10,  12, 500 * MB,    5 * GB, 100_000),
-    "enterprise": PlanLimits(250_000,  500 * GB, 360, 999,  6,   1 * GB,   50 * GB, 500_000),
+    "free":       PlanLimits(25_000,    10 * GB, 30,  1,   24, 10 * MB,  100 * MB,  10_000,     10, 1),
+    "pro":        PlanLimits(100_000,   50 * GB, 120, 5,   12, 100 * MB,    1 * GB,  50_000,    50, 2),
+    "team":       PlanLimits(100_000,  100 * GB, 180, 10,  12, 500 * MB,    5 * GB, 100_000,   100, 5),
+    "enterprise": PlanLimits(250_000,  500 * GB, 360, 999,  6,   1 * GB,   50 * GB, 500_000,   500, 10),
 }
+
+# Resources tracked with daily periods instead of monthly.
+_DAILY_RESOURCES = {"web_searches_daily", "news_searches_daily"}
 
 
 @dataclass
@@ -136,10 +143,11 @@ async def check_quota(
 
     # Periodic resource — check usage_tracking
     limit_value = getattr(limits, resource_type, 0)
+    trunc = "day" if resource_type in _DAILY_RESOURCES else "month"
     row = await db.fetchrow(
         "SELECT used, granted_extra FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = $2 "
-        "AND period_start = date_trunc('month', CURRENT_DATE)::date",
+        f"AND period_start = date_trunc('{trunc}', CURRENT_DATE)::date",
         user_id, resource_type,
     )
     used = row["used"] if row else 0
@@ -162,8 +170,10 @@ async def increment_usage(
     limits = get_limits(plan_id)
     limit_value = getattr(limits, resource_type, 0)
 
+    trunc = "day" if resource_type in _DAILY_RESOURCES else "month"
     row = await db.fetchrow(
-        "SELECT * FROM usage_increment($1, $2, $3, $4)",
+        "SELECT * FROM usage_increment($1, $2, $3, $4, "
+        f"date_trunc('{trunc}', CURRENT_DATE)::date)",
         user_id, resource_type, amount, limit_value,
     )
     return QuotaStatus(
@@ -190,11 +200,15 @@ async def get_all_usage(
     # Storage (computed from files table)
     storage = await check_quota(db, user_id, "storage_bytes", plan_id)
 
+    # Web searches (daily)
+    web = await check_quota(db, user_id, "web_searches_daily", plan_id)
+
     return {
         "plan_id": plan_id,
         "chat_tokens": {"used": chat.used, "limit": chat.limit, "exceeded": chat.exceeded},
         "dreaming_minutes": {"used": dreaming.used, "limit": dreaming.limit, "exceeded": dreaming.exceeded},
         "storage_bytes": {"used": storage.used, "limit": storage.limit, "exceeded": storage.exceeded},
+        "web_searches_daily": {"used": web.used, "limit": web.limit, "exceeded": web.exceeded},
         "dreaming_interval_hours": limits.dreaming_interval_hours,
         "cloud_folders": limits.cloud_folders,
     }

@@ -17,7 +17,10 @@ from p8.services.queue import QueueService
 from p8.settings import Settings
 
 # Maps Settings attributes → env vars expected by third-party SDKs.
-_SDK_ENV_MAPPINGS = {"openai_api_key": "OPENAI_API_KEY"}
+_SDK_ENV_MAPPINGS = {
+    "openai_api_key": "OPENAI_API_KEY",
+    "tavily_api_key": "TAVILY_API_KEY",
+}
 
 
 def create_kms(settings: Settings, db: Database):

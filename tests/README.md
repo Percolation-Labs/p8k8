@@ -16,6 +16,7 @@ uv run pytest tests/integration/
 uv run pytest tests/integration/database/
 uv run pytest tests/integration/agents/
 uv run pytest tests/integration/security/
+uv run pytest tests/integration/billing/
 ```
 
 ## Structure
@@ -48,7 +49,8 @@ tests/
 │   │   ├── test_memory.py          # MemoryService — persist/load, compaction, encryption
 │   │   ├── test_moments.py         # Moment building, chaining, timeline, today summary
 │   │   ├── test_moments_feed.py    # rem_moments_feed — daily summaries, pagination, scoping
-│   │   └── test_memory_pipeline.py # End-to-end: compaction → breadcrumbs → replay
+│   │   ├── test_memory_pipeline.py # End-to-end: compaction → breadcrumbs → replay
+│   │   └── test_timeline_decryption.py # Session timeline per-row encryption_level decryption
 │   ├── agents/                     # Agents & chat
 │   │   ├── test_chat.py            # Chat endpoint, AgentAdapter, config, routing, streaming
 │   │   ├── test_agent_tools.py     # Agent construction, MCP tools, delegation, event sink
@@ -59,9 +61,14 @@ tests/
 │   │   ├── test_vault.py           # VaultTransitKMS (requires OpenBao on localhost:8200)
 │   │   ├── test_auth_flows.py      # JWT, refresh rotation, magic links, OAuth callbacks
 │   │   └── * test_mcp_token_exchange.py  # ← SEE NOTE BELOW
+│   ├── billing/                    # Quotas & usage
+│   │   └── test_quotas.py          # SQL usage_increment, plan lookup, check_quota, API 429s, dreaming quotas
 │   ├── content/                    # Content & embeddings
 │   │   ├── test_content.py         # ContentService — ingest, chunk, extract (all mocked)
-│   │   └── test_embeddings.py      # Embedding pipeline, providers, queue worker, API
+│   │   ├── test_embeddings.py      # Embedding pipeline, providers, queue worker, API
+│   │   ├── test_thumbnail.py       # Image upload → thumbnail generation → feed with image
+│   │   ├── test_upload_chat_flow.py # Upload → feed → chat about it (requires LLM, @pytest.mark.llm)
+│   │   └── test_upload_session_context.py # Upload/compaction → session → agent context (22 tests)
 │   ├── api/                        # API & CLI
 │   │   ├── test_api.py             # FastAPI endpoints — health, schemas, queries, upsert chain
 │   │   └── test_cli.py             # Typer commands — live DB integration for query roundtrips
@@ -134,6 +141,7 @@ Conversation memory loading, compaction, moment building, and the temporal feed.
 | `test_moments` | Moment threshold triggering, moment chaining, context injection, today summary, session timeline interleaving, content-upload moments |
 | `test_moments_feed` | `rem_moments_feed` — paginated feed with virtual daily summaries, cursor pagination, user scoping, deterministic session IDs |
 | `test_memory_pipeline` | End-to-end: compaction → resolvable KV breadcrumbs, multi-turn sessions, moment chaining across batches, full pipeline replay from seed data, upload + chat moments |
+| `test_timeline_decryption` | Session timeline per-row `encryption_level` decryption — platform rows decrypted, sealed/unencrypted skipped, mixed levels handled correctly |
 
 ### agents/ — Agents & Chat
 
@@ -157,14 +165,25 @@ Security layer — envelope encryption, KMS backends, OAuth, JWT, magic links, M
 | `test_auth_flows` | `AuthService` — JWT create/verify/expiry, refresh rotation, revocation, magic link full flow (create → verify → single-use), Google/Apple OAuth callbacks |
 | `* test_mcp_token_exchange` | **Critical.** Full MCP OAuth 2.1 token exchange against real DB — PKCE flow, devices JSON string parsing, single-use codes. Catches the production bugs described above |
 
+### billing/ — Quotas & Usage
+
+Usage tracking, plan limits, and API enforcement for chat, storage, and dreaming.
+
+| Test | What it covers |
+|------|----------------|
+| `test_quotas` | SQL `usage_increment()` (fresh row, accumulation, exceed limit, granted_extra), `get_user_plan` (defaults to free, Stripe plan lookup, cache invalidation), `check_quota` (messages, storage bytes, deleted file exclusion), monthly period isolation, API 429 enforcement on `/chat/` and `/content/`, plan upgrade limit changes, dreaming IO token and minutes quotas, dreaming pre-flight allow/block, dreaming handler usage increment (phase 2 only) |
+
 ### content/ — Content & Embeddings
 
-Ingestion pipeline and embedding generation.
+Ingestion pipeline, embedding generation, thumbnails, and upload-to-agent context flow.
 
 | Test | What it covers |
 |------|----------------|
 | `test_content` | `ContentService` — `load_structured` (JSON/YAML), `ingest()` for PDF/audio/image, chunking, S3 upload, graph edges, `upsert_markdown()`, `upsert_structured()`. All mocked (no DB needed) |
 | `test_embeddings` | Embedding pipeline — upsert triggers → KV + embeddings via `EmbeddingWorker`, content-hash caching, `LocalEmbeddingProvider` unit tests, `/embeddings/process` and `/embeddings/generate` API endpoints |
+| `test_thumbnail` | Image upload → base64 thumbnail generation → moment `image_uri` as data URI → feed includes thumbnail. Uses PIL to generate test images |
+| `test_upload_chat_flow` | End-to-end: upload document → check feed for moment → chat about it (agent answers from session context). **Requires real LLM** (`@pytest.mark.llm`) |
+| `test_upload_session_context` | **22 tests.** Upload/compaction → session → agent context. Covers: moment metadata, session creation/enrichment, multiple uploads accumulating, agent context injection (`load_context`, `ContextAttributes.render`), compaction stamps (`latest_moment_id`, `moment_count`), feed LEFT JOIN session data, standalone moments, breadcrumbs, kv_store LOOKUP (full entity via `rem_lookup`), audio upload, image upload with thumbnail, mixed upload+compaction, moment chaining, **user isolation** (LOOKUP + FUZZY). See `docs/moments.md` for data examples |
 
 ### api/ — API & CLI
 

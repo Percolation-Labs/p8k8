@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 
@@ -15,7 +15,6 @@ async def remind_me(
     description: str,
     crontab: str,
     tags: list[str] | None = None,
-    user_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Create a scheduled reminder that triggers a push notification.
 
@@ -30,7 +29,6 @@ async def remind_me(
         description: What to remind the user about
         crontab: Cron expression for recurring, or ISO datetime for one-time
         tags: Optional tags for categorization
-        user_id: User to send the reminder to
 
     Returns:
         Reminder details including job name and schedule
@@ -38,8 +36,7 @@ async def remind_me(
     from croniter import croniter
     from p8.settings import get_settings
 
-    if not user_id:
-        user_id = get_user_id()
+    user_id = get_user_id()
     if not user_id:
         return {"status": "error", "error": "user_id is required for reminders"}
 

@@ -1,17 +1,16 @@
-"""GET /moments — list, get, timeline, today summary, search."""
+"""GET /moments — list, get, timeline, today summary, search, rate."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from p8.api.deps import CurrentUser, get_db, get_encryption, get_optional_user
-from p8.ontology.types import Moment
+from p8.ontology.types import Message, Moment
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.memory import MemoryService
-from p8.services.repository import Repository
 
 router = APIRouter()
 
@@ -63,10 +62,62 @@ async def session_timeline(
     session_id: UUID,
     limit: int = Query(50, ge=1, le=500),
     db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
 ):
     """Interleaved messages + moments for a session, chronologically ordered."""
     rows = await db.rem_session_timeline(session_id, limit=limit)
-    return rows
+    if not rows:
+        return rows
+
+    # Use per-row encryption_level as primary signal (stamped at write time).
+    # Fall back to tenant lookup only when encryption_level is NULL (legacy data).
+    needs_decrypt = any(
+        r.get("encryption_level") == "platform"
+        or (r.get("encryption_level") is None and r.get("content_or_summary"))
+        for r in rows
+    )
+    if not needs_decrypt:
+        return [dict(r) for r in rows]
+
+    # Resolve tenant_id for DEK — needed for actual decryption
+    tenant_row = await db.fetchrow(
+        "SELECT tenant_id FROM messages WHERE session_id = $1 AND tenant_id IS NOT NULL LIMIT 1",
+        session_id,
+    )
+    tenant_id = tenant_row["tenant_id"] if tenant_row else None
+    if not tenant_id:
+        return [dict(r) for r in rows]
+
+    await encryption.get_dek(tenant_id)
+
+    # For legacy rows with no encryption_level, check tenant mode as fallback
+    fallback_decrypt = await encryption.should_decrypt_on_read(tenant_id)
+
+    result = []
+    for row in rows:
+        data = dict(row)
+        level = data.get("encryption_level")
+
+        # Decide per-row: decrypt platform rows, skip client/sealed/disabled/none
+        should_decrypt = (
+            level == "platform"
+            or (level is None and fallback_decrypt)
+        )
+
+        if should_decrypt and data.get("content_or_summary"):
+            if data.get("event_type") == "message":
+                dec = encryption.decrypt_fields(
+                    Message, {"id": data["event_id"], "content": data["content_or_summary"]}, tenant_id
+                )
+                data["content_or_summary"] = dec["content"]
+            elif data.get("event_type") == "moment":
+                dec = encryption.decrypt_fields(
+                    Moment, {"id": data["event_id"], "summary": data["content_or_summary"]}, tenant_id
+                )
+                data["content_or_summary"] = dec["summary"]
+
+        result.append(data)
+    return result
 
 
 @router.get("/reminders")
@@ -143,10 +194,10 @@ async def search_moments(
             results = await db.rem_search(
                 vectors[0],
                 "moments",
-                field="content",
+                field="summary",
                 user_id=user_id,
                 provider=embedding_service.provider.provider_name,
-                min_similarity=0.3,
+                min_similarity=db.settings.embedding_min_similarity,
                 limit=limit,
             )
             if results:
@@ -162,11 +213,77 @@ async def search_moments(
         return []
 
 
-def _moment_response(moment: Moment) -> dict:
-    """Serialize a Moment for the API, mapping image_uri → image."""
-    data = moment.model_dump(mode="json")
-    data["image"] = data.pop("image_uri", None)
-    return data
+
+@router.post("/{moment_id}/rate")
+async def rate_moment(
+    moment_id: UUID,
+    rating: int = Body(..., ge=1, le=5, embed=True),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Rate a moment (1-5)."""
+    from p8.services.repository import Repository
+
+    repo = Repository(Moment, db, encryption)
+    entity = await repo.get(moment_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    if user and entity.user_id and entity.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not your moment")
+    await db.execute(
+        "UPDATE moments SET rating = $1, updated_at = NOW() WHERE id = $2",
+        rating, moment_id,
+    )
+    entity.rating = rating
+    return entity.model_dump(mode="json")
+
+
+@router.delete("/reminders/{moment_id}")
+async def delete_reminder(
+    moment_id: UUID,
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Soft-delete a reminder moment by ID."""
+    from p8.services.repository import Repository
+
+    repo = Repository(Moment, db, encryption)
+    # Verify it exists and is a reminder owned by the user
+    entity = await repo.get(moment_id)
+    if not entity or entity.moment_type != "reminder":
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    if user and entity.user_id and entity.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not your reminder")
+
+    ok = await repo.delete(moment_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"deleted": True, "id": str(moment_id)}
+
+
+@router.delete("/{moment_id}")
+async def delete_moment(
+    moment_id: UUID,
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Soft-delete a moment by ID."""
+    from p8.services.repository import Repository
+
+    repo = Repository(Moment, db, encryption)
+    entity = await repo.get(moment_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    if user and entity.user_id and entity.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not your moment")
+
+    ok = await repo.delete(moment_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    return {"deleted": True, "id": str(moment_id)}
 
 
 @router.get("/{moment_id}")
@@ -175,12 +292,28 @@ async def get_moment(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Get a single moment by ID."""
-    repo = Repository(Moment, db, encryption)
-    moment = await repo.get(moment_id)
-    if not moment:
+    """Get a single moment with companion session data."""
+    from p8.services.repository import Repository
+
+    row = await db.fetchrow(
+        """SELECT mo.*, s.name AS session_name, s.description AS session_description,
+                  s.metadata AS session_metadata
+           FROM moments mo
+           LEFT JOIN sessions s ON s.id = mo.source_session_id AND s.deleted_at IS NULL
+           WHERE mo.id = $1 AND mo.deleted_at IS NULL""",
+        moment_id,
+    )
+    if not row:
         raise HTTPException(status_code=404, detail="Moment not found")
-    return _moment_response(moment)
+    repo = Repository(Moment, db, encryption)
+    await repo._ensure_deks([row])
+    entity = repo._decrypt_row(row)
+    # Merge session join fields onto the model dump
+    result = entity.model_dump(mode="json")
+    for extra in ("session_name", "session_description", "session_metadata"):
+        if extra in dict(row):
+            result[extra] = dict(row)[extra]
+    return result
 
 
 @router.get("/")
@@ -193,14 +326,46 @@ async def list_moments(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """List moments with optional filters. User from JWT or x-user-id header."""
-    repo = Repository(Moment, db, encryption)
-    filters = {}
+    """List moments with companion session data via LEFT JOIN."""
+    from p8.services.repository import Repository
+
+    user_id = user.user_id if user else None
+
+    conditions = ["mo.deleted_at IS NULL"]
+    args: list = []
+
+    if user_id:
+        args.append(user_id)
+        conditions.append(f"mo.user_id = ${len(args)}")
     if session_id:
-        filters["source_session_id"] = str(session_id)
+        args.append(session_id)
+        conditions.append(f"mo.source_session_id = ${len(args)}")
     if moment_type:
-        filters["moment_type"] = moment_type
-    moments = await repo.find(
-        user_id=user.user_id if user else None, filters=filters, limit=limit, offset=offset
+        args.append(moment_type)
+        conditions.append(f"mo.moment_type = ${len(args)}")
+
+    args.extend([limit, offset])
+    where = " AND ".join(conditions)
+
+    rows = await db.fetch(
+        f"""SELECT mo.*, s.name AS session_name, s.description AS session_description,
+                   s.metadata AS session_metadata
+            FROM moments mo
+            LEFT JOIN sessions s ON s.id = mo.source_session_id AND s.deleted_at IS NULL
+            WHERE {where}
+            ORDER BY mo.created_at DESC
+            LIMIT ${len(args) - 1} OFFSET ${len(args)}""",
+        *args,
     )
-    return [_moment_response(m) for m in moments]
+    repo = Repository(Moment, db, encryption)
+    await repo._ensure_deks(rows)
+    results = []
+    for row in rows:
+        entity = repo._decrypt_row(row)
+        result = entity.model_dump(mode="json")
+        row_dict = dict(row)
+        for extra in ("session_name", "session_description", "session_metadata"):
+            if extra in row_dict:
+                result[extra] = row_dict[extra]
+        results.append(result)
+    return results

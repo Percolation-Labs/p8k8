@@ -2,6 +2,9 @@
 
 Runs all sql/*.sql files in lexicographic order (01_, 02_, …).
 Optionally pass specific filenames to run a subset.
+
+Uses a raw DB connection (no encryption/KMS bootstrap) so it can run
+against a blank database before any tables exist.
 """
 
 from __future__ import annotations
@@ -12,7 +15,8 @@ from typing import Optional
 
 import typer
 
-import p8.services.bootstrap as _svc
+from p8.services.database import Database
+from p8.settings import Settings
 
 migrate_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
@@ -20,7 +24,10 @@ _SQL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "sql"
 
 
 async def _run_migrate(files: list[str] | None = None):
-    async with _svc.bootstrap_services() as (db, encryption, settings, *_rest):
+    settings = Settings()
+    db = Database(settings)
+    await db.connect()
+    try:
         if files:
             scripts = [_SQL_DIR / f for f in files]
         else:
@@ -40,6 +47,8 @@ async def _run_migrate(files: list[str] | None = None):
             typer.echo(f"  {script.name} applied")
 
         typer.echo("Migration complete")
+    finally:
+        await db.close()
 
 
 @migrate_app.callback()

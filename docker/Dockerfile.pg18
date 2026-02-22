@@ -25,7 +25,4 @@ RUN apt-get purge -y build-essential git postgresql-server-dev-18 ca-certificate
     libcurl4-openssl-dev \
     && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-COPY sql/01_install_entities.sql /docker-entrypoint-initdb.d/01_install_entities.sql
-COPY sql/02_install.sql          /docker-entrypoint-initdb.d/02_install.sql
-COPY sql/03_qms.sql              /docker-entrypoint-initdb.d/03_qms.sql
-COPY sql/04_payments.sql         /docker-entrypoint-initdb.d/04_payments.sql
+# No SQL baked in — run `p8 migrate` after the container is healthy.

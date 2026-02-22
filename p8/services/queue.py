@@ -107,6 +107,25 @@ class QueueService:
         await self.db.execute("SELECT fail_task($1, $2)", task_id, error)
         log.warning("Failed task %s: %s", task_id, error[:200])
 
+    async def emit_event(
+        self,
+        task_id: UUID,
+        event: str,
+        *,
+        worker_id: str | None = None,
+        error: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
+        """Write an entry to the task_events audit log."""
+        await self.db.execute(
+            "SELECT emit_task_event($1, $2, $3, $4, $5::jsonb)",
+            task_id,
+            event,
+            worker_id,
+            error,
+            _json_dumps(detail) if detail else None,
+        )
+
     async def check_task_quota(self, task: dict) -> bool:
         """Pre-flight quota check before processing a task."""
         user_id = task.get("user_id")
@@ -114,22 +133,30 @@ class QueueService:
             return True  # system tasks have no quota
 
         task_type = task["task_type"]
+        quota_key: str | None = None
 
         if task_type == "file_processing":
-            payload = extract_payload(task)
-            size = payload.get("size_bytes", 0)
+            quota_key = "storage_bytes"
+        elif task_type == "dreaming":
+            quota_key = "dreaming_minutes"
+        elif task_type == "news":
+            quota_key = "news_searches_daily"
+
+        if quota_key:
             from p8.services.usage import check_quota, get_user_plan
 
             plan_id = await get_user_plan(self.db, user_id)
-            status = await check_quota(self.db, user_id, "storage_bytes", plan_id)
-            return not status.exceeded
-
-        if task_type == "dreaming":
-            from p8.services.usage import check_quota, get_user_plan
-
-            plan_id = await get_user_plan(self.db, user_id)
-            status = await check_quota(self.db, user_id, "dreaming_minutes", plan_id)
-            return not status.exceeded
+            status = await check_quota(self.db, user_id, quota_key, plan_id)
+            if status.exceeded:
+                task_id = task.get("id")
+                if task_id:
+                    await self.emit_event(
+                        task_id,
+                        "quota_exceeded",
+                        error=f"{quota_key} quota exceeded (used={status.used}, limit={status.limit})",
+                        detail={"quota": quota_key, "used": status.used, "limit": status.limit, "plan": plan_id},
+                    )
+                return False
 
         return True
 

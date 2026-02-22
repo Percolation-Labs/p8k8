@@ -15,6 +15,7 @@ from p8.ontology.types import (
     Tool,
     ToolReference,
     User,
+    UserMetadata,
 )
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "Server",
     "Tool",
     "User",
+    "UserMetadata",
     "File",
     "Feedback",
     "StorageGrant",

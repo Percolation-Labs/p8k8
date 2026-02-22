@@ -3,12 +3,14 @@
 > Deployable agentic memory API for Hetzner K8s. PostgreSQL 18, pgvector, pydantic-ai, FastAPI, FastMCP, AG-UI.
 > Forked from remslim, packaged as `p8` for the `p8-w-1` Hetzner cluster.
 
+If you follow the instructions to ingest the ontology and the MCP server is enabled you can search it for details on the project.
+
 ## Overview
 
 Minimal agentic framework where **ontology is everything**. Every entity — models, agents, evaluators, tools — is a row in the `schemas` table.
 
 - **p8/ontology/** — Pydantic models -> JSON Schema -> Postgres tables -> agents
-- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content
+- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content, queue, usage, web_search
 - **p8/agentic/** — pydantic-ai agent adapter, streaming, delegation, routing
 - **p8/api/** — FastAPI + FastMCP server, AG-UI chat, CLI (Typer)
 
@@ -79,6 +81,7 @@ p8 upsert docs/architecture.md
 p8 schema list [--kind agent]
 p8 schema verify
 p8 chat [SESSION_ID] [--agent query-agent]
+p8 dream <USER_ID> [--lookback 7] [--allow-empty]
 p8 moments [--type session_chunk]
 p8 moments timeline SESSION_ID
 ```
@@ -101,6 +104,12 @@ Two deployment recipes exist for the p8 stack:
 
 **Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled file worker (2GB RAM) + optional dreaming CronJob.
 
+## Default Test User
+
+**Sage Whitfield** — user_id `7d31eddf-7ff7-542a-982f-7522e7a3ec67` (row id `e76db623-9067-5688-9d24-e05bff36b694`, email `user@example.com`)
+
+Restoration ecologist from the Pacific Northwest. Interests: forest ecology, birdwatching, mushroom foraging, trail running, woodworking, field recording, wildlife photography, permaculture. Has a border collie named Cedar. Subscribed to Audubon News, Treehugger, iNaturalist, and US Forest Service feeds. Seeded in `sql/02_install.sql`.
+
 ## Git Commits
 
 - NEVER add `Co-Authored-By` or any AI attribution lines to commit messages
@@ -113,14 +122,8 @@ Two deployment recipes exist for the p8 stack:
 docker buildx build --platform linux/amd64 \
   -t percolationlabs/p8k8:latest --push .
 
-# Create namespace + SQL init configmap
+# Create namespace
 kubectl --context=p8-w-1 create namespace p8 --dry-run=client -o yaml | kubectl apply -f -
-kubectl --context=p8-w-1 -n p8 create configmap p8-postgres-init-sql \
-  --from-file=01_install_entities.sql=sql/01_install_entities.sql \
-  --from-file=02_install.sql=sql/02_install.sql \
-  --from-file=03_qms.sql=sql/03_qms.sql \
-  --from-file=04_payments.sql=sql/04_payments.sql \
-  --dry-run=client -o yaml | kubectl apply -f -
 
 # Create secrets from .env (or edit overlays/hetzner/secrets.yaml)
 kubectl --context=p8-w-1 -n p8 create secret generic p8-database-credentials \
@@ -130,7 +133,11 @@ kubectl --context=p8-w-1 -n p8 create secret generic p8-database-credentials \
 # Deploy the full stack
 kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
 
-# Local dev (docker-compose runs sql/ init scripts on first start)
+# Run migrations (blank DB — no SQL baked into the PG image)
+p8 migrate
+
+# Local dev
 docker compose up -d --build
+p8 migrate
 uv run p8 serve
 ```

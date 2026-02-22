@@ -73,8 +73,8 @@ def test_image_upload_creates_thumbnail_and_feed(client, test_image_bytes):
             break
 
     assert upload_moment is not None, f"No moment found for file_id={file_id}"
-    image = upload_moment.get("image")
-    assert image is not None, "image not set on content_upload moment"
+    image = upload_moment.get("image_uri") or upload_moment.get("image")
+    assert image is not None, "image_uri not set on content_upload moment"
     assert image.startswith("data:image/jpeg;base64,"), f"Expected data URI, got: {image[:60]}"
 
     # Verify the base64 decodes to valid JPEG

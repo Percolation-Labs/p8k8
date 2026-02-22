@@ -414,43 +414,70 @@ $$ LANGUAGE plpgsql;
 -- REM Functions
 -- ---------------------------------------------------------------------------
 
--- rem_lookup — O(1) entity lookup by normalized key
+-- rem_lookup — O(1) entity lookup by normalized key → full entity row
 CREATE OR REPLACE FUNCTION rem_lookup(
     p_entity_key VARCHAR(255),
     p_tenant_id VARCHAR(100) DEFAULT NULL,
     p_user_id UUID DEFAULT NULL
 ) RETURNS TABLE(entity_type VARCHAR, data JSONB) AS $$
+DECLARE
+    v_type  VARCHAR;
+    v_id    UUID;
+    v_data  JSONB;
 BEGIN
-    RETURN QUERY
-    SELECT kv.entity_type,
-           jsonb_build_object(
-               'id', kv.entity_id,
-               'key', kv.entity_key,
-               'type', kv.entity_type,
-               'summary', kv.content_summary,
-               'metadata', kv.metadata,
-               'graph_edges', kv.graph_edges
-           )
+    -- Step 1: O(1) lookup in kv_store index
+    SELECT kv.entity_type, kv.entity_id
+      INTO v_type, v_id
     FROM kv_store kv
     WHERE kv.entity_key = normalize_key(p_entity_key)
       AND (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
       AND (p_user_id IS NULL OR kv.user_id = p_user_id);
+
+    IF v_type IS NULL THEN
+        RETURN;
+    END IF;
+
+    -- Step 2: Dynamic join to source table for full entity data
+    EXECUTE format(
+        'SELECT row_to_json(t.*)::jsonb FROM %I t WHERE t.id = $1 AND t.deleted_at IS NULL',
+        v_type
+    ) INTO v_data USING v_id;
+
+    IF v_data IS NOT NULL THEN
+        RETURN QUERY SELECT v_type, v_data;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 
 -- rem_search — semantic similarity search via pgvector
+-- Drop old 8-param signature (without p_category) to avoid ambiguous overload
+DROP FUNCTION IF EXISTS rem_search(vector, varchar, varchar, varchar, varchar, real, integer, uuid);
 CREATE OR REPLACE FUNCTION rem_search(
     p_query_embedding vector,
     p_table_name VARCHAR(100),
     p_field_name VARCHAR(100) DEFAULT 'content',
     p_tenant_id VARCHAR(100) DEFAULT NULL,
     p_provider VARCHAR(50) DEFAULT 'openai',
-    p_min_similarity REAL DEFAULT 0.7,
+    p_min_similarity REAL DEFAULT 0.3,
     p_limit INTEGER DEFAULT 10,
-    p_user_id UUID DEFAULT NULL
+    p_user_id UUID DEFAULT NULL,
+    p_category VARCHAR(100) DEFAULT NULL
 ) RETURNS TABLE(entity_type VARCHAR, similarity_score REAL, data JSONB) AS $$
+DECLARE
+    v_cat_filter TEXT := '';
+    v_has_category BOOLEAN;
 BEGIN
+    -- Only filter on category if the target table has that column
+    SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = p_table_name AND column_name = 'category'
+    ) INTO v_has_category;
+
+    IF v_has_category AND p_category IS NOT NULL THEN
+        v_cat_filter := format(' AND t.category = %L', p_category);
+    END IF;
+
     RETURN QUERY EXECUTE format(
         'SELECT %L::varchar AS entity_type,
                 (1 - (e.embedding <=> $1))::real AS similarity_score,
@@ -462,8 +489,9 @@ BEGIN
            AND (t.deleted_at IS NULL)
            AND ($4 IS NULL OR t.tenant_id = $4)
            AND ($5 IS NULL OR t.user_id = $5)
-           AND (1 - (e.embedding <=> $1)) >= $6
-         ORDER BY e.embedding <=> $1
+           AND (1 - (e.embedding <=> $1)) >= $6'
+        || v_cat_filter ||
+        ' ORDER BY e.embedding <=> $1
          LIMIT $7',
         p_table_name, p_table_name, p_table_name
     ) USING p_query_embedding, p_field_name, p_provider,
@@ -509,59 +537,93 @@ $$ LANGUAGE plpgsql;
 
 
 -- rem_traverse — recursive graph walk via graph_edges JSONB
+--
+-- Three modes controlled by p_keys_only and p_load:
+--   default (both false)  → lazy: keys + summary/metadata from kv_store
+--   p_keys_only = true    → keys only: no entity_record at all
+--   p_load = true         → load: full entity rows from source tables (like LOOKUP)
+--
+-- Prefer lazy mode for agents exploring the graph — LOOKUP specific nodes after.
+DROP FUNCTION IF EXISTS rem_traverse(VARCHAR, VARCHAR, UUID, INTEGER, VARCHAR, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION rem_traverse(
     p_entity_key VARCHAR(255),
     p_tenant_id VARCHAR(100) DEFAULT NULL,
     p_user_id UUID DEFAULT NULL,
     p_max_depth INTEGER DEFAULT 1,
     p_rel_type VARCHAR(100) DEFAULT NULL,
-    p_keys_only BOOLEAN DEFAULT FALSE
+    p_keys_only BOOLEAN DEFAULT FALSE,
+    p_load BOOLEAN DEFAULT FALSE
 ) RETURNS TABLE(
     depth INT, entity_key VARCHAR, entity_type VARCHAR,
     entity_id UUID, rel_type VARCHAR, rel_weight REAL,
     path TEXT[], entity_record JSONB
 ) AS $$
-WITH RECURSIVE traversal AS (
-    -- Seed: starting node
-    SELECT 0 AS depth,
-           kv.entity_key::varchar AS entity_key,
-           kv.entity_type::varchar AS entity_type,
-           kv.entity_id,
-           NULL::varchar AS rel_type, 1.0::real AS rel_weight,
-           ARRAY[kv.entity_key::text] AS path,
-           CASE WHEN p_keys_only THEN NULL
-                ELSE jsonb_build_object('summary', kv.content_summary,
-                                        'metadata', kv.metadata)
-           END AS entity_record
-    FROM kv_store kv
-    WHERE kv.entity_key = normalize_key(p_entity_key)
-      AND (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
+DECLARE
+    v_row RECORD;
+    v_data JSONB;
+BEGIN
+    -- Run the recursive CTE and iterate results
+    FOR v_row IN
+        WITH RECURSIVE traversal AS (
+            -- Seed: starting node
+            SELECT 0 AS depth,
+                   kv.entity_key::varchar AS entity_key,
+                   kv.entity_type::varchar AS entity_type,
+                   kv.entity_id,
+                   NULL::varchar AS rel_type, 1.0::real AS rel_weight,
+                   ARRAY[kv.entity_key::text] AS path,
+                   jsonb_build_object('summary', kv.content_summary,
+                                      'metadata', kv.metadata) AS kv_record
+            FROM kv_store kv
+            WHERE kv.entity_key = normalize_key(p_entity_key)
+              AND (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
+              AND (p_user_id IS NULL OR kv.user_id = p_user_id)
 
-    UNION ALL
+            UNION ALL
 
-    -- Walk edges
-    SELECT t.depth + 1,
-           normalize_key(edge->>'target')::varchar,
-           kv2.entity_type::varchar,
-           kv2.entity_id,
-           (edge->>'relation')::varchar,
-           COALESCE((edge->>'weight')::real, 1.0),
-           t.path || normalize_key(edge->>'target')::text,
-           CASE WHEN p_keys_only THEN NULL
-                ELSE jsonb_build_object('summary', kv2.content_summary,
-                                        'metadata', kv2.metadata)
-           END
-    FROM traversal t
-    JOIN kv_store kv_src ON kv_src.entity_key = t.entity_key
-    CROSS JOIN LATERAL jsonb_array_elements(kv_src.graph_edges) AS edge
-    JOIN kv_store kv2 ON kv2.entity_key = normalize_key(edge->>'target')
-    WHERE t.depth < p_max_depth
-      AND NOT (normalize_key(edge->>'target') = ANY(t.path))
-      AND (p_rel_type IS NULL OR edge->>'relation' = p_rel_type)
-      AND (p_tenant_id IS NULL OR kv2.tenant_id = p_tenant_id)
-)
-SELECT * FROM traversal;
-$$ LANGUAGE sql;
+            -- Walk edges
+            SELECT t.depth + 1,
+                   normalize_key(edge->>'target')::varchar,
+                   kv2.entity_type::varchar,
+                   kv2.entity_id,
+                   (edge->>'relation')::varchar,
+                   COALESCE((edge->>'weight')::real, 1.0),
+                   t.path || normalize_key(edge->>'target')::text,
+                   jsonb_build_object('summary', kv2.content_summary,
+                                      'metadata', kv2.metadata)
+            FROM traversal t
+            JOIN kv_store kv_src ON kv_src.entity_key = t.entity_key
+            CROSS JOIN LATERAL jsonb_array_elements(kv_src.graph_edges) AS edge
+            JOIN kv_store kv2 ON kv2.entity_key = normalize_key(edge->>'target')
+            WHERE t.depth < p_max_depth
+              AND NOT (normalize_key(edge->>'target') = ANY(t.path))
+              AND (p_rel_type IS NULL OR edge->>'relation' = p_rel_type)
+              AND (p_tenant_id IS NULL OR kv2.tenant_id = p_tenant_id)
+              AND (p_user_id IS NULL OR kv2.user_id = p_user_id)
+        )
+        SELECT * FROM traversal
+    LOOP
+        -- Determine entity_record based on mode
+        IF p_keys_only THEN
+            v_data := NULL;
+        ELSIF p_load THEN
+            -- Dynamic join to source table for full entity data (like LOOKUP)
+            EXECUTE format(
+                'SELECT row_to_json(t.*)::jsonb FROM %I t WHERE t.id = $1 AND t.deleted_at IS NULL',
+                v_row.entity_type
+            ) INTO v_data USING v_row.entity_id;
+        ELSE
+            -- Lazy: summary + metadata from kv_store
+            v_data := v_row.kv_record;
+        END IF;
+
+        RETURN QUERY SELECT v_row.depth, v_row.entity_key, v_row.entity_type,
+                            v_row.entity_id, v_row.rel_type, v_row.rel_weight,
+                            v_row.path, v_data;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
 
 
 -- rem_load_messages — flexible message loader with optional constraints
@@ -962,7 +1024,7 @@ CREATE OR REPLACE FUNCTION search_sessions(
     p_tenant_id VARCHAR(100) DEFAULT NULL,
     p_since TIMESTAMPTZ DEFAULT NULL,
     p_query_embedding vector DEFAULT NULL,        -- semantic on description
-    p_min_similarity REAL DEFAULT 0.7,
+    p_min_similarity REAL DEFAULT 0.3,
     p_page INT DEFAULT 1,
     p_page_size INT DEFAULT 20
 ) RETURNS TABLE(
@@ -1100,6 +1162,13 @@ active_dates AS (
         WHERE mo.deleted_at IS NULL
           AND (p_user_id IS NULL OR mo.user_id = p_user_id)
           AND (p_before_date IS NULL OR (mo.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
+        UNION
+        SELECT (r.created_at AT TIME ZONE 'UTC')::date AS d
+        FROM resources r
+        WHERE r.deleted_at IS NULL
+          AND r.category IS NOT NULL
+          AND (p_user_id IS NULL OR r.user_id = p_user_id)
+          AND (p_before_date IS NULL OR (r.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
     ) AS all_dates
     ORDER BY d DESC
     LIMIT p_limit
@@ -1142,6 +1211,19 @@ daily_reminder_counts AS (
     GROUP BY 1
 ),
 
+daily_resource_counts AS (
+    SELECT sub.d, jsonb_object_agg(sub.category, sub.cnt) AS resource_counts
+    FROM (
+        SELECT (r.created_at AT TIME ZONE 'UTC')::date AS d, r.category, COUNT(*) AS cnt
+        FROM resources r
+        WHERE r.deleted_at IS NULL
+          AND r.category IS NOT NULL
+          AND (p_user_id IS NULL OR r.user_id = p_user_id)
+          AND (r.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
+        GROUP BY 1, 2
+    ) sub GROUP BY sub.d
+),
+
 -- 3. Sessions active on each date (for metadata) — window-bounded
 daily_sessions AS (
     SELECT
@@ -1165,41 +1247,45 @@ daily_summaries AS (
         'daily_summary'::varchar                                       AS event_type,
         uuid_generate_v5(
             'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
-            COALESCE(p_user_id::text, 'global') || '/' || ds.d::text
+            COALESCE(p_user_id::text, 'global') || '/' || ad.d::text
         )                                                              AS event_id,
-        ds.d                                                           AS event_date,
-        (ds.d + TIME '23:59:59')::timestamptz                         AS event_timestamp,
-        ('daily-' || ds.d::text)::varchar                              AS name,
+        ad.d                                                           AS event_date,
+        (ad.d + TIME '23:59:59')::timestamptz                         AS event_timestamp,
+        ('daily-' || ad.d::text)::varchar                              AS name,
         'daily_summary'::varchar                                       AS moment_type,
         format('%s: %s messages across %s session(s), %s tokens. %s moment(s).',
-               CASE WHEN ds.d = CURRENT_DATE THEN 'Today'
-                    WHEN ds.d = CURRENT_DATE - 1 THEN 'Yesterday'
-                    ELSE to_char(ds.d, 'Mon DD')
+               CASE WHEN ad.d = CURRENT_DATE THEN 'Today'
+                    WHEN ad.d = CURRENT_DATE - 1 THEN 'Yesterday'
+                    ELSE to_char(ad.d, 'Mon DD')
                END,
-               ds.msg_count, ds.session_count, ds.total_tokens,
+               COALESCE(ds.msg_count, 0), COALESCE(ds.session_count, 0),
+               COALESCE(ds.total_tokens, 0),
                COALESCE(dmc.moment_count, 0)
         )                                                              AS summary,
         uuid_generate_v5(
             'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
-            COALESCE(p_user_id::text, 'global') || '/' || ds.d::text
+            COALESCE(p_user_id::text, 'global') || '/' || ad.d::text
         )                                                              AS session_id,
         NULL::text                                                     AS image,
         NULL::varchar                                                  AS encryption_level,
         jsonb_build_object(
-            'message_count', ds.msg_count,
-            'total_tokens', ds.total_tokens,
-            'session_count', ds.session_count,
+            'message_count', COALESCE(ds.msg_count, 0),
+            'total_tokens', COALESCE(ds.total_tokens, 0),
+            'session_count', COALESCE(ds.session_count, 0),
             'moment_count', COALESCE(dmc.moment_count, 0),
             'reminder_count', COALESCE(drc.reminder_count, 0),
+            'resource_counts', COALESCE(drsc.resource_counts, '{}'::jsonb),
             'sessions', COALESCE(dss.sessions, '[]'::jsonb)
         )                                                              AS metadata
-    FROM daily_stats ds
-    LEFT JOIN daily_moment_counts dmc ON dmc.d = ds.d
-    LEFT JOIN daily_reminder_counts drc ON drc.d = ds.d
-    LEFT JOIN daily_sessions dss ON dss.d = ds.d
+    FROM active_dates ad
+    LEFT JOIN daily_stats ds ON ds.d = ad.d
+    LEFT JOIN daily_moment_counts dmc ON dmc.d = ad.d
+    LEFT JOIN daily_reminder_counts drc ON drc.d = ad.d
+    LEFT JOIN daily_resource_counts drsc ON drsc.d = ad.d
+    LEFT JOIN daily_sessions dss ON dss.d = ad.d
 ),
 
--- 5. Real moments — window-bounded
+-- 5. Real moments — window-bounded, LEFT JOIN companion session
 real_moments AS (
     SELECT
         'moment'::varchar                                              AS event_type,
@@ -1217,9 +1303,13 @@ real_moments AS (
             'previous_moment_keys', mo.previous_moment_keys,
             'topic_tags', mo.topic_tags,
             'entities', mo.present_persons,
-            'moment_metadata', mo.metadata
+            'moment_metadata', mo.metadata,
+            'session_name', s.name,
+            'session_description', s.description,
+            'session_metadata', s.metadata
         )                                                              AS metadata
     FROM moments mo
+    LEFT JOIN sessions s ON s.id = mo.source_session_id AND s.deleted_at IS NULL
     WHERE mo.deleted_at IS NULL
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
@@ -1539,10 +1629,33 @@ SELECT cron.schedule('gc-dropped-cols', '0 3 * * 0', 'SELECT gc_dropped_columns(
 INSERT INTO users (id, name, email, content, metadata, tags, user_id)
 VALUES (
     p8_deterministic_id('users', 'user@example.com'),
-    'Test User',
+    'Sage Whitfield',
     'user@example.com',
     'Default test user for development and integration testing.',
-    '{"role": "admin", "env": "dev"}'::jsonb,
+    '{
+      "env": "dev", "role": "admin",
+      "relations": [
+        {"name": "Cedar", "role": "pet", "notes": "Border collie, loves trail runs"},
+        {"name": "Rowan", "role": "friend", "notes": "Birding partner, met at Audubon Society"}
+      ],
+      "interests": [
+        "forest ecology", "birdwatching", "mushroom foraging", "trail running",
+        "woodworking", "field recording", "wildlife photography", "permaculture"
+      ],
+      "feeds": [
+        {"url": "https://www.audubon.org/news/rss", "name": "Audubon News", "type": "rss"},
+        {"url": "https://www.treehugger.com/feeds/all", "name": "Treehugger", "type": "rss"},
+        {"url": "https://www.inaturalist.org/observations.atom", "name": "iNaturalist", "type": "rss"},
+        {"url": "https://www.fs.usda.gov/news/releases", "name": "US Forest Service", "type": "website"}
+      ],
+      "preferences": {"timezone": "US/Pacific", "language": "en", "summary_style": "concise"},
+      "facts": {
+        "location": "Pacific Northwest", "birthday": "June 21",
+        "occupation": "Restoration ecologist",
+        "favorite_trail": "Eagle Creek Trail, Columbia River Gorge",
+        "birding_life_list": "247 species", "favorite_tree": "Western red cedar"
+      }
+    }'::jsonb,
     ARRAY['dev', 'test'],
     '7d31eddf-7ff7-542a-982f-7522e7a3ec67'::uuid
 )

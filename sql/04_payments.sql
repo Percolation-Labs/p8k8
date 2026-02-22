@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS usage_tracking (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL,
     tenant_id       VARCHAR(100),
-    resource_type   VARCHAR(30) NOT NULL,    -- 'chat_tokens' | 'dreaming_minutes'
-    period_start    DATE NOT NULL,           -- first of month (e.g. 2026-02-01)
+    resource_type   VARCHAR(30) NOT NULL,    -- 'chat_tokens' | 'dreaming_minutes' | 'web_searches_daily'
+    period_start    DATE NOT NULL,           -- first of month or day for daily resources
     used            BIGINT NOT NULL DEFAULT 0,
     granted_extra   BIGINT NOT NULL DEFAULT 0,  -- add-on credits
     updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

@@ -60,8 +60,14 @@ class RemQueryParser:
             "FIELD": "field",
             "LIMIT": "limit",
             "MIN_SIMILARITY": "min_similarity",
+            "CATEGORY": "category",
         },
         "TRAVERSE": {"DEPTH": "max_depth", "TYPE": "rel_type"},
+    }
+
+    # Boolean flags (no value) per mode → param name
+    _FLAGS: dict[str, dict[str, str]] = {
+        "TRAVERSE": {"LOAD": "load"},
     }
 
     # Which params are numeric (float or int)
@@ -124,6 +130,7 @@ class RemQueryParser:
 
     def _parse_claused(self, mode: str, tokens: list[str]) -> RemQuery:
         clauses = self._CLAUSES.get(mode, {})
+        flags = self._FLAGS.get(mode, {})
         params: dict = {}
         positional_parts: list[str] = []
         i = 0
@@ -141,6 +148,11 @@ class RemQueryParser:
                     continue
 
             upper = tok.upper()
+            # Boolean flags (no value, e.g. LOAD)
+            if upper in flags:
+                params[flags[upper]] = True
+                i += 1
+                continue
             if upper in clauses:
                 param_name = clauses[upper]
                 if i + 1 < len(tokens):
@@ -248,8 +260,9 @@ class RemQueryEngine:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 provider=self._get_provider().provider_name,
-                min_similarity=p.get("min_similarity", 0.7),
+                min_similarity=p.get("min_similarity", self.settings.embedding_min_similarity),
                 limit=p.get("limit", 10),
+                category=p.get("category"),
             )
 
         if mode == "TRAVERSE":
@@ -259,6 +272,7 @@ class RemQueryEngine:
                 user_id=user_id,
                 max_depth=p.get("max_depth", 1),
                 rel_type=p.get("rel_type"),
+                load=p.get("load", False),
             )
 
         if mode == "SQL":

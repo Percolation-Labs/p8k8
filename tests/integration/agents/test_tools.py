@@ -50,7 +50,7 @@ async def test_search_lookup(_seed_schema):
     assert result["status"] == "success"
     assert result["count"] >= 1
     assert any(
-        r["data"]["key"] == "search-tool-test" for r in result["results"]
+        r["data"]["name"] == "search-tool-test" for r in result["results"]
     )
 
 

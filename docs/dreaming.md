@@ -1,14 +1,31 @@
 # Dreaming
 
-> **Validation requirement**: All changes to the dreaming system MUST be validated end-to-end
-> by running `uv run python scripts/simulate_dreaming.py` and confirming:
+Background AI reflection on user activity. The dreaming system periodically reviews recent conversations, moments, and resources to surface cross-session insights and connections that might not be noticed in the flow of conversation.
+
+## CLI
+
+```bash
+# Run dreaming for a user (default: last 24 hours)
+p8 dream <user-id>
+
+# Custom lookback window (last 7 days)
+p8 dream <user-id> --lookback 7
+
+# Exploration mode — dream even with no recent activity
+p8 dream <user-id> --allow-empty
+
+# Write full results (moments + back-edges) to YAML
+p8 dream <user-id> -o /tmp/dreams.yaml
+```
+
+> **Validation**: All changes to the dreaming system MUST be validated by running
+> `p8 dream <user-id>` (or `uv run python scripts/simulate_dreaming.py` for the full
+> seeded test harness) and confirming:
 > 1. Session messages — correct role counts (user, assistant, tool_call), no failed searches
 > 2. Structured output — `dream_moments` populated with `affinity_fragments` (not empty)
 > 3. Database moments — `moments` table has rows with `moment_type='dream'` and non-empty `graph_edges`
-> 4. Back-edges — referenced entities in `kv_store` AND source tables have `dreamed_from` edges
+> 4. Back-edges — referenced entities in source tables (`resources`, `moments`) have `dreamed_from` edges
 > 5. Usage tracking — `usage_tracking` row for `dreaming_io_tokens` matches `result.usage().total_tokens`
-
-Background AI reflection on user activity. The dreaming system periodically reviews recent conversations, moments, and resources to surface cross-session insights and connections that might not be noticed in the flow of conversation.
 
 ## Two Orders of Dreaming
 
@@ -36,13 +53,15 @@ A worker claims the task via `QueueService.claim("small", worker_id)`. Before pr
 
 ### Phase 1 — First-order dreaming (consolidation)
 
-`DreamingHandler._build_session_moments()` iterates the user's last 10 sessions and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
+`DreamingHandler._build_session_moments()` finds all sessions with activity within the date-based window (`NOW() - lookback_days`, default 24 hours) and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
+
+The date window is configurable via the task payload `lookback_days` (default 1). This is the grain — all activity within the window is eligible for consolidation.
 
 ### Phase 2 — Second-order dreaming (semantic affinity)
 
 `DreamingHandler._run_dreaming_agent()`:
 
-1. **Load context** — Gathers recent activity within a ~38K token budget (30% of the 128K model context). Token budget is estimated via `tiktoken` to ensure the context fits:
+1. **Load context** — Gathers recent activity within the same date-based window, subject to a ~38K token budget (30% of the 128K model context). Token budget is estimated via `tiktoken` to ensure the context fits:
    - Up to 50 moments (summaries, tags, graph edges)
    - Up to 5 recent sessions with up to 20 messages each (truncated to 500 chars)
    - Up to 10 referenced resources discovered via moment `graph_edges` (truncated to 2K chars)
@@ -51,15 +70,53 @@ A worker claims the task via `QueueService.claim("small", worker_id)`. Before pr
 
 3. **Run agent** — The `DreamingAgent` (model: `openai:gpt-4.1-mini`, temperature: 0.7, `structured_output: true`) executes:
    - **First-order**: Read provided context, identify themes, draft 1-3 dream moments (no tool calls)
-   - **Second-order**: Generate 5-10 search queries, search moments and resources separately via `SEARCH "keywords" FROM moments/resources LIMIT 3`, discover connections to older data
+   - **Second-order**: Generate 5-10 search queries, search moments and resources separately via `SEARCH "keywords" FROM moments LIMIT 3` and `SEARCH "keywords" FROM resources CATEGORY document LIMIT 3`, discover connections to older data. Resource searches are filtered to `category='document'` (user uploads) to avoid processing auto-ingested news/digest items. In future this should filter for user content more broadly, not just by category.
    - **Output**: Populate `dream_moments`, `search_questions`, `cross_session_themes` in the structured response
 
 4. **Persist dream moments** — The handler extracts `result.output.dream_moments` (proper Pydantic `DreamMoment` objects) and for each:
    - Converts `affinity_fragments` → `graph_edges`
    - Creates a `Moment` entity (type=`dream`) and upserts it
-   - Merges `dreamed_from` back-edges onto referenced entities via `kv_store` lookup
+   - Merges `dreamed_from` back-edges onto referenced entities (see below)
 
 5. **Persist messages** — All agent messages (user prompt, assistant responses, tool calls/results) are saved to the dreaming session.
+
+### Back-edges — source tables, not kv_store
+
+When a dream moment links to an existing entity (e.g. a resource or another moment) via `graph_edges`, the handler merges a `dreamed_from` back-edge onto the **source table** (`resources`, `moments`, etc.) — never directly onto `kv_store`.
+
+`kv_store` is an UNLOGGED ephemeral index. It maps entity keys to `(entity_type, entity_id)` and caches `graph_edges` for fast lookup, but it is rebuilt from source tables by `rem_sync_kv_store()` and lost on crash. Writing back-edges to `kv_store` directly would lose them.
+
+The flow:
+
+1. Resolve `target_key` → `(entity_type, entity_id)` via `kv_store` (index lookup only)
+2. Read current `graph_edges` from the **source table** (authoritative)
+3. Merge the new `dreamed_from` edge
+4. Write merged edges back to the **source table** only
+5. `kv_store` picks up the change on the next `rem_sync_kv_store()` run
+
+This means after dreaming, you can query back-edges directly on the source:
+
+```sql
+-- Resources linked to dreams
+SELECT name, graph_edges FROM resources
+WHERE user_id = '<uid>'
+AND graph_edges @> '[{"relation": "dreamed_from"}]';
+
+-- Moments linked to dreams
+SELECT name, moment_type, graph_edges FROM moments
+WHERE user_id = '<uid>'
+AND graph_edges @> '[{"relation": "dreamed_from"}]';
+```
+
+### Empty activity — exploration mode
+
+When the date window contains no activity (no messages, no uploads), dreaming normally skips. With `allow_empty_activity_dreaming` enabled in the task payload:
+
+- **Phase 1** produces nothing — no messages to consolidate
+- **Phase 2** skips first-order consolidation entirely. Instead the agent generates random semantic searches across the full knowledge base, surfacing forgotten resources, old moments, and serendipitous connections
+- Output is still 1–3 `dream` moments, but born from exploration rather than consolidation
+
+This keeps the knowledge graph alive during quiet periods and resurfaces older material.
 
 ## Token Tracking
 
@@ -166,7 +223,7 @@ uv run python scripts/simulate_dreaming.py
 - `dream-pattern-validation-boundaries` → `arch-doc-chunk-0000` (w=0.7) + `ml-report-chunk-0000` (w=0.7)
 - `dream-synthesis-api-gateway-microservices-ml-pipelines` → `arch-doc-chunk-0000` (w=0.9) + `ml-report-chunk-0000` (w=0.8)
 
-**Back-edges** — Both targets updated in `kv_store` AND source tables:
+**Back-edges** — Written to source tables only (`kv_store` syncs from them):
 - `resources.arch-doc-chunk-0000` ← 3 `dreamed_from` edges (w=0.9, 0.7, 0.8)
 - `resources.ml-report-chunk-0000` ← 3 `dreamed_from` edges (w=0.8, 0.7, 0.6)
 

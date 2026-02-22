@@ -95,6 +95,24 @@ class TestLoadStructured:
 # ============================================================================
 
 
+def _mock_create_moment_session(**overrides):
+    """Return a patched create_moment_session that returns mock Moment+Session."""
+    from p8.ontology.types import Moment, Session
+
+    captured_kwargs = []
+
+    async def _mock_cms(**kwargs):
+        captured_kwargs.append(kwargs)
+        name = kwargs.get("name", "mock-moment")
+        moment_type = kwargs.get("moment_type", "content_upload")
+        summary = kwargs.get("summary", "")
+        moment = Moment(name=name, moment_type=moment_type, summary=summary)
+        session = Session(name=name, mode=moment_type)
+        return moment, session
+
+    return _mock_cms, captured_kwargs
+
+
 class TestIngest:
     @pytest.mark.asyncio
     async def test_basic_ingest(self):
@@ -106,39 +124,32 @@ class TestIngest:
             chunks=[_FakeChunk("Chunk one."), _FakeChunk("Chunk two."), _FakeChunk("Chunk three.")],
         )
 
-        # Mock repo.upsert to return entities with IDs
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="test.pdf", parsed_content="Full extracted text from the document.")
         mock_resources = [
             Resource(name=f"test-chunk-{i:04d}", ordinal=i, content=c.content)
             for i, c in enumerate(fake_result.chunks)
         ]
-        mock_moment = Moment(name="upload-test", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: test.pdf", agent_name="content-upload", mode="upload")
-
-        upsert_calls = []
 
         async def mock_upsert(entities):
             if isinstance(entities, list):
-                upsert_calls.append(("bulk", len(entities)))
                 return mock_resources[: len(entities)]
-            upsert_calls.append(("single", type(entities).__name__))
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             return [mock_file]
+
+        mock_cms, cms_kwargs = _mock_create_moment_session()
 
         with (
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(
                 b"pdf bytes",
@@ -159,37 +170,35 @@ class TestIngest:
 
         fake_result = _FakeExtractResult(content="Small text.", chunks=[])
 
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="small.txt", parsed_content="Small text.")
         mock_resource = Resource(name="small-chunk-0000", ordinal=0, content="Small text.")
-        mock_moment = Moment(name="upload-small", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: small.txt", agent_name="content-upload", mode="upload")
 
         call_count = 0
 
         async def mock_upsert(entities):
             nonlocal call_count
             call_count += 1
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             if call_count == 1:
                 return [mock_file]
             if isinstance(entities, list):
                 return [mock_resource]
             return [mock_file]
 
+        mock_cms, _ = _mock_create_moment_session()
+
         with (
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(b"small", "small.txt")
 
@@ -203,37 +212,35 @@ class TestIngest:
 
         fake_result = _FakeExtractResult(content="Text.", chunks=[])
 
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="doc.pdf", uri="s3://my-bucket/doc.pdf")
         mock_resource = Resource(name="doc-chunk-0000", ordinal=0, content="Text.")
-        mock_moment = Moment(name="upload-doc", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: doc.pdf", agent_name="content-upload", mode="upload")
 
         call_count = 0
 
         async def mock_upsert(entities):
             nonlocal call_count
             call_count += 1
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             if call_count == 1:
                 return [mock_file]
             if isinstance(entities, list):
                 return [mock_resource]
             return [mock_file]
 
+        mock_cms, _ = _mock_create_moment_session()
+
         with (
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(
                 b"pdf", "doc.pdf", s3_key="doc.pdf"
@@ -248,32 +255,30 @@ class TestIngest:
 
         fake_result = _FakeExtractResult(content="Text.", chunks=[_FakeChunk("Chunk.")])
 
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="report.pdf", parsed_content="Text.")
-        mock_moment = Moment(name="upload-report", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: report.pdf", agent_name="content-upload", mode="upload")
         captured_resources = []
 
         async def mock_upsert(entities):
             if isinstance(entities, list):
                 captured_resources.extend(entities)
                 return [Resource(name=e.name, ordinal=e.ordinal, content=e.content) for e in entities]
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             return [mock_file]
+
+        mock_cms, _ = _mock_create_moment_session()
 
         with (
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             await svc.ingest(b"pdf", "report.pdf")
 
@@ -284,49 +289,45 @@ class TestIngest:
         assert "file_id" in r.metadata
 
     @pytest.mark.asyncio
-    async def test_ingest_creates_session_with_metadata(self):
-        """ingest() creates a session with resource_keys and source in metadata."""
+    async def test_ingest_creates_moment_session(self):
+        """ingest() calls create_moment_session with correct metadata."""
         svc, db, _ = _make_content_service()
 
         fake_result = _FakeExtractResult(content="Text.", chunks=[_FakeChunk("Chunk.")])
 
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="notes.pdf", parsed_content="Text.")
         mock_resource = Resource(name="notes-chunk-0000", ordinal=0, content="Chunk.")
-        mock_moment = Moment(name="upload-notes", moment_type="content_upload", summary="test")
-
-        captured_sessions = []
 
         async def mock_upsert(entities):
             if isinstance(entities, list):
                 return [mock_resource]
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                captured_sessions.append(entities)
-                return [entities]
             return [mock_file]
+
+        mock_cms, cms_kwargs = _mock_create_moment_session()
 
         with (
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(b"pdf", "notes.pdf")
 
-        assert len(captured_sessions) == 1
-        session = captured_sessions[0]
-        assert session.name == "upload: notes.pdf"
-        assert session.agent_name == "content-upload"
-        assert "resource_keys" in session.metadata
-        assert "notes-chunk-0000" in session.metadata["resource_keys"]
-        assert session.metadata["source"] == "notes.pdf"
+        assert len(cms_kwargs) == 1
+        kw = cms_kwargs[0]
+        assert kw["name"] == "upload-notes"
+        assert kw["moment_type"] == "content_upload"
+        assert kw["metadata"]["file_name"] == "notes.pdf"
+        assert "notes-chunk-0000" in kw["metadata"]["resource_keys"]
+        assert kw["metadata"]["source"] == "upload"
         assert result.session_id is not None
 
 
@@ -453,24 +454,18 @@ class TestAudioIngest:
         """Audio ingest: splits audio, transcribes each chunk, creates Resources."""
         svc, db, _ = _make_content_service()
 
-        from p8.ontology.types import File, Moment, Resource, Session
+        from p8.ontology.types import File, Resource
 
         mock_file = File(name="interview", parsed_content="Hello world. Goodbye world.")
         mock_resources = [
             Resource(name="interview-chunk-0000", ordinal=0, content="Hello world. Goodbye world.")
         ]
-        mock_moment = Moment(name="upload-interview", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: interview.mp3", agent_name="content-upload", mode="upload")
 
         call_count = 0
 
         async def mock_upsert(entities):
             nonlocal call_count
             call_count += 1
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             if call_count == 1:
                 return [mock_file]
             if isinstance(entities, list):
@@ -480,6 +475,7 @@ class TestAudioIngest:
         # Mock pydub: AudioSegment and split_on_silence
         mock_segment = MagicMock()
         mock_segment.export = MagicMock(side_effect=lambda buf, format: buf.write(b"fake-wav"))
+        mock_segment.__len__ = MagicMock(return_value=5000)  # 5s segment, above 500ms minimum
 
         mock_audio = MagicMock()
         mock_split = MagicMock(return_value=[mock_segment, mock_segment])
@@ -500,6 +496,8 @@ class TestAudioIngest:
             chunks=[_FakeChunk("Hello world. Hello world.")],
         )
 
+        mock_cms, _ = _mock_create_moment_session()
+
         with (
             patch("pydub.AudioSegment.from_file", return_value=mock_audio),
             patch("pydub.silence.split_on_silence", mock_split),
@@ -508,10 +506,12 @@ class TestAudioIngest:
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(
                 b"fake-audio-bytes",
@@ -529,21 +529,16 @@ class TestAudioIngest:
         """When split_on_silence returns <=1 segment, falls back to make_chunks."""
         svc, db, _ = _make_content_service()
 
-        from p8.ontology.types import File, Moment, Session
+        from p8.ontology.types import File
 
         mock_file = File(name="podcast", parsed_content="Transcribed text.")
-        mock_moment = Moment(name="upload-podcast", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: podcast.mp3", agent_name="content-upload", mode="upload")
 
         async def mock_upsert(entities):
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             return [mock_file]
 
         mock_segment = MagicMock()
         mock_segment.export = MagicMock(side_effect=lambda buf, format: buf.write(b"fake-wav"))
+        mock_segment.__len__ = MagicMock(return_value=5000)  # 5s segment, above 500ms minimum
 
         mock_audio = MagicMock()
         mock_split = MagicMock(return_value=[mock_segment])  # only 1 segment → fallback
@@ -563,6 +558,8 @@ class TestAudioIngest:
             chunks=[_FakeChunk("Transcribed text. Transcribed text. Transcribed text.")],
         )
 
+        mock_cms, _ = _mock_create_moment_session()
+
         with (
             patch("pydub.AudioSegment.from_file", return_value=mock_audio),
             patch("pydub.silence.split_on_silence", mock_split),
@@ -572,10 +569,12 @@ class TestAudioIngest:
             patch("kreuzberg.ChunkingConfig"),
             patch("kreuzberg.ExtractionConfig"),
             patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
         ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(
                 b"fake-audio",
@@ -587,37 +586,19 @@ class TestAudioIngest:
         assert mock_client.post.await_count == 3  # 3 fixed chunks
 
     @pytest.mark.asyncio
-    async def test_audio_no_api_key_skips_transcription(self):
-        """When openai_api_key is empty, audio ingest stores File with no text."""
+    async def test_audio_no_api_key_raises_error(self):
+        """When openai_api_key is empty, audio ingest raises ContentProcessingError."""
+        from p8.services.content import ContentProcessingError
+
         svc, db, _ = _make_content_service()
         svc.settings.openai_api_key = ""
 
-        from p8.ontology.types import File, Moment, Session
-
-        mock_file = File(name="voice", parsed_content=None)
-        mock_moment = Moment(name="upload-voice", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: voice.wav", agent_name="content-upload", mode="upload")
-
-        async def mock_upsert(entities):
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
-            return [mock_file]
-
-        with patch("p8.services.content.Repository") as MockRepo:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
-            MockRepo.return_value = mock_repo_instance
-
-            result = await svc.ingest(
+        with pytest.raises(ContentProcessingError, match="OpenAI API key"):
+            await svc.ingest(
                 b"audio-data",
                 "voice.wav",
                 mime_type="audio/wav",
             )
-
-        assert result.chunk_count == 0
-        assert result.total_chars == 0
 
 
 # ============================================================================
@@ -631,23 +612,23 @@ class TestImageIngest:
         """Image ingest creates File entity with empty parsed_content, no Resources."""
         svc, db, _ = _make_content_service()
 
-        from p8.ontology.types import File, Moment, Session
+        from p8.ontology.types import File
 
         mock_file = File(name="photo", parsed_content="")
-        mock_moment = Moment(name="upload-photo", moment_type="content_upload", summary="test")
-        mock_session = Session(name="upload: photo.jpg", agent_name="content-upload", mode="upload")
 
         async def mock_upsert(entities):
-            if isinstance(entities, Moment):
-                return [mock_moment]
-            if isinstance(entities, Session):
-                return [mock_session]
             return [mock_file]
 
-        with patch("p8.services.content.Repository") as MockRepo:
+        mock_cms, _ = _mock_create_moment_session()
+
+        with (
+            patch("p8.services.content.Repository") as MockRepo,
+            patch("p8.services.content.MemoryService") as MockMem,
+        ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.upsert = AsyncMock(side_effect=mock_upsert)
             MockRepo.return_value = mock_repo_instance
+            MockMem.return_value.create_moment_session = AsyncMock(side_effect=mock_cms)
 
             result = await svc.ingest(
                 b"image-bytes",

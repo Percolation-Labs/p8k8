@@ -288,7 +288,7 @@ async def test_upload_moment_without_session_creates_session(db, encryption):
         "SELECT * FROM sessions WHERE id = $1", result.session_id,
     )
     assert session_row is not None
-    assert session_row["name"] == "upload: meeting-notes.txt"
+    assert session_row["name"] == "upload-meeting-notes"
     assert "resource_keys" in session_row["metadata"]
 
     # Should be in kv_store (findable via rem_lookup)
@@ -305,6 +305,8 @@ async def test_upload_moment_without_session_creates_session(db, encryption):
 
 async def test_moment_chaining_across_many_batches(db, encryption):
     """5 batches of messages → 5 moments → each chains to predecessor."""
+    import asyncio
+
     memory = MemoryService(db, encryption)
     session = await create_session(db, encryption)
     threshold = 80
@@ -314,6 +316,10 @@ async def test_moment_chaining_across_many_batches(db, encryption):
         await seed_messages(
             memory, session.id, 4, token_count=50, prefix=f"batch{batch}",
         )
+        # Small delay to ensure distinct timestamps between moment creation
+        # and next batch's message seeding (avoids microsecond collisions
+        # in the `created_at > last_moment.created_at` filter).
+        await asyncio.sleep(0.01)
         moment = await memory.maybe_build_moment(session.id, threshold=threshold)
         assert moment is not None, f"Batch {batch} should trigger a moment"
         moments.append(moment)

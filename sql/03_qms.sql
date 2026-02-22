@@ -37,6 +37,47 @@ CREATE TABLE IF NOT EXISTS task_queue (
 
 
 -- ---------------------------------------------------------------------------
+-- Task Events — append-only audit log for task lifecycle
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS task_events (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id         UUID NOT NULL,
+    task_type       VARCHAR(50),
+    user_id         UUID,
+    event           VARCHAR(30) NOT NULL,   -- enqueued | claimed | completed | failed | retrying | recovered | quota_exceeded
+    worker_id       VARCHAR(100),
+    error           TEXT,
+    detail          JSONB,
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events (task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_events_user    ON task_events (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_events_event   ON task_events (event, created_at DESC);
+
+-- Helper to emit a task event
+CREATE OR REPLACE FUNCTION emit_task_event(
+    p_task_id UUID,
+    p_event VARCHAR,
+    p_worker_id VARCHAR DEFAULT NULL,
+    p_error TEXT DEFAULT NULL,
+    p_detail JSONB DEFAULT NULL
+) RETURNS VOID AS $$
+DECLARE
+    v_task_type VARCHAR;
+    v_user_id UUID;
+BEGIN
+    SELECT task_type, user_id INTO v_task_type, v_user_id
+    FROM task_queue WHERE id = p_task_id;
+
+    INSERT INTO task_events (task_id, task_type, user_id, event, worker_id, error, detail)
+    VALUES (p_task_id, v_task_type, v_user_id, p_event, p_worker_id, p_error, p_detail);
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ---------------------------------------------------------------------------
 -- Indexes — partial indexes per tier for KEDA queries + claim performance
 -- ---------------------------------------------------------------------------
 
@@ -91,21 +132,31 @@ CREATE OR REPLACE FUNCTION claim_tasks(
 ) RETURNS SETOF task_queue AS $$
 BEGIN
     RETURN QUERY
-    UPDATE task_queue
-    SET status = 'processing',
-        claimed_at = CURRENT_TIMESTAMP,
-        claimed_by = p_worker_id,
-        started_at = CURRENT_TIMESTAMP
-    WHERE id IN (
-        SELECT id FROM task_queue
-        WHERE status = 'pending'
-          AND tier = p_tier
-          AND scheduled_at <= CURRENT_TIMESTAMP
-        ORDER BY priority DESC, scheduled_at ASC
-        LIMIT p_batch_size
-        FOR UPDATE SKIP LOCKED
+    WITH claimed AS (
+        UPDATE task_queue
+        SET status = 'processing',
+            claimed_at = CURRENT_TIMESTAMP,
+            claimed_by = p_worker_id,
+            started_at = CURRENT_TIMESTAMP
+        WHERE id IN (
+            SELECT id FROM task_queue
+            WHERE status = 'pending'
+              AND tier = p_tier
+              AND scheduled_at <= CURRENT_TIMESTAMP
+            ORDER BY priority DESC, scheduled_at ASC
+            LIMIT p_batch_size
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING *
     )
-    RETURNING *;
+    SELECT * FROM claimed;
+
+    -- Log claimed events
+    INSERT INTO task_events (task_id, task_type, user_id, event, worker_id)
+    SELECT id, task_type, user_id, 'claimed', p_worker_id
+    FROM task_queue
+    WHERE claimed_by = p_worker_id AND status = 'processing'
+      AND claimed_at >= CURRENT_TIMESTAMP - INTERVAL '5 seconds';
 END;
 $$ LANGUAGE plpgsql;
 
@@ -121,6 +172,8 @@ BEGIN
         completed_at = CURRENT_TIMESTAMP,
         result = p_result
     WHERE id = p_task_id;
+
+    PERFORM emit_task_event(p_task_id, 'completed', NULL, NULL, p_result);
 END;
 $$ LANGUAGE plpgsql;
 
@@ -151,12 +204,19 @@ BEGIN
             claimed_by = NULL,
             started_at = NULL
         WHERE id = p_task_id;
+
+        PERFORM emit_task_event(p_task_id, 'retrying', NULL, p_error,
+            jsonb_build_object('retry', v_retry_count + 1, 'max_retries', v_max_retries,
+                               'next_attempt', CURRENT_TIMESTAMP + v_backoff));
     ELSE
         UPDATE task_queue
         SET status = 'failed',
             error = p_error,
             completed_at = CURRENT_TIMESTAMP
         WHERE id = p_task_id;
+
+        PERFORM emit_task_event(p_task_id, 'failed', NULL, p_error,
+            jsonb_build_object('retry', v_retry_count, 'max_retries', v_max_retries));
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -170,6 +230,16 @@ CREATE OR REPLACE FUNCTION recover_stale_tasks(
 DECLARE
     v_count INT;
 BEGIN
+    -- Log recovered events before updating
+    INSERT INTO task_events (task_id, task_type, user_id, event, worker_id, error, detail)
+    SELECT id, task_type, user_id, 'recovered', claimed_by,
+           'processing timeout after ' || p_timeout_minutes || ' minutes',
+           jsonb_build_object('retry', retry_count + 1, 'claimed_at', claimed_at)
+    FROM task_queue
+    WHERE status = 'processing'
+      AND claimed_at < CURRENT_TIMESTAMP - (p_timeout_minutes || ' minutes')::interval
+      AND retry_count < max_retries;
+
     UPDATE task_queue
     SET status = 'pending',
         error = 'recovered: processing timeout after ' || p_timeout_minutes || ' minutes',
@@ -183,6 +253,16 @@ BEGIN
       AND retry_count < max_retries;
 
     GET DIAGNOSTICS v_count = ROW_COUNT;
+
+    -- Log permanently failed events before updating
+    INSERT INTO task_events (task_id, task_type, user_id, event, worker_id, error, detail)
+    SELECT id, task_type, user_id, 'failed', claimed_by,
+           'exceeded max retries after processing timeout',
+           jsonb_build_object('retry', retry_count, 'max_retries', max_retries, 'claimed_at', claimed_at)
+    FROM task_queue
+    WHERE status = 'processing'
+      AND claimed_at < CURRENT_TIMESTAMP - (p_timeout_minutes || ' minutes')::interval
+      AND retry_count >= max_retries;
 
     -- Mark permanently failed if max retries exceeded
     UPDATE task_queue
@@ -255,38 +335,103 @@ $$ LANGUAGE plpgsql;
 -- enqueue_dreaming_tasks — called by pg_cron hourly.
 -- Creates one dreaming task per user who has had activity since their last
 -- dreaming run (or ever, if no prior dreaming task exists).
+-- Activity = new messages OR new processed file uploads.
+-- Uses COALESCE(u.user_id, u.id) because sessions reference the auth-level
+-- user_id when set, falling back to the row id.
 CREATE OR REPLACE FUNCTION enqueue_dreaming_tasks() RETURNS INT AS $$
 DECLARE
     v_count INT := 0;
     v_user RECORD;
 BEGIN
     FOR v_user IN
-        SELECT DISTINCT u.id AS user_id, u.tenant_id
-        FROM users u
-        JOIN sessions s ON s.user_id = u.id AND s.deleted_at IS NULL
-        JOIN messages m ON m.session_id = s.id AND m.deleted_at IS NULL
-        WHERE u.deleted_at IS NULL
-          AND m.created_at > COALESCE(
-              (SELECT MAX(tq.created_at)
-               FROM task_queue tq
-               WHERE tq.task_type = 'dreaming'
-                 AND tq.user_id = u.id
-                 AND tq.status IN ('completed', 'processing', 'pending')),
-              CURRENT_TIMESTAMP - INTERVAL '24 hours'
-          )
-          -- Skip users who already have a pending/processing dreaming task
-          AND NOT EXISTS (
-              SELECT 1 FROM task_queue tq
-              WHERE tq.task_type = 'dreaming'
-                AND tq.user_id = u.id
-                AND tq.status IN ('pending', 'processing')
-          )
+        WITH last_dreaming AS (
+            SELECT tq.user_id, MAX(tq.created_at) AS last_run
+            FROM task_queue tq
+            WHERE tq.task_type = 'dreaming'
+              AND tq.status IN ('completed', 'processing', 'pending')
+            GROUP BY tq.user_id
+        ),
+        active_users AS (
+            -- Users with new messages since last dreaming
+            SELECT DISTINCT COALESCE(u.user_id, u.id) AS effective_uid, u.tenant_id
+            FROM users u
+            JOIN sessions s ON s.user_id = COALESCE(u.user_id, u.id) AND s.deleted_at IS NULL
+            JOIN messages m ON m.session_id = s.id AND m.deleted_at IS NULL
+            WHERE u.deleted_at IS NULL
+              AND m.created_at > COALESCE(
+                  (SELECT ld.last_run FROM last_dreaming ld WHERE ld.user_id = COALESCE(u.user_id, u.id)),
+                  CURRENT_TIMESTAMP - INTERVAL '24 hours'
+              )
+
+            UNION
+
+            -- Users with new processed file uploads since last dreaming
+            SELECT DISTINCT COALESCE(u.user_id, u.id) AS effective_uid, u.tenant_id
+            FROM users u
+            JOIN files f ON f.user_id = COALESCE(u.user_id, u.id)
+                        AND f.deleted_at IS NULL
+                        AND f.processing_status = 'completed'
+            WHERE u.deleted_at IS NULL
+              AND f.created_at > COALESCE(
+                  (SELECT ld.last_run FROM last_dreaming ld WHERE ld.user_id = COALESCE(u.user_id, u.id)),
+                  CURRENT_TIMESTAMP - INTERVAL '24 hours'
+              )
+        )
+        SELECT effective_uid, tenant_id FROM active_users
+        WHERE NOT EXISTS (
+            SELECT 1 FROM task_queue tq
+            WHERE tq.task_type = 'dreaming'
+              AND tq.user_id = active_users.effective_uid
+              AND tq.status IN ('pending', 'processing')
+        )
     LOOP
         INSERT INTO task_queue (task_type, tier, user_id, tenant_id, payload)
         VALUES (
             'dreaming',
             'small',
-            v_user.user_id,
+            v_user.effective_uid,
+            v_user.tenant_id,
+            jsonb_build_object('trigger', 'scheduled', 'enqueued_at', CURRENT_TIMESTAMP)
+        );
+        v_count := v_count + 1;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- enqueue_news_tasks — called by pg_cron daily.
+-- Creates one news task per user who has interests or categories in metadata
+-- and hasn't had a news task today.
+CREATE OR REPLACE FUNCTION enqueue_news_tasks() RETURNS INT AS $$
+DECLARE
+    v_count INT := 0;
+    v_user RECORD;
+BEGIN
+    FOR v_user IN
+        SELECT COALESCE(u.user_id, u.id) AS effective_uid, u.tenant_id
+        FROM users u
+        WHERE u.deleted_at IS NULL
+          AND u.metadata IS NOT NULL
+          AND (
+              u.metadata->>'interests' IS NOT NULL
+              OR u.metadata->>'categories' IS NOT NULL
+          )
+          -- Skip users who already have a pending/processing/completed news task today
+          AND NOT EXISTS (
+              SELECT 1 FROM task_queue tq
+              WHERE tq.task_type = 'news'
+                AND tq.user_id = COALESCE(u.user_id, u.id)
+                AND tq.created_at >= date_trunc('day', CURRENT_TIMESTAMP)
+                AND tq.status IN ('pending', 'processing', 'completed')
+          )
+    LOOP
+        INSERT INTO task_queue (task_type, tier, user_id, tenant_id, payload)
+        VALUES (
+            'news',
+            'small',
+            v_user.effective_uid,
             v_user.tenant_id,
             jsonb_build_object('trigger', 'scheduled', 'enqueued_at', CURRENT_TIMESTAMP)
         );
@@ -307,3 +452,6 @@ SELECT cron.schedule('qms-recover-stale', '*/5 * * * *', 'SELECT recover_stale_t
 
 -- Dreaming enqueue: hourly, enqueue dreaming tasks for active users
 SELECT cron.schedule('qms-dreaming-enqueue', '0 * * * *', 'SELECT enqueue_dreaming_tasks()');
+
+-- News feed: daily at 6am UTC, enqueue news digest for users with interests
+SELECT cron.schedule('qms-news-enqueue', '0 6 * * *', 'SELECT enqueue_news_tasks()');

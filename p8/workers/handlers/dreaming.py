@@ -307,32 +307,43 @@ class DreamingHandler:
 
     @staticmethod
     async def _merge_edge_on_target(db, target_key: str, new_edge: dict) -> None:
-        """Look up entity by key in kv_store, merge a new back-edge onto it."""
+        """Look up entity by key via kv_store index, merge a back-edge onto the source table.
+
+        kv_store is UNLOGGED and ephemeral — only used here to resolve
+        (entity_type, entity_id) from the key.  The actual graph_edges are
+        read from and written to the source table so they survive rebuilds.
+        kv_store is refreshed on the next rem_sync_kv_store() run.
+        """
+        # Resolve key → source table + id via the KV index
         rows = await db.fetch(
-            "SELECT entity_type, entity_id, graph_edges FROM kv_store"
+            "SELECT entity_type, entity_id FROM kv_store"
             " WHERE entity_key = $1 LIMIT 1",
             target_key,
         )
         if not rows:
             return
 
-        row = rows[0]
-        entity_type = row["entity_type"]
-        entity_id = row["entity_id"]
-        raw_edges = ensure_parsed(row["graph_edges"], default=[])
+        entity_type = rows[0]["entity_type"]
+        entity_id = rows[0]["entity_id"]
+
+        # Read current graph_edges from the SOURCE table (authoritative)
+        source_rows = await db.fetch(
+            f"SELECT graph_edges FROM {entity_type} WHERE id = $1",
+            entity_id,
+        )
+        if not source_rows:
+            return
+
+        raw_edges = ensure_parsed(source_rows[0]["graph_edges"], default=[])
         existing_edges: list[dict] = raw_edges if isinstance(raw_edges, list) else []
 
         merged = merge_graph_edges(existing_edges, [new_edge])
 
+        # Write back to the source table only — kv_store syncs from here
         await db.execute(
             f"UPDATE {entity_type} SET graph_edges = $1::jsonb WHERE id = $2",
             json.dumps(merged),
             entity_id,
-        )
-        await db.execute(
-            "UPDATE kv_store SET graph_edges = $1::jsonb WHERE entity_key = $2",
-            json.dumps(merged),
-            target_key,
         )
 
     async def _persist_agent_messages(
@@ -514,7 +525,37 @@ class DreamingHandler:
                 sections.append(section)
                 token_estimate += section_tokens
 
-        # 3. Referenced resources (from moment graph_edges)
+        # 3. Recent file uploads (direct query, not dependent on graph_edges)
+        file_rows = await db.fetch(
+            "SELECT id, name, mime_type, parsed_content, size_bytes, created_at"
+            " FROM files"
+            " WHERE user_id = $1 AND deleted_at IS NULL"
+            "   AND processing_status = 'completed'"
+            "   AND created_at >= $2"
+            " ORDER BY created_at DESC LIMIT $3",
+            user_id, cutoff, MAX_RESOURCES,
+        )
+        seen_file_ids: set = set()
+        if file_rows:
+            lines = ["## Recent Uploads\n"]
+            for frow in file_rows:
+                content = frow["parsed_content"] or ""
+                if len(content) > MAX_RESOURCE_CHARS:
+                    content = content[:MAX_RESOURCE_CHARS] + "..."
+                fname = frow["name"] or "unnamed"
+                lines.append(
+                    f"### {fname} ({frow['mime_type'] or 'unknown'})\n{content}\n"
+                )
+                stats["resources"] += 1
+                seen_file_ids.add(frow["id"])
+
+            section = "\n".join(lines)
+            section_tokens = estimate_tokens(section)
+            if token_estimate + section_tokens <= DATA_TOKEN_BUDGET:
+                sections.append(section)
+                token_estimate += section_tokens
+
+        # 4. Referenced resources (from moment graph_edges, skip already-loaded files)
         if referenced_keys:
             lines = ["## Referenced Resources\n"]
             looked_up = 0
@@ -530,10 +571,14 @@ class DreamingHandler:
                 etype = kv["entity_type"]
                 summary = kv["content_summary"] or ""
 
+                # Skip files already loaded in section 3
+                if etype == "files" and kv["entity_id"] in seen_file_ids:
+                    continue
+
                 # For resources/files, try to load actual content
                 _RESOURCE_QUERIES = {
-                    "resources": "SELECT content FROM resources WHERE id = $1 LIMIT 1",
-                    "files": "SELECT parsed_content FROM files WHERE id = $1 LIMIT 1",
+                    "resources": "SELECT content FROM resources WHERE id = $1 AND deleted_at IS NULL LIMIT 1",
+                    "files": "SELECT parsed_content FROM files WHERE id = $1 AND deleted_at IS NULL LIMIT 1",
                 }
                 if etype in _RESOURCE_QUERIES and kv["entity_id"]:
                     field = "content" if etype == "resources" else "parsed_content"

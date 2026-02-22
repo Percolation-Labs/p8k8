@@ -41,7 +41,7 @@ ENV UV_COMPILE_BYTECODE=0 \
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=uv.lock,target=uv.lock \
-    uv sync --frozen --no-dev --no-install-project --no-editable
+    uv sync --frozen --no-dev --extra platoon --no-install-project --no-editable
 
 # Phase 2: Copy source and install the project (non-editable → into site-packages)
 # --reinstall-package p8 ensures source changes are always picked up even if
@@ -49,7 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY pyproject.toml uv.lock ./
 COPY p8/ ./p8/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --reinstall-package p8
+    uv sync --frozen --no-dev --extra platoon --no-editable --reinstall-package p8
 
 # ------------------------------------------------------------------------------
 # Stage 2: Runtime - Minimal production image

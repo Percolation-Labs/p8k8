@@ -101,7 +101,7 @@ Verify that markdown links in ontology files resolve to valid targets.
 
 ```bash
 p8 verify-links docs/ontology/              # check against local files
-p8 verify-links docs/ontology/ --db         # also check KV store
+p8 verify-links --db docs/ontology/         # also check KV store
 ```
 
 ### schema
@@ -127,6 +127,20 @@ p8 chat --agent query-agent          # specific agent
 p8 chat --session <uuid>             # resume session
 p8 chat --user-id user-123           # with user context
 ```
+
+### dream
+
+Run dreaming for a user — consolidation (Phase 1) + AI insights (Phase 2).
+
+```bash
+p8 dream <user-id>                              # default: last 24 hours
+p8 dream <user-id> --lookback 7                 # last 7 days
+p8 dream <user-id> --allow-empty                # exploration mode (dream even with no activity)
+p8 dream <user-id> -o /tmp/dreams.yaml          # write full results (moments + back-edges) to YAML
+p8 dream <user-id> -l 7 -e -o /tmp/dreams.yaml  # all options combined
+```
+
+Output includes: activity chunks built (Phase 1), dream moments saved with graph edges (Phase 2), and `dreamed_from` back-edges merged onto source entities (resources, moments).
 
 ### mcp
 
@@ -169,6 +183,7 @@ api/cli/
 ├── schema.py       # p8 schema list/get/delete/verify/register
 ├── chat.py         # p8 chat
 ├── moments.py      # p8 moments / p8 moments timeline / p8 moments compact
+├── dreaming.py     # p8 dream
 ├── encryption.py   # p8 encryption status/configure/test
 ├── mcp.py          # p8 mcp (stdio transport)
 └── verify_links.py # p8 verify-links
@@ -200,5 +215,6 @@ typer callback → asyncio.run(_run_*()) → bootstrap_services() → service me
 | `schema verify` | `verify_all(db)` |
 | `schema register` | `register_models(db)` |
 | `chat` | `ChatController.prepare()` + `ChatController.run_turn()` |
+| `dream` | `DreamingHandler.handle()` (Phase 1 + Phase 2) |
 | `mcp` | `bootstrap_services()` + `init_tools()` + `FastMCP.run_async(stdio)` |
 | `verify-links` | `utils.links.verify_links()` |

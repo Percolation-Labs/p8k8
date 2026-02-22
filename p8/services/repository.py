@@ -139,11 +139,17 @@ class Repository(Generic[T]):
             return None
         if decrypt:
             await self._ensure_deks([row], tenant_id)
-        return self._decrypt_row(row, tenant_id if decrypt else None)
+        return self._decrypt_row(row, tenant_id if decrypt else None, force=decrypt)
 
     async def get_for_tenant(self, entity_id: UUID, *, tenant_id: str | None = None) -> T | None:
-        """Mode-aware get — delegates to get() which auto-decrypts platform rows."""
-        return await self.get(entity_id, tenant_id=tenant_id)
+        """Mode-aware get — returns ciphertext for client-mode tenants."""
+        row = await self.db.fetchrow(
+            f"SELECT * FROM {self.table} WHERE id = $1 AND deleted_at IS NULL", entity_id
+        )
+        if not row:
+            return None
+        await self._ensure_deks([row], tenant_id)
+        return self._decrypt_row(row, tenant_id)
 
     async def find(
         self,
@@ -156,6 +162,7 @@ class Repository(Generic[T]):
         offset: int = 0,
         decrypt: bool = True,
         security: SecurityContext | None = None,
+        _mode_aware: bool = False,
     ) -> list[T]:
         """List entities with optional filters.
 
@@ -211,11 +218,12 @@ class Repository(Generic[T]):
         if decrypt:
             await self._ensure_deks(rows, eff_tenant or tenant_id)
         effective_tenant = (eff_tenant or tenant_id) if decrypt else None
-        return [self._decrypt_row(r, effective_tenant) for r in rows]
+        force = decrypt and not _mode_aware
+        return [self._decrypt_row(r, effective_tenant, force=force) for r in rows]
 
     async def find_for_tenant(self, *, tenant_id: str | None = None, **kwargs) -> list[T]:
-        """Mode-aware find — delegates to find() which auto-decrypts platform rows."""
-        return await self.find(tenant_id=tenant_id, **kwargs)
+        """Mode-aware find — returns ciphertext for client-mode tenants."""
+        return await self.find(tenant_id=tenant_id, _mode_aware=True, **kwargs)
 
     async def merge_metadata(
         self,
@@ -328,7 +336,7 @@ class Repository(Generic[T]):
         for tid in tenants:
             await self.encryption.get_dek(tid)
 
-    def _decrypt_row(self, row, tenant_id: str | None = None) -> T:
+    def _decrypt_row(self, row, tenant_id: str | None = None, *, force: bool = False) -> T:
         data = dict(row)
         # asyncpg may return JSONB as str when defaults come from DB
         for key in _JSONB_COLUMNS:
@@ -339,7 +347,8 @@ class Repository(Generic[T]):
         effective_tenant = tenant_id or data.get("tenant_id")
         level = data.get("encryption_level")
         if effective_tenant and (
-            level == "platform"                           # stamped at write time
+            force                                         # caller explicitly wants decryption
+            or level == "platform"                        # stamped at write time
             or (level is None and tenant_id)              # legacy: caller passed tenant_id
         ):
             data = self.encryption.decrypt_fields(self.model_class, data, effective_tenant)

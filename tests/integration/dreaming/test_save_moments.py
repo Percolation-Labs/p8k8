@@ -122,7 +122,7 @@ async def test_save_moment_creates_back_edge_on_target(db, encryption):
 
     dreamed_edges = [e for e in r.graph_edges if e.get("relation") == "dreamed_from"]
     assert len(dreamed_edges) >= 1
-    assert dreamed_edges[0]["target"] == "dream-back-edge-test"
+    assert any(e["target"] == "dream-back-edge-test" for e in dreamed_edges)
 
 
 async def test_merge_preserves_existing_edges_on_target(db, encryption):

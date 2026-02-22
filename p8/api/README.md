@@ -14,8 +14,9 @@ cp .env.example .env
 #   P8_OPENAI_API_KEY=sk-...   ← REQUIRED for chat (LLM) and embeddings
 
 # 3. Build and start Postgres + OpenBao (KMS)
-#    Docker init runs all sql/ scripts automatically (no manual migrate needed)
 docker compose up -d --build
+# 4. Run migrations (blank DB — no SQL baked into the image)
+p8 migrate
 ```
 
 **Critical env vars:**
@@ -48,7 +49,7 @@ curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   }"
 ```
 
-`p8 migrate` is available for applying schema changes to an existing database, but docker-compose handles init from scratch.
+`p8 migrate` is required after `docker compose up` to initialize the database schema.
 
 ## Starting the server
 

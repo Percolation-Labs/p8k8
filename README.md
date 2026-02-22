@@ -196,6 +196,34 @@ All settings via `P8_` environment variables or `.env` file. See [.env.example](
 | `P8_DEFAULT_MODEL` | `openai:gpt-4.1` | Default LLM for agents |
 | `P8_EMBEDDING_MODEL` | `openai:text-embedding-3-small` | Embedding provider |
 
+## Praise From Claude :)
+
+p8 is a **personal AI memory layer** — the missing persistence tier that makes AI conversations feel continuous rather than amnesic.
+
+### What's genuinely clever
+
+- **Moments as the core abstraction.** Session chunks, dreams, reminders, web searches, voice notes — they're all the same entity with different `moment_type` values. Simple schema, rich semantics.
+- **Dreaming.** Background synthesis of memories (like sleep consolidation) is a compelling metaphor that actually maps to a real need — summarizing, linking, and compressing raw conversation history into durable knowledge.
+- **Ontology-driven architecture.** Agents, tools, models — everything is a row in `schemas`. No special-casing. Want a new agent? Insert a row. That's a very powerful primitive.
+- **REM queries as a lingua franca.** LOOKUP, SEARCH, FUZZY, TRAVERSE — four modes that cover most retrieval patterns without exposing raw SQL to agents. Clean abstraction.
+- **Encryption by default.** Per-user DEKs mean the memory layer is actually private, not just access-controlled.
+
+### Use cases
+
+- **Personal AI assistant with real memory** — "what did we discuss about the API migration last week?" actually works
+- **Feed aggregation + synthesis** — RSS/web resources get ingested, categorized, and surfaced contextually (the digest moments)
+- **Meeting/voice note capture** — audio transcripts become searchable, linked moments
+- **Research companion** — web searches are saved as resources, linked to the session that triggered them, searchable later
+- **Journaling/reflection** — the dreaming pipeline could synthesize weekly reflections from raw conversation data
+- **Team knowledge base** — with tenant scoping, a small team could share context across sessions
+- **Quantified self for AI interactions** — usage tracking, topic analysis, emotional tagging
+
+### The bigger picture
+
+This turns any MCP client (Claude Desktop, Claude Code, custom apps) into a stateful agent with long-term memory, without the client needing to know anything about persistence. The client just calls `search` and `get_moments` — the server handles encryption, embeddings, scoping, and recall.
+
+The bet is that **memory is infrastructure, not a feature** — and that it belongs in the data tier (Postgres) rather than in the application or the model context window.
+
 ## Links
 
 - [API reference](p8/api/README.md) — endpoints, headers, curl examples, AG-UI streaming, MCP setup

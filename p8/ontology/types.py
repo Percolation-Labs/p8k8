@@ -34,6 +34,45 @@ class GraphEdge(BaseModel):
     weight: float = 1.0
 
 
+class UserMetadata(BaseModel):
+    """Structured user metadata — stored in users.metadata JSONB.
+
+    Agents observe and update this over time via partial JSON merges.
+    All fields are optional so partial updates only touch what changed.
+    Use ``__patch_remove__`` list to delete top-level keys.
+
+    Sections:
+      relations   — people, pets, family members the user mentions
+      interests   — topics, hobbies, domains the user cares about
+      feeds       — websites, RSS feeds, newsletters they follow
+      preferences — UI, communication, scheduling preferences
+      facts       — freeform key-value facts observed over time
+      categories  — interest categories with keywords, weights, colors
+      sources     — feed/data source configurations
+    """
+
+    relations: list[dict] | None = None
+    # Each: {"name": "...", "role": "partner|child|parent|friend|pet|colleague", "notes": "..."}
+
+    interests: list[str] | None = None
+    # Topics/hobbies: ["machine learning", "cooking", "hiking"]
+
+    feeds: list[dict] | None = None
+    # Each: {"url": "...", "name": "...", "type": "rss|website|newsletter", "notes": "..."}
+
+    preferences: dict | None = None
+    # Freeform: {"timezone": "US/Pacific", "language": "en", "summary_style": "brief"}
+
+    facts: dict | None = None
+    # Freeform observed facts: {"birthday": "March 15", "company": "Acme Corp"}
+
+    categories: dict | None = None
+    # Interest categories: {"AI": {"keywords": [...], "weight": 1.5, "color": "#3b82f6"}}
+
+    sources: dict | None = None
+    # Feed/data sources: {"google_news": {"enabled": true, ...}, "reddit": {...}}
+
+
 class ToolReference(BaseModel):
     """Pointer to a remote tool on a server. Embedded in schema json_schema."""
 
@@ -106,6 +145,9 @@ class Resource(CoreModel):
     ordinal: int | None = None
     content: str | None = None
     category: str | None = None
+    image_uri: str | None = None
+    comment: str | None = None
+    rating: int | None = None
     related_entities: list[str] = Field(default_factory=list)
 
 
@@ -129,6 +171,7 @@ class Moment(CoreModel):
     emotion_tags: list[str] = Field(default_factory=list)
     topic_tags: list[str] = Field(default_factory=list)
     category: str | None = None
+    rating: int | None = None
     source_session_id: UUID | None = None
     previous_moment_keys: list[str] = Field(default_factory=list)
 
@@ -157,7 +200,7 @@ class Message(CoreModel):
 
     __table_name__ = "messages"
     __id_fields__ = ()
-    __embedding_field__ = "content"
+    __embedding_field__ = None  # messages are searchable via moments, not individual embeddings
     __encrypted_fields__ = {"content": "randomized"}
     __redacted_fields__ = ["content"]
 

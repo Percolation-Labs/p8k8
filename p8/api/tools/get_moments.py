@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from p8.api.tools import get_db, get_encryption, get_user_id
 from p8.ontology.types import Moment
@@ -13,7 +11,6 @@ from p8.services.repository import Repository
 
 
 async def get_moments(
-    user_id: UUID | None = None,
     moment_type: str | None = None,
     category: str | None = None,
     topic_tags: list[str] | None = None,
@@ -25,7 +22,6 @@ async def get_moments(
     """Query moments with filtering, date ranges, and pagination.
 
     Args:
-        user_id: Filter by user. Falls back to context user if not provided.
         moment_type: Filter by type (session_chunk, dream, meeting, etc.).
         category: Filter by category string.
         topic_tags: Filter by topic tags (all must match).
@@ -41,8 +37,7 @@ async def get_moments(
     encryption = get_encryption()
     repo = Repository(Moment, db, encryption)
 
-    if user_id is None:
-        user_id = get_user_id()
+    user_id = get_user_id()
     limit = max(1, min(limit, 100))
 
     conditions = ["deleted_at IS NULL"]
@@ -91,9 +86,10 @@ async def get_moments(
     has_more = len(rows) > limit
     rows = rows[:limit]
 
+    await repo._ensure_deks(rows)
     results = []
     for row in rows:
-        entity = repo._decrypt_row(row, None)
+        entity = repo._decrypt_row(row)
         results.append({
             "id": str(entity.id),
             "name": entity.name,

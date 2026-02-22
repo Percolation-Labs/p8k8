@@ -203,7 +203,7 @@ class TestKVIndexes:
         expected = {
             "idx_embeddings_schemas_hnsw", "idx_embeddings_ontologies_hnsw",
             "idx_embeddings_resources_hnsw", "idx_embeddings_moments_hnsw",
-            "idx_embeddings_sessions_hnsw", "idx_embeddings_messages_hnsw",
+            "idx_embeddings_sessions_hnsw",
             "idx_embeddings_tools_hnsw", "idx_embeddings_users_hnsw",
             "idx_embeddings_files_hnsw",
         }

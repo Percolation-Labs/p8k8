@@ -39,3 +39,5 @@ tools:
     description: "Create scheduled reminders — cron for recurring, ISO datetime for one-time"
   - name: user_profile
     description: Load user profile for personalized responses
+  - name: update_user_metadata
+    description: "Save observed facts about the user: relations (family, pets), interests, feeds (URLs to watch), preferences, facts. Partial updates — only send changed keys"

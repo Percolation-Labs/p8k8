@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
 from p8.api.tools import get_db, get_user_id
 
@@ -11,7 +10,6 @@ from p8.api.tools import get_db, get_user_id
 async def search(
     query: str,
     limit: int = 20,
-    user_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Execute REM queries to search the knowledge base.
 
@@ -36,7 +34,6 @@ async def search(
     Args:
         query: REM dialect query string (must start with LOOKUP, SEARCH, FUZZY, or TRAVERSE)
         limit: Maximum results (default 20)
-        user_id: Optional user scope
 
     Returns:
         Query results with entities and metadata
@@ -54,8 +51,7 @@ async def search(
             "query": query,
         }
 
-    if user_id is None:
-        user_id = get_user_id()
+    user_id = get_user_id()
 
     db = get_db()
     try:

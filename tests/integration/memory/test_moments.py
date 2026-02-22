@@ -197,6 +197,123 @@ async def test_content_upload_creates_moment(db, encryption):
     assert "file_id" in meta
 
 
+async def test_content_upload_creates_session_for_provided_id(db, encryption):
+    """When session_id is provided but doesn't exist yet, ingest() creates the session row."""
+    from dataclasses import dataclass
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+
+    from p8.services.content import ContentService
+    from p8.services.files import FileService
+
+    @dataclass
+    class _FakeChunk:
+        content: str
+
+    @dataclass
+    class _FakeExtractResult:
+        content: str
+        chunks: list[_FakeChunk]
+
+    settings = MagicMock()
+    settings.s3_bucket = ""
+    settings.content_chunk_max_chars = 1000
+    settings.content_chunk_overlap = 200
+
+    file_service = MagicMock(spec=FileService)
+    svc = ContentService(db=db, encryption=encryption, file_service=file_service, settings=settings)
+
+    fake_result = _FakeExtractResult(
+        content="A text note for testing session creation.",
+        chunks=[_FakeChunk("A text note for testing session creation.")],
+    )
+
+    # Use a deterministic session ID that doesn't exist yet (like todayChatId)
+    provided_session_id = str(uuid4())
+
+    # Verify session doesn't exist
+    row = await db.fetchrow("SELECT id FROM sessions WHERE id = $1", provided_session_id)
+    assert row is None
+
+    with (
+        patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
+        patch("kreuzberg.ChunkingConfig"),
+        patch("kreuzberg.ExtractionConfig"),
+    ):
+        result = await svc.ingest(
+            b"text note bytes", "note.txt",
+            mime_type="text/plain",
+            session_id=provided_session_id,
+        )
+
+    # Session should now exist
+    row = await db.fetchrow("SELECT id, name, mode FROM sessions WHERE id = $1", provided_session_id)
+    assert row is not None
+    assert row["mode"] == "content_upload"
+
+    # Moment should reference this session
+    moment_row = await db.fetchrow(
+        "SELECT source_session_id FROM moments WHERE name = 'upload-note' AND deleted_at IS NULL"
+    )
+    assert moment_row is not None
+    assert str(moment_row["source_session_id"]) == provided_session_id
+
+    # Result should return the same session_id
+    assert str(result.session_id) == provided_session_id
+
+
+async def test_content_upload_reuses_existing_session(db, encryption):
+    """When session_id is provided and already exists, ingest() reuses it without error."""
+    from dataclasses import dataclass
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from p8.services.content import ContentService
+    from p8.services.files import FileService
+
+    @dataclass
+    class _FakeChunk:
+        content: str
+
+    @dataclass
+    class _FakeExtractResult:
+        content: str
+        chunks: list[_FakeChunk]
+
+    settings = MagicMock()
+    settings.s3_bucket = ""
+    settings.content_chunk_max_chars = 1000
+    settings.content_chunk_overlap = 200
+
+    file_service = MagicMock(spec=FileService)
+    svc = ContentService(db=db, encryption=encryption, file_service=file_service, settings=settings)
+
+    # Pre-create a session
+    from p8.utils.data import create_session
+    existing = await create_session(db, encryption, name="pre-existing-chat")
+
+    fake_result = _FakeExtractResult(
+        content="Another note.",
+        chunks=[_FakeChunk("Another note.")],
+    )
+
+    with (
+        patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=fake_result),
+        patch("kreuzberg.ChunkingConfig"),
+        patch("kreuzberg.ExtractionConfig"),
+    ):
+        result = await svc.ingest(
+            b"note bytes", "note2.txt",
+            mime_type="text/plain",
+            session_id=str(existing.id),
+        )
+
+    # Should not create a duplicate — still just 1 session with this ID
+    rows = await db.fetch("SELECT id FROM sessions WHERE id = $1", existing.id)
+    assert len(rows) == 1
+
+    assert result.session_id == existing.id
+
+
 async def test_content_upload_moment_in_feed(db, encryption):
     """Ingest content → verify the upload moment can be found in the moments table."""
     from dataclasses import dataclass

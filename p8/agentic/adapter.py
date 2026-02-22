@@ -651,9 +651,11 @@ class AgentAdapter:
         tool_calls = self._extract_tool_calls(all_messages)
 
         if tool_calls:
-            # Slow path: insert user, tool_call/tool_response pairs, assistant
+            # Slow path: insert user, tool_call/tool_response pairs, assistant.
+            # Pass plain text — Repository.upsert() handles encryption via
+            # tenant_id. Using store_user/store_assistant here would double-encrypt.
             await self.memory.persist_message(
-                session_id, "user", store_user,
+                session_id, "user", user_prompt,
                 user_id=user_id, tenant_id=tenant_id,
             )
             for tc in tool_calls:
@@ -682,7 +684,7 @@ class AgentAdapter:
                     )
             # Assistant message with usage metrics
             await self.memory.persist_message(
-                session_id, "assistant", store_assistant,
+                session_id, "assistant", assistant_text,
                 user_id=user_id, tenant_id=tenant_id,
                 agent_name=agent_name, model=model,
                 input_tokens=input_tokens, output_tokens=output_tokens,

@@ -34,7 +34,10 @@ def vault_available():
     """Ensure OpenBao (kms service in docker-compose.yml) is reachable and Transit engine is ready."""
     import httpx
 
-    resp = httpx.get(f"{VAULT_URL}/v1/sys/health", timeout=2)
+    try:
+        resp = httpx.get(f"{VAULT_URL}/v1/sys/health", timeout=2)
+    except httpx.ConnectError:
+        pytest.skip("Vault/OpenBao not reachable — skipping vault tests")
     assert resp.status_code in (200, 429, 472, 473), (
         f"OpenBao not healthy (status {resp.status_code}). Run: docker compose up -d"
     )

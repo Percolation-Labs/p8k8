@@ -32,7 +32,9 @@ description: |
   Propose 5 search questions based on the themes you found.
   For each question, call `search` twice:
     - `SEARCH "<question>" FROM moments LIMIT 2`
-    - `SEARCH "<question>" FROM resources LIMIT 2`
+    - `SEARCH "<question>" FROM resources CATEGORY document LIMIT 2`
+  # TODO: In future, filter for user content only (not just category='document').
+  # For now, CATEGORY document excludes auto-ingested news/digest items from dreaming.
 
   Add any newly discovered affinities to your dream moments.
 
