@@ -111,26 +111,26 @@
   "moments": [
     {
       "name": "feed-moment-today",
-      "moment_type": "session_chunk",
+      "moment_type": "note",
       "summary": "Discussed system architecture and embedding pipeline design.",
       "source_session_id": "aaaaaaaa-0001-0000-0000-000000000001",
-      "metadata": {"message_count": 4, "token_count": 230, "chunk_index": 0},
+      "metadata": {"message_count": 4, "token_count": 230},
       "days_ago": 0
     },
     {
       "name": "feed-moment-yesterday",
-      "moment_type": "session_chunk",
+      "moment_type": "note",
       "summary": "Explored TiDB migration strategy and trade-offs.",
       "source_session_id": "aaaaaaaa-0001-0000-0000-000000000002",
-      "metadata": {"message_count": 4, "token_count": 215, "chunk_index": 0},
+      "metadata": {"message_count": 4, "token_count": 215},
       "days_ago": 1
     },
     {
       "name": "feed-moment-3days",
-      "moment_type": "session_chunk",
+      "moment_type": "note",
       "summary": "Reviewed project updates and Qdrant integration plans.",
       "source_session_id": "aaaaaaaa-0001-0000-0000-000000000003",
-      "metadata": {"message_count": 4, "token_count": 205, "chunk_index": 0},
+      "metadata": {"message_count": 4, "token_count": 205},
       "days_ago": 3
     }
   ]

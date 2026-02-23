@@ -45,7 +45,7 @@ async def test_save_single_dream_moment(db, encryption):
     repo = Repository(Moment, db, encryption)
     moments = await repo.find(
         user_id=TEST_USER_ID,
-        filters={"name": "dream-test-insight", "moment_type": "dream"},
+        filters={"name": "Test Insight", "moment_type": "dream"},
     )
     assert len(moments) >= 1
     m = moments[0]
@@ -78,7 +78,7 @@ async def test_save_moment_with_affinity_creates_graph_edges(db, encryption):
     repo = Repository(Moment, db, encryption)
     moments = await repo.find(
         user_id=TEST_USER_ID,
-        filters={"name": "dream-affinity-test"},
+        filters={"name": "Affinity Test"},
     )
     assert len(moments) >= 1
     m = moments[0]
@@ -122,7 +122,7 @@ async def test_save_moment_creates_back_edge_on_target(db, encryption):
 
     dreamed_edges = [e for e in r.graph_edges if e.get("relation") == "dreamed_from"]
     assert len(dreamed_edges) >= 1
-    assert any(e["target"] == "dream-back-edge-test" for e in dreamed_edges)
+    assert any(e["target"] == "Back Edge Test" for e in dreamed_edges)
 
 
 async def test_merge_preserves_existing_edges_on_target(db, encryption):
@@ -172,7 +172,7 @@ async def test_save_multiple_moments(db, encryption):
     assert result["moments_count"] == 3
 
     repo = Repository(Moment, db, encryption)
-    for name in ("dream-multi-1", "dream-multi-2", "dream-multi-3"):
+    for name in ("Multi 1", "Multi 2", "Multi 3"):
         moments = await repo.find(user_id=TEST_USER_ID, filters={"name": name})
         assert len(moments) >= 1
 

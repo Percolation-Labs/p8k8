@@ -1,7 +1,7 @@
 """Dreaming handler — per-user background AI processing.
 
-Phase 1: Build session_chunk moments via rem_build_moment() (SQL only, no LLM).
-Phase 2: Run dreaming agent for cross-session insights (structured output).
+Loads recent messages, moments, and resources as context, then runs the
+dreaming agent which produces structured DreamMoment insights.
 
 The dreaming agent uses structured output to return DreamMoment objects
 directly. The handler persists them to the database and merges back-edges
@@ -63,76 +63,32 @@ class DreamingHandler:
         tenant_id = task.get("tenant_id")
         lookback_days = task.get("lookback_days", LOOKBACK_DAYS)
 
-        # Phase 1: Build session chunk moments (existing behavior)
-        phase1 = await self._build_session_moments(user_id, tenant_id, ctx)
+        # Run dreaming agent (loads messages + moments directly as context)
+        result = await self._run_dreaming_agent(user_id, lookback_days, ctx)
 
-        # Phase 2: Run dreaming agent
-        phase2 = await self._run_dreaming_agent(user_id, lookback_days, ctx)
-
-        total_tokens = phase1.get("io_tokens", 0) + phase2.get("io_tokens", 0)
+        io_tokens = result.get("io_tokens", 0)
         log.info(
-            "Dreaming complete for user %s: phase1=%s phase2=%s tokens=%d",
-            user_id, phase1.get("status"), phase2.get("status"), total_tokens,
+            "Dreaming complete for user %s: status=%s tokens=%d",
+            user_id, result.get("status"), io_tokens,
         )
 
-        # Post-flight: record actual LLM token consumption against user's plan quota.
-        # Only Phase 2 has real API io_tokens; Phase 1 token counts are just
-        # text estimates from rem_build_moment (no LLM calls).
-        phase2_io = phase2.get("io_tokens", 0)
-        if phase2_io > 0:
+        # Record actual LLM token consumption against user's plan quota
+        if io_tokens > 0:
             try:
                 from p8.services.usage import get_user_plan, increment_usage
 
                 plan_id = await get_user_plan(ctx.db, user_id)
-                await increment_usage(ctx.db, user_id, "dreaming_io_tokens", phase2_io, plan_id)
+                await increment_usage(ctx.db, user_id, "dreaming_io_tokens", io_tokens, plan_id)
             except Exception:
                 log.exception("Failed to record dreaming usage for user %s", user_id)
 
         return {
-            "io_tokens": total_tokens,
-            "phase1": phase1,
-            "phase2": phase2,
+            "io_tokens": io_tokens,
+            "phase2": result,
         }
 
     # ------------------------------------------------------------------
-    # Phase 1 — session chunk moments
-    # ------------------------------------------------------------------
-
-    async def _build_session_moments(
-        self, user_id: UUID, tenant_id: str | None, ctx,
-    ) -> dict:
-        sessions = await ctx.db.fetch(
-            "SELECT s.id, s.name, s.total_tokens, s.agent_name"
-            " FROM sessions s"
-            " WHERE s.user_id = $1 AND s.deleted_at IS NULL"
-            " ORDER BY s.updated_at DESC LIMIT 10",
-            user_id,
-        )
-
-        moments_built = 0
-        total_io_tokens = 0
-
-        for session in sessions:
-            row = await ctx.db.fetchrow(
-                "SELECT * FROM rem_build_moment($1, $2, $3, $4)",
-                session["id"],
-                tenant_id,
-                user_id,
-                6000,  # token threshold
-            )
-            if row and row["moment_id"]:
-                moments_built += 1
-                total_io_tokens += row.get("token_count", 0)
-
-        return {
-            "status": "ok",
-            "io_tokens": total_io_tokens,
-            "moments_built": moments_built,
-            "sessions_checked": len(sessions),
-        }
-
-    # ------------------------------------------------------------------
-    # Phase 2 — dreaming agent
+    # Dreaming agent
     # ------------------------------------------------------------------
 
     async def _run_dreaming_agent(
@@ -265,10 +221,12 @@ class DreamingHandler:
                     if (a.target if hasattr(a, "target") else a.get("target"))
                 ]
 
-                # Ensure dream- prefix
-                name = dm.name if hasattr(dm, "name") else dm.get("name", "unnamed")
-                if not name.startswith("dream-"):
-                    name = f"dream-{name}"
+                # Convert kebab-case name to Title Case for display
+                raw_name = dm.name if hasattr(dm, "name") else dm.get("name", "unnamed")
+                # Strip any dream- prefix (redundant — moment_type is already "dream")
+                if raw_name.startswith("dream-"):
+                    raw_name = raw_name[6:]
+                name = raw_name.replace("-", " ").title()
 
                 moment = Moment(
                     name=name,

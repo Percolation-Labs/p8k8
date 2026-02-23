@@ -20,6 +20,58 @@ from p8.services.notifications import NotificationService
 from p8.services.stripe import StripeService
 
 
+async def _heal_reminder_jobs(db) -> None:
+    """Fix legacy reminder cron jobs that hardcode a URL instead of using the GUC.
+
+    Jobs should reference current_setting('p8.internal_api_url') so that
+    changing the URL in postgresql.conf fixes all jobs at once.
+    """
+    import logging
+    import re
+
+    log = logging.getLogger("p8.startup")
+    rows = await db.fetch(
+        "SELECT jobid, jobname, schedule, command FROM cron.job "
+        "WHERE jobname LIKE 'reminder-%' "
+        "AND command NOT LIKE '%current_setting%internal_api_url%'"
+    )
+    if not rows:
+        return
+
+    log.info("Healing %d reminder job(s) with hardcoded URLs", len(rows))
+
+    url_expr = "current_setting('p8.internal_api_url', true) || '/notifications/send'"
+    headers_expr = (
+        "jsonb_build_object("
+        "'Authorization', 'Bearer ' || current_setting('p8.api_key', true), "
+        "'Content-Type', 'application/json')"
+    )
+
+    for r in rows:
+        name, schedule, cmd = r["jobname"], r["schedule"], r["command"]
+        body_match = re.search(r"body := '(.+?)'::jsonb", cmd, re.DOTALL)
+        if not body_match:
+            log.warning("Could not parse body from job %s — skipping", name)
+            continue
+
+        payload = body_match.group(1)
+        is_one_time = "cron.unschedule" in cmd
+
+        new_cmd = (
+            f"SELECT net.http_post("
+            f"url := {url_expr}, "
+            f"headers := {headers_expr}, "
+            f"body := '{payload}'::jsonb"
+            f");"
+        )
+        if is_one_time:
+            new_cmd += f" SELECT cron.unschedule('{name}');"
+
+        await db.execute("SELECT cron.unschedule($1)", name)
+        await db.execute("SELECT cron.schedule($1, $2, $3)", name, schedule, new_cmd)
+        log.info("Healed %s — now uses GUC-based URL", name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with bootstrap_services(include_embeddings=True) as (
@@ -28,6 +80,15 @@ async def lifespan(app: FastAPI):
         if settings.otel_enabled:
             from p8.agentic.otel import setup_instrumentation
             setup_instrumentation()
+
+        # Self-heal: fix any reminder cron jobs with hardcoded URLs
+        try:
+            await _heal_reminder_jobs(db)
+        except Exception:
+            import logging
+            logging.getLogger("p8.startup").warning(
+                "Could not heal reminder jobs (pg_cron may not be available)", exc_info=True
+            )
 
         worker_task = None
         if settings.embedding_worker_enabled:

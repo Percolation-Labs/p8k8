@@ -148,15 +148,12 @@ class ContentService:
         file_id_str = str(file_entity.id)
         is_image = mime_type and mime_type.startswith("image/")
 
-        # Build summary
+        # Build summary — user-facing content only, no metadata
         char_count = len(full_text) if full_text else 0
-        parts = [f"Uploaded {filename} ({len(resource_entities)} chunks, {char_count} chars)."]
-        if resource_keys:
-            parts.append(f"Resources: {', '.join(resource_keys[:5])}")
         if full_text:
-            preview = (full_text[:200] + "…") if len(full_text) > 200 else full_text
-            parts.append(f"Preview: {preview}")
-        summary = "\n".join(parts)
+            summary = (full_text[:300] + "…") if len(full_text) > 300 else full_text
+        else:
+            summary = f"Uploaded {filename}"
 
         # Build image_uri for thumbnails
         image_uri = None
@@ -171,6 +168,7 @@ class ContentService:
             "resource_keys": resource_keys,
             "source": "upload",
             "chunk_count": len(resource_entities),
+            "char_count": char_count,
             **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
         }
 
@@ -550,13 +548,20 @@ print(json.dumps(output))
         tenant_id: str | None = None,
         user_id: UUID | None = None,
     ) -> BulkUpsertResult:
-        """Validate and upsert structured data (from JSON/YAML) into a table."""
+        """Validate and upsert structured data (from JSON/YAML) into a table.
+
+        When *user_id* is provided it **overrides** every row's user_id and
+        drops any explicit ``id`` so deterministic IDs recompute for the target
+        user.  This lets you write seed data once and apply it to any user.
+        Without *user_id*, rows keep whatever user_id is in the data.
+        """
         entities = []
         for item in items:
             if tenant_id:
                 item.setdefault("tenant_id", tenant_id)
             if user_id:
-                item.setdefault("user_id", user_id)
+                item["user_id"] = str(user_id)  # force override
+                item.pop("id", None)  # drop so deterministic ID recomputes
             entity = model_class.model_validate(item)
             entities.append(entity)
 
@@ -581,3 +586,94 @@ def load_structured(text: str, path: str) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(f"Expected list or dict at top level, got {type(data).__name__}")
     return data
+
+
+async def generate_mosaic_thumbnail(
+    image_uris: list[str], *, size: int = 400, quality: int = 82
+) -> str | None:
+    """Download up to 6 images and tile them into a blended mosaic JPEG.
+
+    Layout: 3x2 grid (or fewer tiles if less images available).
+    Each tile is center-cropped to fill its cell — no whitespace.
+    A soft gradient overlay blends the tiles together for a unified look.
+
+    Returns a ``data:image/jpeg;base64,...`` data URI, or *None* on failure.
+    """
+    import asyncio
+    import base64
+
+    import httpx
+
+    uris = [u for u in image_uris if u and u.startswith("http")][:6]
+    if not uris:
+        return None
+
+    async def _download(url: str) -> bytes | None:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=5) as c:
+                resp = await c.get(url)
+                if resp.status_code == 200:
+                    return resp.content
+        except Exception:
+            pass
+        return None
+
+    results = await asyncio.gather(*[_download(u) for u in uris])
+    blobs = [b for b in results if b]
+    if not blobs:
+        return None
+
+    def _compose(blobs: list[bytes]) -> bytes | None:
+        try:
+            from PIL import Image, ImageFilter, ImageOps
+
+            imgs: list[Image.Image] = []
+            for b in blobs:
+                img = Image.open(BytesIO(b))
+                img = ImageOps.exif_transpose(img)  # type: ignore[assignment]
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")  # type: ignore[assignment]
+                imgs.append(img)
+
+            n = len(imgs)
+
+            # Pick grid layout based on image count
+            if n == 1:
+                cols, rows = 1, 1
+            elif n == 2:
+                cols, rows = 2, 1
+            elif n <= 4:
+                cols, rows = 2, 2
+            else:
+                cols, rows = 3, 2
+
+            canvas_w = size
+            canvas_h = size * rows // cols  # maintain roughly square for 2x2, wider for 3x2
+            cell_w = canvas_w // cols
+            cell_h = canvas_h // rows
+
+            canvas = Image.new("RGB", (canvas_w, canvas_h), (30, 30, 35))
+
+            for i, im in enumerate(imgs[: cols * rows]):
+                c = i % cols
+                r = i // cols
+                # Center-crop to fill cell
+                tile = ImageOps.fit(im, (cell_w, cell_h))  # type: ignore[arg-type]
+                canvas.paste(tile, (c * cell_w, r * cell_h))
+
+            # Soft blur to blend tile edges
+            canvas = canvas.filter(ImageFilter.GaussianBlur(radius=0.8))  # type: ignore[assignment]
+
+            buf = BytesIO()
+            canvas.save(buf, format="JPEG", quality=quality)
+            return buf.getvalue()
+        except Exception:
+            logger.warning("Mosaic thumbnail generation failed", exc_info=True)
+            return None
+
+    thumb_bytes = await asyncio.to_thread(_compose, blobs)
+    if not thumb_bytes:
+        return None
+
+    b64 = base64.b64encode(thumb_bytes).decode()
+    return f"data:image/jpeg;base64,{b64}"

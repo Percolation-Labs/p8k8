@@ -155,6 +155,7 @@ class NotificationService:
             user_id,
         )
         if not row:
+            logger.warning("notification: user %s not found or deleted", user_id)
             return []
 
         # Create a notification moment in the user's feed
@@ -163,6 +164,7 @@ class NotificationService:
         devices = ensure_parsed(row["devices"], default=[])
 
         if not devices:
+            logger.info("notification: user %s has no registered devices", user_id)
             return []
 
         results = []

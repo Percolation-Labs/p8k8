@@ -139,7 +139,8 @@ def upsert_command(
     ),
     user_id: Optional[str] = typer.Option(
         None, "--user-id", "-u",
-        help="Stamp user_id on rows. Omit unless you need user-scoped privacy/filtering.",
+        help="Override user_id on all rows (recomputes deterministic IDs for target user). "
+             "Omit to keep whatever user_id is in the data.",
     ),
 ):
     """Bulk upsert entities from JSON/YAML/Markdown files.

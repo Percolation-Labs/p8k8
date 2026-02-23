@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     # API (used by pg_cron pg_net to call back into the embedding processor)
     api_base_url: str = "http://localhost:8000"
+    # Internal URL for pg_cron/pg_net HTTP calls (K8s service discovery).
+    # Defaults to the K8s service name; override for local dev or non-K8s envs.
+    internal_api_url: str = "http://p8-api.p8.svc:8000"
 
     # MCP server instructions (system prompt for MCP clients)
     mcp_instructions: str = (

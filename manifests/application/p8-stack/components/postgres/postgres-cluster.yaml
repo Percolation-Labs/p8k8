@@ -41,10 +41,13 @@ spec:
       - pg_net
     pg_hba:
       - local all all trust
+      - host all all 127.0.0.1/32 trust
+      - host all all ::1/128 trust
     parameters:
       max_connections: "200"
       cron.database_name: "p8db"
       pg_net.database_name: "p8db"
+      p8.internal_api_url: "http://p8-api.p8.svc:8000"
       shared_buffers: "1GB"
       effective_cache_size: "3GB"
       maintenance_work_mem: "256MB"

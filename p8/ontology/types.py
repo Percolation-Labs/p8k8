@@ -270,6 +270,11 @@ class User(CoreModel):
     # Each device: {"platform": "apns"|"fcm", "token": "...", "device_name": "...",
     #               "bundle_id": "...", "app_version": "...", "active": true}
 
+    def model_post_init(self, __context) -> None:
+        super().model_post_init(__context)
+        if self.user_id is None:
+            object.__setattr__(self, "user_id", self.id)
+
 
 class File(CoreModel):
     """Uploaded/parsed document. parsed_content is extracted text,

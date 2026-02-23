@@ -22,7 +22,8 @@ class RemMixin:
     ) -> list[dict]:
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_lookup($1, $2, $3)", key, tenant_id, user_id
+            "SELECT * FROM rem_lookup($1::varchar, $2::varchar, $3::uuid)",
+            key, tenant_id, user_id,
         )
         return [{"entity_type": r["entity_type"], "data": r["data"]} for r in rows]
 
@@ -41,7 +42,9 @@ class RemMixin:
     ) -> list[dict]:
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_search($1::vector, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "SELECT * FROM rem_search("
+            "$1::vector, $2::varchar, $3::varchar, $4::varchar, "
+            "$5::varchar, $6::real, $7::integer, $8::uuid, $9::varchar)",
             str(embedding),
             table,
             field,
@@ -65,7 +68,7 @@ class RemMixin:
     ) -> list[dict]:
         assert self.pool is not None
         rows = await self.pool.fetch(
-            "SELECT * FROM rem_fuzzy($1, $2, $3, $4, $5)",
+            "SELECT * FROM rem_fuzzy($1::varchar, $2::varchar, $3::real, $4::integer, $5::uuid)",
             query, tenant_id, threshold, limit, user_id,
         )
         return [dict(r) for r in rows]

@@ -44,10 +44,10 @@ async def test_usage_increment_fresh_row(db):
     uid = uuid4()
     row = await db.fetchrow(
         "SELECT * FROM usage_increment($1, $2, $3, $4)",
-        uid, "chat_tokens", 500, 25_000,
+        uid, "chat_tokens", 500, 50_000,
     )
     assert row["new_used"] == 500
-    assert row["effective_limit"] == 25_000
+    assert row["effective_limit"] == 50_000
     assert row["exceeded"] is False
 
 
@@ -57,11 +57,11 @@ async def test_usage_increment_accumulates(db):
     uid = uuid4()
     await db.fetchrow(
         "SELECT * FROM usage_increment($1, $2, $3, $4)",
-        uid, "chat_tokens", 1000, 25_000,
+        uid, "chat_tokens", 1000, 50_000,
     )
     row = await db.fetchrow(
         "SELECT * FROM usage_increment($1, $2, $3, $4)",
-        uid, "chat_tokens", 2000, 25_000,
+        uid, "chat_tokens", 2000, 50_000,
     )
     assert row["new_used"] == 3000
     assert row["exceeded"] is False
@@ -167,10 +167,10 @@ async def test_get_user_plan_cache_invalidation(db):
 
 @pytest.mark.asyncio
 async def test_check_quota_no_usage(db):
-    """No usage row → QuotaStatus(used=0, limit=25000, exceeded=False)."""
+    """No usage row → QuotaStatus(used=0, limit=50000, exceeded=False)."""
     uid = uuid4()
     status = await check_quota(db, uid, "chat_tokens", "free")
-    assert status == QuotaStatus(used=0, limit=25_000, exceeded=False)
+    assert status == QuotaStatus(used=0, limit=50_000, exceeded=False)
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_check_quota_after_increment(db):
     await increment_usage(db, uid, "chat_tokens", 5000, "free")
     status = await check_quota(db, uid, "chat_tokens", "free")
     assert status.used == 5000
-    assert status.limit == 25_000
+    assert status.limit == 50_000
     assert status.exceeded is False
 
 
@@ -188,9 +188,9 @@ async def test_check_quota_after_increment(db):
 async def test_check_quota_exceeded(db):
     """Incrementing past the limit → exceeded=True."""
     uid = uuid4()
-    await increment_usage(db, uid, "chat_tokens", 26_000, "free")
+    await increment_usage(db, uid, "chat_tokens", 51_000, "free")
     status = await check_quota(db, uid, "chat_tokens", "free")
-    assert status.used == 26_000
+    assert status.used == 51_000
     assert status.exceeded is True
 
 
@@ -208,20 +208,20 @@ async def test_check_quota_storage_bytes(db):
         )
     status = await check_quota(db, uid, "storage_bytes", "free")
     assert status.used == 10 * GB
-    assert status.limit == 10 * GB
-    assert status.exceeded is False  # exactly at limit, not exceeded (> not >=)
+    assert status.limit == 20 * GB
+    assert status.exceeded is False
 
 
 @pytest.mark.asyncio
 async def test_check_quota_storage_bytes_exceeded(db):
-    """Exceeding 10*GB free plan storage → exceeded."""
+    """Exceeding 20*GB free plan storage → exceeded."""
     uid = uuid4()
     await db.execute(
         "INSERT INTO files (id, name, size_bytes, user_id) VALUES ($1, $2, $3, $4)",
-        uuid4(), "big.bin", 11 * GB, uid,
+        uuid4(), "big.bin", 21 * GB, uid,
     )
     status = await check_quota(db, uid, "storage_bytes", "free")
-    assert status.used == 11 * GB
+    assert status.used == 21 * GB
     assert status.exceeded is True
 
 
@@ -286,7 +286,7 @@ def test_chat_429_when_quota_exceeded(client):
     _sql_seed(
         client,
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        f"VALUES ('{uid}', 'chat_tokens', date_trunc('month', CURRENT_DATE)::date, 30000)",
+        f"VALUES ('{uid}', 'chat_tokens', date_trunc('month', CURRENT_DATE)::date, 51000)",
     )
     _plan_cache.clear()
 
@@ -298,8 +298,8 @@ def test_chat_429_when_quota_exceeded(client):
     assert resp.status_code == 429
     detail = resp.json()["detail"]
     assert detail["error"] == "chat_token_quota_exceeded"
-    assert detail["used"] == 30000
-    assert detail["limit"] == 25_000
+    assert detail["used"] == 51000
+    assert detail["limit"] == 50_000
 
 
 # ── 8. API: content upload returns 429 on storage exceeded ────────────────
@@ -311,7 +311,7 @@ def test_content_upload_429_when_storage_exceeded(client):
     _sql_seed(
         client,
         "INSERT INTO files (id, name, size_bytes, user_id) "
-        f"VALUES ('{fid}', 'huge.bin', {11 * GB}, '{uid}')",
+        f"VALUES ('{fid}', 'huge.bin', {21 * GB}, '{uid}')",
     )
     _plan_cache.clear()
 
@@ -333,62 +333,62 @@ async def test_plan_upgrade_raises_limits(db):
     uid = uuid4()
     # Free plan
     status_free = await check_quota(db, uid, "chat_tokens", "free")
-    assert status_free.limit == 25_000
+    assert status_free.limit == 50_000
 
     # Pro plan
     status_pro = await check_quota(db, uid, "chat_tokens", "pro")
     assert status_pro.limit == 100_000
 
     # Verify via get_limits too
-    assert get_limits("free").chat_tokens == 25_000
+    assert get_limits("free").chat_tokens == 50_000
     assert get_limits("pro").chat_tokens == 100_000
-    assert get_limits("unknown_plan").chat_tokens == 25_000  # defaults to free
+    assert get_limits("unknown_plan").chat_tokens == 50_000  # defaults to free
 
 
 # ── 10. Dreaming quota tests ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_dreaming_io_tokens_quota(db):
-    """dreaming_io_tokens quota: free plan limit=10000, tracks usage correctly."""
+    """dreaming_io_tokens quota: free plan limit=20000, tracks usage correctly."""
     uid = uuid4()
 
     # Fresh — no usage
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.limit == 10_000
+    assert status.limit == 20_000
     assert status.used == 0
     assert status.exceeded is False
 
     # Increment below limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 5_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 10_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 5_000
+    assert status.used == 10_000
     assert status.exceeded is False
 
     # Increment past limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 6_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 11_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 11_000
+    assert status.used == 21_000
     assert status.exceeded is True
 
 
 @pytest.mark.asyncio
 async def test_dreaming_minutes_quota(db):
-    """dreaming_minutes quota: free plan limit=30, tracks usage correctly."""
+    """dreaming_minutes quota: free plan limit=60, tracks usage correctly."""
     uid = uuid4()
 
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.limit == 30
+    assert status.limit == 60
     assert status.used == 0
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 20, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 30, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 20
+    assert status.used == 30
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 15, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 35, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 35
+    assert status.used == 65
     assert status.exceeded is True
 
 
@@ -398,10 +398,10 @@ async def test_dreaming_pre_flight_blocks_over_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage past the free-plan dreaming_minutes limit (30)
+    # Seed usage past the free-plan dreaming_minutes limit (60)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 35)",
+        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 65)",
         uid, "dreaming_minutes",
     )
 
@@ -419,10 +419,10 @@ async def test_dreaming_pre_flight_allows_under_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage under the free-plan dreaming_minutes limit (30)
+    # Seed usage under the free-plan dreaming_minutes limit (60)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 10)",
+        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 20)",
         uid, "dreaming_minutes",
     )
 
@@ -435,14 +435,13 @@ async def test_dreaming_pre_flight_allows_under_quota(db):
 
 
 @pytest.mark.asyncio
-async def test_dreaming_handler_increments_only_phase2_tokens(db):
-    """DreamingHandler increments dreaming_io_tokens with Phase 2 tokens only (no LLM needed)."""
+async def test_dreaming_handler_increments_tokens(db):
+    """DreamingHandler increments dreaming_io_tokens from agent run."""
     from unittest.mock import AsyncMock, patch
     from p8.workers.handlers.dreaming import DreamingHandler
 
     uid = uuid4()
 
-    # Clean any prior usage
     await db.execute(
         "DELETE FROM usage_tracking WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens'",
         uid,
@@ -457,20 +456,13 @@ async def test_dreaming_handler_increments_only_phase2_tokens(db):
 
     handler = DreamingHandler()
 
-    # Mock both phases: Phase 1 returns 500 text tokens, Phase 2 returns 3000 LLM tokens
-    phase1_result = {"status": "ok", "io_tokens": 500, "moments_built": 2, "sessions_checked": 3}
-    phase2_result = {"status": "ok", "io_tokens": 3000, "session_id": str(uuid4())}
+    agent_result = {"status": "ok", "io_tokens": 3000, "session_id": str(uuid4())}
 
-    with (
-        patch.object(handler, "_build_session_moments", new_callable=AsyncMock, return_value=phase1_result),
-        patch.object(handler, "_run_dreaming_agent", new_callable=AsyncMock, return_value=phase2_result),
-    ):
+    with patch.object(handler, "_run_dreaming_agent", new_callable=AsyncMock, return_value=agent_result):
         result = await handler.handle({"user_id": str(uid)}, ctx)
 
-    # Total includes both phases
-    assert result["io_tokens"] == 3500
+    assert result["io_tokens"] == 3000
 
-    # But usage_tracking should only reflect Phase 2's LLM tokens
     row = await db.fetchrow(
         "SELECT used FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens' "
@@ -478,12 +470,12 @@ async def test_dreaming_handler_increments_only_phase2_tokens(db):
         uid,
     )
     assert row is not None, "usage_tracking row should exist"
-    assert row["used"] == 3000, f"Should track Phase 2 tokens only, got {row['used']}"
+    assert row["used"] == 3000
 
 
 @pytest.mark.asyncio
-async def test_dreaming_handler_no_increment_on_zero_phase2(db):
-    """No usage_tracking row when Phase 2 produces zero tokens (e.g. skipped)."""
+async def test_dreaming_handler_no_increment_on_skip(db):
+    """No usage_tracking row when dreaming agent is skipped (zero tokens)."""
     from unittest.mock import AsyncMock, patch
     from p8.workers.handlers.dreaming import DreamingHandler
 
@@ -503,25 +495,20 @@ async def test_dreaming_handler_no_increment_on_zero_phase2(db):
 
     handler = DreamingHandler()
 
-    phase1_result = {"status": "ok", "io_tokens": 200, "moments_built": 1, "sessions_checked": 2}
-    phase2_result = {"status": "skipped_no_data", "io_tokens": 0}
+    agent_result = {"status": "skipped_no_data", "io_tokens": 0}
 
-    with (
-        patch.object(handler, "_build_session_moments", new_callable=AsyncMock, return_value=phase1_result),
-        patch.object(handler, "_run_dreaming_agent", new_callable=AsyncMock, return_value=phase2_result),
-    ):
+    with patch.object(handler, "_run_dreaming_agent", new_callable=AsyncMock, return_value=agent_result):
         result = await handler.handle({"user_id": str(uid)}, ctx)
 
-    assert result["io_tokens"] == 200  # total still includes Phase 1
+    assert result["io_tokens"] == 0
 
-    # No usage row should exist — we didn't hit the LLM
     row = await db.fetchrow(
         "SELECT used FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens' "
         "AND period_start = date_trunc('month', CURRENT_DATE)::date",
         uid,
     )
-    assert row is None, "No usage_tracking row when Phase 2 tokens are 0"
+    assert row is None, "No usage_tracking row when tokens are 0"
 
 
 @pytest.mark.llm
@@ -594,8 +581,8 @@ async def test_dreaming_handler_increments_usage(db, encryption):
 
 @pytest.mark.asyncio
 async def test_web_searches_daily_limits(db):
-    """web_searches_daily: free=10, pro=50."""
-    assert get_limits("free").web_searches_daily == 10
+    """web_searches_daily: free=20, pro=50."""
+    assert get_limits("free").web_searches_daily == 20
     assert get_limits("pro").web_searches_daily == 50
     assert get_limits("team").web_searches_daily == 100
     assert get_limits("enterprise").web_searches_daily == 500
@@ -608,20 +595,20 @@ async def test_web_searches_daily_quota(db):
 
     # Fresh — no usage
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.limit == 10
+    assert status.limit == 20
     assert status.used == 0
     assert status.exceeded is False
 
     # Increment below limit
-    await increment_usage(db, uid, "web_searches_daily", 5, "free")
+    await increment_usage(db, uid, "web_searches_daily", 10, "free")
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.used == 5
+    assert status.used == 10
     assert status.exceeded is False
 
     # Increment past limit
-    await increment_usage(db, uid, "web_searches_daily", 6, "free")
+    await increment_usage(db, uid, "web_searches_daily", 11, "free")
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.used == 11
+    assert status.used == 21
     assert status.exceeded is True
 
 

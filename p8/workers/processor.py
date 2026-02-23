@@ -64,6 +64,7 @@ def _register_default_handlers() -> None:
     from p8.workers.handlers.dreaming import DreamingHandler
     from p8.workers.handlers.file_processing import FileProcessingHandler
     from p8.workers.handlers.news import NewsHandler
+    from p8.workers.handlers.reading import ReadingSummaryHandler
     from p8.workers.handlers.scheduled import ScheduledHandler
 
     if "file_processing" not in _HANDLER_REGISTRY:
@@ -72,6 +73,8 @@ def _register_default_handlers() -> None:
         register_handler("dreaming", DreamingHandler())  # type: ignore[arg-type]
     if "news" not in _HANDLER_REGISTRY:
         register_handler("news", NewsHandler())  # type: ignore[arg-type]
+    if "reading_summary" not in _HANDLER_REGISTRY:
+        register_handler("reading_summary", ReadingSummaryHandler())  # type: ignore[arg-type]
     if "scheduled" not in _HANDLER_REGISTRY:
         register_handler("scheduled", ScheduledHandler())  # type: ignore[arg-type]
 
@@ -151,7 +154,20 @@ class TieredWorker:
 
         try:
             result = await handler.handle(task, ctx)
-            await queue.track_usage(task_id, result or {})
+            result = result or {}
+
+            # Handlers MUST produce a meaningful outcome. Only an explicit "ok"
+            # status (or no status key at all, for legacy handlers) counts as
+            # success. Anything else — skipped_*, error, unknown_action — means
+            # the task did not accomplish its goal and must be marked failed so
+            # it shows up in health checks instead of being silently buried.
+            result_status = str(result.get("status", "ok"))
+            if result_status != "ok":
+                error_msg = result_status
+                log.warning("Task %s (%s) did not succeed: %s", task_id, task_type, error_msg)
+                await queue.fail(task_id, error_msg)
+            else:
+                await queue.track_usage(task_id, result)
         except Exception as e:
             log.exception("Task %s (%s) failed", task_id, task_type)
             await queue.emit_event(

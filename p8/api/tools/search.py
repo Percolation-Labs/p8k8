@@ -2,9 +2,70 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from p8.api.tools import get_db, get_user_id
+from p8.api.tools import get_db, get_encryption, get_user_id
+from p8.ontology.types import TABLE_MAP
+
+logger = logging.getLogger(__name__)
+
+
+def _decrypt_results(results: list[dict]) -> list[dict]:
+    """Decrypt platform-encrypted fields in REM query results.
+
+    REM functions return raw row_to_json(t.*) which may contain encrypted
+    content fields.  This post-processes results so agents see plaintext.
+    """
+    encryption = get_encryption()
+
+    out = []
+    for result in results:
+        data = result.get("data")
+        if not isinstance(data, dict):
+            out.append(result)
+            continue
+
+        entity_type = result.get("entity_type") or data.get("type")
+        level = data.get("encryption_level")
+
+        if level != "platform" or not entity_type:
+            out.append(result)
+            continue
+
+        model_class = TABLE_MAP.get(entity_type)
+        if not model_class or not getattr(model_class, "__encrypted_fields__", None):
+            out.append(result)
+            continue
+
+        tenant_id = data.get("tenant_id")
+        if not tenant_id:
+            out.append(result)
+            continue
+
+        try:
+            decrypted = encryption.decrypt_fields(model_class, data, tenant_id)
+            out.append({**result, "data": decrypted})
+        except Exception:
+            logger.debug("search: decrypt failed for %s/%s", entity_type, data.get("id"))
+            out.append(result)
+
+    return out
+
+
+async def _warm_dek_cache(results: list[dict]) -> None:
+    """Pre-cache DEKs for all tenant_ids in results so decrypt_fields is fast."""
+    encryption = get_encryption()
+    tenant_ids = set()
+    for r in results:
+        data = r.get("data")
+        if isinstance(data, dict) and data.get("encryption_level") == "platform":
+            tid = data.get("tenant_id")
+            if tid:
+                tenant_ids.add(tid)
+
+    for tid in tenant_ids:
+        await encryption.get_dek(tid)
 
 
 async def search(
@@ -56,6 +117,9 @@ async def search(
     db = get_db()
     try:
         results = await db.rem_query(query, user_id=user_id)
+        # Decrypt platform-encrypted content before returning to agent
+        await _warm_dek_cache(results)
+        results = _decrypt_results(results)
         return {
             "status": "success",
             "query": query,

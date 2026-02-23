@@ -20,7 +20,9 @@ from p8.settings import Settings
 
 migrate_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
-_SQL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "sql"
+_SQL_DIR_FROM_SRC = Path(__file__).resolve().parent.parent.parent.parent / "sql"
+_SQL_DIR_CONTAINER = Path("/app/sql")
+_SQL_DIR = _SQL_DIR_FROM_SRC if _SQL_DIR_FROM_SRC.is_dir() else _SQL_DIR_CONTAINER
 
 
 async def _run_migrate(files: list[str] | None = None):

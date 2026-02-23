@@ -36,19 +36,19 @@ class ScheduledHandler:
         await ctx.db.execute("SELECT rebuild_kv_store()")
         count = await ctx.db.fetchval("SELECT COUNT(*) FROM kv_store")
         log.info("KV store rebuilt: %d entries", count)
-        return {"action": "kv_rebuild", "entries": count}
+        return {"status": "ok", "action": "kv_rebuild", "entries": count}
 
     async def _kv_rebuild_incremental(self, ctx) -> dict:
         """Incremental KV store rebuild."""
         count = await ctx.db.fetchval("SELECT rebuild_kv_store_incremental()")
         log.info("KV store incremental rebuild: %d rows updated", count)
-        return {"action": "kv_rebuild_incremental", "rows_updated": count}
+        return {"status": "ok", "action": "kv_rebuild_incremental", "rows_updated": count}
 
     async def _embedding_backfill(self, payload: dict, ctx) -> dict:
         """Queue embedding backfill for a specific table."""
         table = payload.get("table")
         if not table:
-            return {"action": "embedding_backfill", "error": "no table specified"}
+            return {"status": "error_no_table", "action": "embedding_backfill"}
 
         from p8.services.embeddings import EmbeddingService, create_provider
 
@@ -59,4 +59,4 @@ class ScheduledHandler:
         )
         queued = await service.backfill(table)
         log.info("Embedding backfill queued %d items for %s", queued, table)
-        return {"action": "embedding_backfill", "table": table, "queued": queued}
+        return {"status": "ok", "action": "embedding_backfill", "table": table, "queued": queued}

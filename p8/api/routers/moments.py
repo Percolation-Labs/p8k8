@@ -18,36 +18,44 @@ router = APIRouter()
 async def _decrypt_feed_rows(
     rows: list[dict], db: Database, encryption: EncryptionService,
 ) -> list[dict]:
-    """Decrypt platform-encrypted summaries in feed/reminder results.
+    """Decrypt platform-encrypted summaries in feed results.
 
-    Only attempts decryption for rows with encryption_level='platform'.
-    Daily summaries and unencrypted moments pass through unchanged.
+    Uses the Repository decrypt path (same as list_moments, get_moment, etc.)
+    to ensure consistent DEK resolution and AAD construction.  Daily summaries
+    and unencrypted moments pass through unchanged.
     """
-    platform_rows = [r for r in rows if r.get("encryption_level") == "platform"]
-    if not platform_rows:
+    from p8.services.repository import Repository
+
+    # Identify feed rows that may need decryption
+    candidate_ids = [
+        r["event_id"] for r in rows
+        if r.get("summary") and (
+            r.get("encryption_level") == "platform"
+            or r.get("encryption_level") is None
+        )
+    ]
+    if not candidate_ids:
         return rows
 
-    # Collect tenant_ids that need DEKs
-    moment_ids = [r["event_id"] for r in platform_rows]
-    tenant_rows = await db.fetch(
-        "SELECT id, tenant_id FROM moments WHERE id = ANY($1::uuid[])",
-        moment_ids,
+    # Batch-fetch full moment rows and decrypt through Repository
+    repo = Repository(Moment, db, encryption)
+    full_rows = await db.fetch(
+        "SELECT * FROM moments WHERE id = ANY($1::uuid[])",
+        candidate_ids,
     )
-    tenant_map = {str(r["id"]): r["tenant_id"] for r in tenant_rows if r["tenant_id"]}
+    await repo._ensure_deks(full_rows)
 
-    # Pre-warm DEK cache for all needed tenants
-    for tid in set(tenant_map.values()):
-        await encryption.get_dek(tid)
+    decrypted: dict = {}
+    for frow in full_rows:
+        entity = repo._decrypt_row(frow)
+        decrypted[entity.id] = entity.summary
 
+    # Replace summaries in feed rows with decrypted text
     result = []
     for row in rows:
-        if row.get("encryption_level") == "platform" and row.get("summary"):
-            tid = tenant_map.get(str(row.get("event_id")))
-            if tid:
-                dec = encryption.decrypt_fields(
-                    Moment, {"id": row["event_id"], "summary": row["summary"]}, tid,
-                )
-                row = {**row, "summary": dec["summary"]}
+        eid = row.get("event_id")
+        if eid in decrypted and decrypted[eid] is not None:
+            row = {**row, "summary": decrypted[eid]}
         result.append(row)
     return result
 
@@ -103,65 +111,79 @@ async def session_timeline(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Interleaved messages + moments for a session, chronologically ordered."""
+    """Interleaved messages + moments for a session, chronologically ordered.
+
+    Returns ``{"session": {...}, "timeline": [...]}`` so the client knows
+    the session mode (e.g. ``"dreaming"``) and can apply collapse logic.
+    """
+    # Fetch session metadata first
+    session_row = await db.fetchrow(
+        """SELECT id, name, description, agent_name, mode,
+                  total_tokens, metadata
+           FROM sessions WHERE id = $1 AND deleted_at IS NULL""",
+        session_id,
+    )
+    session_dict = dict(session_row) if session_row else None
+
     rows = await db.rem_session_timeline(session_id, limit=limit)
     if not rows:
-        return rows
+        return {"session": session_dict, "timeline": []}
 
     # Use per-row encryption_level as primary signal (stamped at write time).
-    # Fall back to tenant lookup only when encryption_level is NULL (legacy data).
     needs_decrypt = any(
         r.get("encryption_level") == "platform"
         or (r.get("encryption_level") is None and r.get("content_or_summary"))
         for r in rows
     )
     if not needs_decrypt:
-        return [dict(r) for r in rows]
+        return {"session": session_dict, "timeline": [dict(r) for r in rows]}
 
-    # Resolve tenant_id for DEK — check messages first, fall back to moments
-    tenant_row = await db.fetchrow(
-        "SELECT tenant_id FROM messages WHERE session_id = $1 AND tenant_id IS NOT NULL LIMIT 1",
-        session_id,
-    )
-    if not tenant_row:
-        tenant_row = await db.fetchrow(
-            "SELECT tenant_id FROM moments WHERE source_session_id = $1 AND tenant_id IS NOT NULL AND tenant_id != '' LIMIT 1",
-            session_id,
+    # Batch-fetch full rows for encrypted items and decrypt via Repository
+    from p8.services.repository import Repository
+
+    msg_ids = [
+        r["event_id"] for r in rows
+        if r.get("event_type") == "message"
+        and r.get("content_or_summary")
+        and (r.get("encryption_level") == "platform" or r.get("encryption_level") is None)
+    ]
+    mom_ids = [
+        r["event_id"] for r in rows
+        if r.get("event_type") == "moment"
+        and r.get("content_or_summary")
+        and (r.get("encryption_level") == "platform" or r.get("encryption_level") is None)
+    ]
+
+    decrypted_content: dict = {}
+
+    if msg_ids:
+        msg_repo = Repository(Message, db, encryption)
+        msg_rows = await db.fetch(
+            "SELECT * FROM messages WHERE id = ANY($1::uuid[])", msg_ids,
         )
-    tenant_id = tenant_row["tenant_id"] if tenant_row else None
-    if not tenant_id:
-        return [dict(r) for r in rows]
+        await msg_repo._ensure_deks(msg_rows)
+        for mrow in msg_rows:
+            entity = msg_repo._decrypt_row(mrow)
+            decrypted_content[entity.id] = entity.content
 
-    await encryption.get_dek(tenant_id)
+    if mom_ids:
+        mom_repo = Repository(Moment, db, encryption)
+        mom_rows = await db.fetch(
+            "SELECT * FROM moments WHERE id = ANY($1::uuid[])", mom_ids,
+        )
+        await mom_repo._ensure_deks(mom_rows)
+        for mrow in mom_rows:
+            moment = mom_repo._decrypt_row(mrow)
+            decrypted_content[moment.id] = moment.summary  # type: ignore[union-attr]
 
-    # For legacy rows with no encryption_level, check tenant mode as fallback
-    fallback_decrypt = await encryption.should_decrypt_on_read(tenant_id)
-
-    result = []
+    timeline = []
     for row in rows:
         data = dict(row)
-        level = data.get("encryption_level")
-
-        # Decide per-row: decrypt platform rows, skip client/sealed/disabled/none
-        should_decrypt = (
-            level == "platform"
-            or (level is None and fallback_decrypt)
-        )
-
-        if should_decrypt and data.get("content_or_summary"):
-            if data.get("event_type") == "message":
-                dec = encryption.decrypt_fields(
-                    Message, {"id": data["event_id"], "content": data["content_or_summary"]}, tenant_id
-                )
-                data["content_or_summary"] = dec["content"]
-            elif data.get("event_type") == "moment":
-                dec = encryption.decrypt_fields(
-                    Moment, {"id": data["event_id"], "summary": data["content_or_summary"]}, tenant_id
-                )
-                data["content_or_summary"] = dec["summary"]
-
-        result.append(data)
-    return result
+        eid = data.get("event_id")
+        if eid in decrypted_content and decrypted_content[eid] is not None:
+            data["content_or_summary"] = decrypted_content[eid]
+        timeline.append(data)
+    return {"session": session_dict, "timeline": timeline}
 
 
 @router.get("/reminders")
@@ -239,14 +261,58 @@ async def search_moments(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Semantic search over moments using embeddings, with fuzzy fallback."""
+    """Semantic search over moments using embeddings, with tag match and fuzzy fallback.
+
+    Returns flat moment objects (same shape as GET /moments/) so clients can
+    render them with the same card widgets used on the feed.
+    """
     import logging
     log = logging.getLogger(__name__)
 
     embedding_service = request.app.state.embedding_service
     user_id = user.user_id if user else None
 
-    # Try semantic search via embeddings, fall back to fuzzy text match
+    from p8.services.repository import Repository
+
+    _DROP_COLS = {"encryption_level", "tenant_id", "user_id", "deleted_at", "graph_edges"}
+
+    async def _decrypt_and_dump(raw_rows) -> list[dict]:
+        """Decrypt moment rows via Repository and return JSON-safe dicts."""
+        repo = Repository(Moment, db, encryption)
+        await repo._ensure_deks(raw_rows)
+        out = []
+        for row in raw_rows:
+            entity = repo._decrypt_row(row)
+            d = entity.model_dump(mode="json")
+            for col in _DROP_COLS:
+                d.pop(col, None)
+            out.append(d)
+        return out
+
+    def _unwrap_rem(rows: list[dict]) -> list[dict]:
+        """Extract IDs from REM result wrappers for re-fetch."""
+        ids = []
+        for row in rows:
+            d = row.get("data") or row
+            if isinstance(d, dict) and d.get("id"):
+                ids.append(d["id"])
+        return ids
+
+    # 1. Tag match — if the query looks like tags, try direct topic_tags overlap
+    assert db.pool is not None
+    tag_results = await db.pool.fetch(
+        "SELECT * FROM moments "
+        "WHERE deleted_at IS NULL "
+        "  AND ($1::uuid IS NULL OR user_id IS NULL OR user_id = $1) "
+        "  AND topic_tags && string_to_array($2, ',')::text[] "
+        "ORDER BY starts_timestamp DESC NULLS LAST "
+        "LIMIT $3",
+        user_id, q.lower().strip(), limit,
+    )
+    if tag_results:
+        return await _decrypt_and_dump(tag_results)
+
+    # 2. Semantic search via embeddings
     try:
         vectors = await embedding_service.provider.embed([q])
         if vectors and vectors[0]:
@@ -260,16 +326,35 @@ async def search_moments(
                 limit=limit,
             )
             if results:
-                return results
+                ids = _unwrap_rem(results)
+                if ids:
+                    rows = await db.pool.fetch(
+                        "SELECT * FROM moments WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL "
+                        "ORDER BY starts_timestamp DESC NULLS LAST",
+                        ids,
+                    )
+                    if rows:
+                        return await _decrypt_and_dump(rows)
     except Exception as e:
         log.warning("Embedding search failed, falling back to fuzzy: %s", e)
 
-    # Fuzzy fallback
+    # 3. Fuzzy text fallback
     try:
-        return await db.rem_fuzzy(q, user_id=user_id, limit=limit)
+        fuzzy = await db.rem_fuzzy(q, user_id=user_id, limit=limit)
+        if fuzzy:
+            ids = _unwrap_rem(fuzzy)
+            if ids:
+                rows = await db.pool.fetch(
+                    "SELECT * FROM moments WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL "
+                    "ORDER BY starts_timestamp DESC NULLS LAST",
+                    ids,
+                )
+                if rows:
+                    return await _decrypt_and_dump(rows)
     except Exception as e:
         log.warning("Fuzzy search also failed: %s", e)
-        return []
+
+    return []
 
 
 

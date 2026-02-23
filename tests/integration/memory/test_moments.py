@@ -358,7 +358,7 @@ async def test_content_upload_moment_in_feed(db, encryption):
     assert len(moments) >= 1
     m = moments[0]
     assert m.name == "upload-q4-report"
-    assert "q4-report.pdf" in (m.summary or "")
+    assert "Q4 financials" in (m.summary or "")
     assert m.metadata["resource_keys"] == ["q4-report-chunk-0000"]
 
 
@@ -493,13 +493,8 @@ async def test_upload_moment_has_content_preview(db, encryption):
     assert len(rows) >= 1
     summary = rows[0]["summary"]
 
-    # Summary should contain preview text, not just filename + stats
-    assert "Preview:" in summary
+    # Summary should contain the extracted content text
     assert "machine learning pipelines" in summary
-
-    # Summary should list resource keys
-    assert "Resources:" in summary
-    assert "ml-report-chunk-0000" in summary
 
 
 async def test_moment_injection_includes_metadata(db, encryption):

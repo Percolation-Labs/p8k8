@@ -29,6 +29,8 @@ tests/
 │   ├── seed-session.json
 │   ├── seed-messages.json
 │   ├── seed-feed.json
+│   ├── seed-reading.yaml           # Daily reading moment (clicks + bookmarks)
+│   ├── seed-reading-resources.yaml # Web resources referenced by reading moment
 │   ├── fixtures/                   # Persona seed data (Jamie Rivera, etc.)
 │   └── uploads/                    # Sample files for ingestion tests
 ├── unit/                           # Pure unit tests — no DB, all mocked
@@ -116,7 +118,7 @@ No database required. All services mocked via `tests/unit/helpers.py`.
 | `test_verify` | `verify_model()` checks (missing table/column, extra columns, embedding tables, triggers, schema metadata), `verify_all()` iteration, `_build_json_schema`, `_derive_kv_summary`, CLI commands |
 | `test_auth_codes` | OAuth auth code parsing — normal JSON, JSONB double-encoded array recovery, `set_authorization_code_user` writes plain TEXT (no `::jsonb` cast), `consume_authorization_code` handles both formats |
 | `test_mcp_oauth_flow` | End-to-end MCP OAuth 2.1 flow with mocked AuthService: client registration (DCR), authorize + Google redirect, callback with code redirect, token exchange with PKCE, missing params error, bad PKCE rejection |
-| `test_stripe_webhooks` | Stripe webhook handlers — `invoice.payment_failed` marks past_due, idempotent duplicate detection, `charge.refunded` reverses addon credits, unknown payment_intent warning, subscription refund no-op, `checkout.session.completed` populates payment_intents, unknown price defaults to free |
+| `test_stripe_webhooks` | Stripe webhook handlers — `invoice.payment_failed` marks past_due, idempotent duplicate detection, `charge.refunded` reverses addon credits, unknown payment_intent warning, subscription refund no-op, `checkout.session.completed` populates payment_intents, unknown price defaults to free, **Stripe SDK v14 compatibility** (bracket access for `sub["items"]`, `sub["status"]`, `sub["customer"]` — dot access fails because `dict.items()` shadows the field), subscription upgrade via checkout flow |
 
 ## Integration Tests
 
@@ -165,13 +167,15 @@ Security layer — envelope encryption, KMS backends, OAuth, JWT, magic links, M
 | `test_auth_flows` | `AuthService` — JWT create/verify/expiry, refresh rotation, revocation, magic link full flow (create → verify → single-use), Google/Apple OAuth callbacks |
 | `* test_mcp_token_exchange` | **Critical.** Full MCP OAuth 2.1 token exchange against real DB — PKCE flow, devices JSON string parsing, single-use codes. Catches the production bugs described above |
 
-### billing/ — Quotas & Usage
+### billing/ — Quotas, Usage & Payments
 
-Usage tracking, plan limits, and API enforcement for chat, storage, and dreaming.
+Usage tracking, plan limits, API enforcement, and Stripe payment flow.
 
 | Test | What it covers |
 |------|----------------|
 | `test_quotas` | SQL `usage_increment()` (fresh row, accumulation, exceed limit, granted_extra), `get_user_plan` (defaults to free, Stripe plan lookup, cache invalidation), `check_quota` (messages, storage bytes, deleted file exclusion), monthly period isolation, API 429 enforcement on `/chat/` and `/content/`, plan upgrade limit changes, dreaming IO token and minutes quotas, dreaming pre-flight allow/block, dreaming handler usage increment (phase 2 only) |
+
+See also: **unit/test_stripe_webhooks.py** for the full Stripe webhook test suite (10 tests covering subscription lifecycle, refunds, add-ons, idempotency, and SDK v14 compatibility).
 
 ### content/ — Content & Embeddings
 
@@ -218,6 +222,44 @@ Background reflective agent that generates dream moments from recent activity.
 | Test | What it covers |
 |------|----------------|
 | `test_seed_jamie` | Jamie Rivera seed data — feed structure validation, card variants |
+
+## Seed Data (`tests/data/`)
+
+Static YAML/JSON fixtures that can be loaded into any database via `p8 upsert`.
+
+### Reading Feature
+
+Web resources and a daily reading moment (clicks + bookmarks):
+
+```bash
+# 1. Seed the web resources (shared, no user_id needed)
+p8 upsert resources tests/data/seed-reading-resources.yaml
+
+# 2. Seed the reading moment for the default test user (Sage Whitfield)
+p8 upsert moments tests/data/seed-reading.yaml
+
+# 3. Or target a different user — --user-id overrides all rows and
+#    recomputes deterministic IDs so the same file works for anyone
+p8 upsert moments tests/data/seed-reading.yaml \
+  --user-id ec932220-f00b-5455-b017-f4d8c2b4c3dd
+```
+
+To seed against a remote database, set `P8_DATABASE_URL`:
+
+```bash
+P8_DATABASE_URL="postgresql://user:pass@host:5432/db" \
+  p8 upsert moments tests/data/seed-reading.yaml --user-id <USER_ID>
+```
+
+### `--user-id` Override Behavior
+
+When `--user-id` is passed to `p8 upsert`, it **overrides** `user_id` on every row
+(not `setdefault`). Explicit `id` fields are dropped so that `CoreModel.model_post_init`
+recomputes deterministic IDs via `deterministic_id(table, name, new_user_id)`. This means
+you write seed data once with any placeholder user and re-target it to any real user at
+upsert time.
+
+---
 
 ## .sims/ — Simulations
 

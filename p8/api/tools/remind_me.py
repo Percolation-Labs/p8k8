@@ -34,15 +34,12 @@ async def remind_me(
         Reminder details including job name and schedule
     """
     from croniter import croniter
-    from p8.settings import get_settings
 
     user_id = get_user_id()
     if not user_id:
         return {"status": "error", "error": "user_id is required for reminders"}
 
     now = datetime.now(timezone.utc)
-    settings = get_settings()
-    api_url = f"{settings.api_base_url}/notifications/send"
     reminder_id = uuid4()
     job_name = f"reminder-{reminder_id}"
 
@@ -75,13 +72,20 @@ async def remind_me(
         "data": {"reminder_id": str(reminder_id), "tags": tags or []},
     })
 
-    # Build the SQL that pg_cron will execute
-    # For one-time: send + unschedule in one shot
+    # Build the SQL that pg_cron will execute.
+    # Base URL comes from the p8.internal_api_url GUC — jobs never hardcode
+    # a domain, so changing the URL in postgresql.conf fixes all jobs at once.
+    url_expr = "current_setting('p8.internal_api_url', true) || '/notifications/send'"
+    headers_expr = (
+        "jsonb_build_object("
+        "'Authorization', 'Bearer ' || current_setting('p8.api_key', true), "
+        "'Content-Type', 'application/json')"
+    )
     if recurrence == "once":
         job_sql = (
             f"SELECT net.http_post("
-            f"url := '{api_url}', "
-            f"headers := '{{\"Content-Type\": \"application/json\"}}'::jsonb, "
+            f"url := {url_expr}, "
+            f"headers := {headers_expr}, "
             f"body := '{payload}'::jsonb"
             f"); "
             f"SELECT cron.unschedule('{job_name}');"
@@ -89,8 +93,8 @@ async def remind_me(
     else:
         job_sql = (
             f"SELECT net.http_post("
-            f"url := '{api_url}', "
-            f"headers := '{{\"Content-Type\": \"application/json\"}}'::jsonb, "
+            f"url := {url_expr}, "
+            f"headers := {headers_expr}, "
             f"body := '{payload}'::jsonb"
             f");"
         )

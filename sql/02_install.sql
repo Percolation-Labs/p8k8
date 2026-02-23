@@ -431,7 +431,7 @@ BEGIN
     FROM kv_store kv
     WHERE kv.entity_key = normalize_key(p_entity_key)
       AND (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
-      AND (p_user_id IS NULL OR kv.user_id = p_user_id);
+      AND (p_user_id IS NULL OR kv.user_id IS NULL OR kv.user_id = p_user_id);
 
     IF v_type IS NULL THEN
         RETURN;
@@ -488,7 +488,7 @@ BEGIN
            AND e.provider = $3
            AND (t.deleted_at IS NULL)
            AND ($4 IS NULL OR t.tenant_id = $4)
-           AND ($5 IS NULL OR t.user_id = $5)
+           AND ($5 IS NULL OR t.user_id IS NULL OR t.user_id = $5)
            AND (1 - (e.embedding <=> $1)) >= $6'
         || v_cat_filter ||
         ' ORDER BY e.embedding <=> $1
@@ -525,7 +525,7 @@ BEGIN
            ) AS data
     FROM kv_store kv
     WHERE (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
-      AND (p_user_id IS NULL OR kv.user_id = p_user_id)
+      AND (p_user_id IS NULL OR kv.user_id IS NULL OR kv.user_id = p_user_id)
       AND GREATEST(
               similarity(kv.entity_key, p_query),
               similarity(kv.content_summary, p_query)
@@ -578,7 +578,7 @@ BEGIN
             FROM kv_store kv
             WHERE kv.entity_key = normalize_key(p_entity_key)
               AND (p_tenant_id IS NULL OR kv.tenant_id = p_tenant_id)
-              AND (p_user_id IS NULL OR kv.user_id = p_user_id)
+              AND (p_user_id IS NULL OR kv.user_id IS NULL OR kv.user_id = p_user_id)
 
             UNION ALL
 
@@ -600,7 +600,7 @@ BEGIN
               AND NOT (normalize_key(edge->>'target') = ANY(t.path))
               AND (p_rel_type IS NULL OR edge->>'relation' = p_rel_type)
               AND (p_tenant_id IS NULL OR kv2.tenant_id = p_tenant_id)
-              AND (p_user_id IS NULL OR kv2.user_id = p_user_id)
+              AND (p_user_id IS NULL OR kv2.user_id IS NULL OR kv2.user_id = p_user_id)
         )
         SELECT * FROM traversal
     LOOP
@@ -1099,7 +1099,12 @@ CREATE OR REPLACE FUNCTION rem_session_timeline(
 ) AS $$
     SELECT 'message'::varchar, m.id, m.created_at, m.message_type::varchar,
            m.content, m.encryption_level,
-           jsonb_build_object('token_count', m.token_count, 'tool_calls', m.tool_calls)
+           jsonb_build_object(
+               'token_count', m.token_count,
+               'tool_calls', m.tool_calls,
+               'agent_name', m.agent_name,
+               'model', m.model
+           )
     FROM messages m
     WHERE m.session_id = p_session_id AND m.deleted_at IS NULL
     UNION ALL
@@ -1161,6 +1166,7 @@ active_dates AS (
         FROM moments mo
         WHERE mo.deleted_at IS NULL
           AND (p_user_id IS NULL OR mo.user_id = p_user_id)
+          AND mo.moment_type != 'session_chunk'
           AND (p_before_date IS NULL OR (mo.created_at AT TIME ZONE 'UTC')::date <= p_before_date)
         UNION
         SELECT (r.created_at AT TIME ZONE 'UTC')::date AS d
@@ -1195,6 +1201,7 @@ daily_moment_counts AS (
     FROM moments mo
     WHERE mo.deleted_at IS NULL
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
+      AND mo.moment_type != 'session_chunk'
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
     GROUP BY 1
 ),
@@ -1312,6 +1319,7 @@ real_moments AS (
     LEFT JOIN sessions s ON s.id = mo.source_session_id AND s.deleted_at IS NULL
     WHERE mo.deleted_at IS NULL
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
+      AND mo.moment_type != 'session_chunk'
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
       AND (p_include_future OR mo.starts_timestamp IS NULL OR mo.starts_timestamp <= CURRENT_TIMESTAMP)
 ),
@@ -1568,7 +1576,9 @@ CREATE INDEX IF NOT EXISTS idx_redaction_tenant
 -- Embedding processor: pg_cron calls our API via pg_net every minute.
 -- The API claims a batch from embedding_queue and processes it using the
 -- configured provider (local for dev, openai for production).
--- Adjust the URL to match your P8_API_BASE_URL.
+-- Base URL comes from the p8.internal_api_url GUC (set in postgresql.conf
+-- or ALTER DATABASE). Jobs reference current_setting() so a URL change
+-- takes effect immediately without recreating jobs.
 -- NOTE: pg_cron minimum interval is 1 minute. For sub-minute processing,
 -- use the Python background worker (P8_EMBEDDING_WORKER_ENABLED=true).
 -- Skipped when pg_net is not available (dev/test mode).
@@ -1576,7 +1586,7 @@ DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
         PERFORM cron.schedule('embed-process', '*/1 * * * *',
             'SELECT net.http_post(
-                url := ''http://p8-api.p8.svc:8000/embeddings/process'',
+                url := current_setting(''p8.internal_api_url'', true) || ''/embeddings/process'',
                 headers := jsonb_build_object(
                     ''Authorization'', ''Bearer '' || current_setting(''p8.api_key'', true),
                     ''Content-Type'', ''application/json''

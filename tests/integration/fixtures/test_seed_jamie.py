@@ -103,16 +103,17 @@ async def test_feed_pagination(seeded_db):
 
 @pytest.mark.asyncio
 async def test_all_moment_types_present(seeded_db):
-    """Feed should contain all 8 moment types."""
+    """Feed should contain all user-facing moment types (session_chunk excluded)."""
     feed = await seeded_db.rem_moments_feed(user_id=USER_ID, limit=50)
     moment_types = {item["moment_type"] for item in feed if item.get("event_type") != "daily_summary"}
 
     expected_types = {
-        "session_chunk", "voice_note", "content_upload",
+        "voice_note", "content_upload",
         "image", "meeting", "note", "file", "observation",
     }
     missing = expected_types - moment_types
     assert not missing, f"Missing moment types in feed: {missing}"
+    assert "session_chunk" not in moment_types, "session_chunk should be excluded from feed"
 
 
 @pytest.mark.asyncio

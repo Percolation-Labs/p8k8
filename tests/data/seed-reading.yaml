@@ -1,0 +1,76 @@
+# Seed data: daily reading moment (clicks + bookmarks on web resources).
+#
+# Prerequisites — the resources must exist first:
+#   p8 upsert resources tests/data/seed-reading-resources.yaml
+#
+# Then upsert the reading moment for the default test user (Sage Whitfield):
+#   p8 upsert moments tests/data/seed-reading.yaml
+#
+# Or for any other user (overrides user_id, recomputes deterministic IDs):
+#   p8 upsert moments tests/data/seed-reading.yaml --user-id <USER_ID>
+
+- name: "reading-2026-02-23"
+  moment_type: reading
+  user_id: "7d31eddf-7ff7-542a-982f-7522e7a3ec67"
+  summary: "Ecology and conservation deep-dive: forest bathing research, spotted owl recovery, rare chanterelle discovery, Oregon old-growth protection, and trail conditions in the Gorge."
+  topic_tags:
+    - ecology
+    - conservation
+    - mycology
+    - birding
+    - forestry
+  graph_edges:
+    - target: "Forest Bathing and Cortisol: A Meta-Analysis of 47 Studies"
+      relation: read
+      weight: 1.0
+    - target: "Spotted Owl Recovery Shows Promise in Old-Growth Forests"
+      relation: read
+      weight: 1.0
+    - target: "Rare Chanterelle Variant Discovered in Columbia River Gorge"
+      relation: read
+      weight: 1.0
+    - target: "Oregon Passes Landmark Old-Growth Protection Bill"
+      relation: read
+      weight: 1.0
+    - target: "Trail Conditions Update: Columbia River Gorge"
+      relation: read
+      weight: 1.0
+  metadata:
+    source: reading_tracker
+    resource_count: 5
+    items:
+      - resource_id: "4c8bb093-46cb-4593-955e-633bd73438e8"
+        uri: "https://doi.org/10.1038/s41598-026-forest-bathing"
+        title: "Forest Bathing and Cortisol: A Meta-Analysis of 47 Studies"
+        image_uri: ""
+        tags: [ecology, health, research]
+        action: click
+        timestamp: "2026-02-23T09:15:00Z"
+      - resource_id: "a8697c9c-0701-4b4f-a747-2c9da9b04ebe"
+        uri: "https://www.audubon.org/news/spotted-owl-recovery-2026"
+        title: "Spotted Owl Recovery Shows Promise in Old-Growth Forests"
+        image_uri: "https://images.unsplash.com/photo-1543549790-8b5f4a028cfb?w=600"
+        tags: [birding, conservation]
+        action: click
+        timestamp: "2026-02-23T10:30:00Z"
+      - resource_id: "168a7441-0c96-4d2e-b27a-a52499b10470"
+        uri: "https://www.inaturalist.org/observations/gorge-chanterelle-2026"
+        title: "Rare Chanterelle Variant Discovered in Columbia River Gorge"
+        image_uri: "https://images.unsplash.com/photo-1504198070170-4ca53bb1c1fa?w=600"
+        tags: [mycology, ecology]
+        action: bookmark
+        timestamp: "2026-02-23T11:00:00Z"
+      - resource_id: "ec5a9b3c-8325-4c8e-926a-7d59878af518"
+        uri: "https://www.treehugger.com/oregon-old-growth-bill-2026"
+        title: "Oregon Passes Landmark Old-Growth Protection Bill"
+        image_uri: "https://images.unsplash.com/photo-1448375240586-882707db888b?w=600"
+        tags: [forestry, conservation, policy]
+        action: click
+        timestamp: "2026-02-23T12:45:00Z"
+      - resource_id: "ab4ff619-9268-4ee4-bedb-fad0d07e3ebc"
+        uri: "https://www.fs.usda.gov/gorge-trail-conditions-2026"
+        title: "Trail Conditions Update: Columbia River Gorge"
+        image_uri: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600"
+        tags: [hiking, forestry]
+        action: bookmark
+        timestamp: "2026-02-23T13:20:00Z"

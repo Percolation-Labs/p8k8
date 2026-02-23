@@ -69,7 +69,7 @@ class PlanLimits:
 
 
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "free":       PlanLimits(25_000,    10 * GB, 30,  1,   24, 10 * MB,  100 * MB,  10_000,     10, 1),
+    "free":       PlanLimits(50_000,    20 * GB, 60,  2,   12, 20 * MB,  200 * MB,  20_000,     20, 2),
     "pro":        PlanLimits(100_000,   50 * GB, 120, 5,   12, 100 * MB,    1 * GB,  50_000,    50, 2),
     "team":       PlanLimits(100_000,  100 * GB, 180, 10,  12, 500 * MB,    5 * GB, 100_000,   100, 5),
     "enterprise": PlanLimits(250_000,  500 * GB, 360, 999,  6,   1 * GB,   50 * GB, 500_000,   500, 10),

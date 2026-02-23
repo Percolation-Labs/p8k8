@@ -7,6 +7,7 @@ Each handler implements the TaskHandler protocol:
 from p8.workers.handlers.dreaming import DreamingHandler
 from p8.workers.handlers.file_processing import FileProcessingHandler
 from p8.workers.handlers.news import NewsHandler
+from p8.workers.handlers.reading import ReadingSummaryHandler
 from p8.workers.handlers.scheduled import ScheduledHandler
 
-__all__ = ["FileProcessingHandler", "DreamingHandler", "NewsHandler", "ScheduledHandler"]
+__all__ = ["FileProcessingHandler", "DreamingHandler", "NewsHandler", "ReadingSummaryHandler", "ScheduledHandler"]

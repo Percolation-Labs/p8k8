@@ -27,6 +27,8 @@ Single `task_queue` table in PostgreSQL. Workers use `FOR UPDATE SKIP LOCKED` fo
 
 - **file_processing**: Download from S3 → extract text → chunk → persist resources
 - **dreaming**: Per-user background AI — moment consolidation and insights
+- **news**: Daily feed digest per user (interests/categories in user metadata)
+- **reading_summary**: Summarize a user's daily reading moment (on-demand)
 - **scheduled**: KV rebuild, embedding backfill, maintenance
 
 ## Retry Strategy
@@ -49,6 +51,7 @@ All periodic scheduling runs inside PostgreSQL via pg_cron — no K8s CronJobs:
 |-----|----------|----------|
 | `qms-recover-stale` | Every 5 min | `recover_stale_tasks(15)` — reset stuck processing tasks |
 | `qms-dreaming-enqueue` | Hourly | `enqueue_dreaming_tasks()` — enqueue dreaming for active users |
+| `qms-news-enqueue` | Daily 06:00 UTC | `enqueue_news_tasks()` — enqueue news digest for users with interests |
 
 ## Quota Integration
 
@@ -67,7 +70,8 @@ Workers check quotas before processing and track usage after completion.
 | `services/queue.py` | QueueService — Python API |
 | `services/usage.py` | PlanLimits + UsageService |
 | `workers/processor.py` | TieredWorker with handler registry |
-| `workers/handlers/` | file_processing, dreaming, scheduled |
+| `workers/handlers/` | file_processing, dreaming, news, reading, scheduled |
+| `api/cli/admin.py` | Admin CLI — health, queue, quota |
 | `tests/test_queue.py` | Integration tests |
 
 ## Running Workers
@@ -85,6 +89,116 @@ python -m workers.processor --tier medium --poll-interval 10 --batch-size 1
 ```
 GET /admin/queue/stats → {"small/pending": 3, "medium/processing": 1, ...}
 ```
+
+## Admin CLI
+
+`p8 admin` provides four commands for monitoring and operating the queue system.
+
+### `p8 admin health` — Pipeline diagnostics
+
+The primary tool. Shows the full processing pipeline status and per-user task health.
+
+```bash
+p8 admin health                        # All users
+p8 admin health --email amartey@...    # Single user by email (partial match, decrypts)
+p8 admin health --user <UUID>          # Single user by id or user_id
+```
+
+Output:
+1. **Processing Pipeline** — five-stage check:
+   - **pg_net GUC**: Is `p8.internal_api_url` set? (required for all pg_cron HTTP jobs)
+   - **pg_net jobs**: Do reminder jobs use GUC-based URLs? (detects hardcoded legacy jobs)
+   - **pg_cron**: Are `qms-dreaming-enqueue` and `qms-news-enqueue` active and succeeding?
+   - **task_queue**: How many tasks are due now, by tier?
+   - **workers**: Have any workers ever claimed a task? When was the last claim?
+2. **Per-user task table** — for each task type (dreaming, news, reading_summary, file_processing, scheduled):
+   - Pending count + when due + age
+   - Last run time + status (completed/failed)
+   - Issues: OVERDUE, NO WORKERS, STUCK processing, last failed error, never scheduled
+3. **pg_cron Jobs** — all jobs with last run time, status, and result
+
+The pipeline section explains exactly where to look when tasks aren't executing:
+```
+pg_cron enqueues → KEDA polls task_queue → scales worker deployment 0→N → worker claims
+```
+
+### `p8 admin queue` — Raw queue inspection
+
+```bash
+p8 admin queue                         # Pending tasks aggregated by tenant + type
+p8 admin queue --status failed         # Failed tasks (the dangerous silent failures)
+p8 admin queue --status completed      # Completed tasks
+p8 admin queue --detail                # Individual tasks with IDs, tier, retries, age
+p8 admin queue --detail --type dreaming --status failed   # Drill down
+```
+
+### `p8 admin quota` — Usage report and reset
+
+```bash
+p8 admin quota                         # All users with progress bars
+p8 admin quota --user <UUID>           # Single user
+p8 admin quota --reset --user <UUID>   # Reset all current-period counters
+p8 admin quota --reset --user <UUID> --resource chat_tokens  # Reset one resource
+```
+
+### `p8 admin enqueue` — Manually trigger a task
+
+```bash
+p8 admin enqueue reading_summary --user <UUID>             # Run immediately
+p8 admin enqueue dreaming --user <UUID> --delay 5          # Run in 5 minutes
+p8 admin enqueue news --user <UUID>                        # News digest
+```
+
+Valid task types: `dreaming`, `news`, `reading_summary`, `file_processing`, `scheduled`.
+
+### Connecting to remote (default)
+
+All admin commands default to **remote** (Hetzner p8-w-1 via port-forward). Open the port-forwards first:
+
+```bash
+kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5490:5432 &
+kubectl --context=p8-w-1 -n p8 port-forward svc/openbao 8201:8200 &    # optional, for email decryption
+```
+
+Standard ports: **5490** (Postgres), **8201** (Vault/OpenBao).
+
+If the port-forward isn't open, admin commands exit with instructions. If `P8_DATABASE_URL` is already set to a remote URL (not `localhost:5488`), it's used as-is.
+
+For the local docker-compose DB, use `--local`:
+
+```bash
+p8 admin --local health
+```
+
+If credentials are needed (production DB has auth), set the env:
+
+```bash
+PG_PASS=$(kubectl --context=p8-w-1 -n p8 get secret p8-database-credentials \
+  -o jsonpath='{.data.password}' | base64 -d)
+
+P8_DATABASE_URL="postgresql://p8user:${PG_PASS}@localhost:5490/p8db?sslmode=disable" \
+  p8 admin health --email amartey
+```
+
+## Troubleshooting: Tasks not executing
+
+The processing pipeline has four stages. Check each in order:
+
+| Stage | What to check | Fix |
+|-------|--------------|-----|
+| **1. pg_cron** | `p8 admin health` → pg_cron table. Jobs active? Last run succeeded? | `SELECT cron.schedule(...)` to recreate missing jobs. Run `p8 migrate` to re-apply. |
+| **2. task_queue** | `p8 admin queue --status pending`. Tasks due? Or all scheduled in future? | If no pending tasks, the enqueue function conditions aren't met (no user activity, no interests metadata, etc.) |
+| **3. KEDA** | `kubectl get scaledobject -n p8` — is it READY? `kubectl get TriggerAuthentication -n p8` — can it reach the DB? `kubectl logs -n keda -l app=keda-operator` — errors? | Fix KEDA auth secret `p8-keda-pg-auth`, verify DB connection string in TriggerAuthentication matches the actual Postgres service. |
+| **4. Workers** | `p8 admin health` → workers section. Any claims ever? Recent? | If KEDA is healthy but no claims, check the worker deployment image/command: `kubectl describe deployment p8-worker-small -n p8`. Local dev: `python -m p8.workers.processor --tier small`. |
+
+Common failure modes:
+- **"NO WORKERS — will never be claimed"**: KEDA not installed, ScaledObject not applied, or TriggerAuthentication can't connect to Postgres.
+- **"OVERDUE by Xh"**: Workers can't keep up, or KEDA cooldown is too aggressive (currently 60s).
+- **"STUCK processing for Xm"**: Worker crashed mid-task. `recover_stale_tasks` (every 5min) should reset these after 15min.
+- **"last failed: Quota exceeded"**: User hit plan limits. Check `p8 admin quota --user <UUID>`.
+- **"never scheduled"**: For dreaming, user has no recent messages/file uploads. For news, user has no `interests` or `categories` in metadata.
+- **Reminders failing with "schema net does not exist"**: pg_net extension not installed. Required for reminder push notifications via HTTP from Postgres.
+- **Reminders failing with "connection failed"**: pg_cron jobs have a hardcoded URL that pg_net can't reach. Jobs should use `current_setting('p8.internal_api_url')` GUC instead. Fix: restart the API (triggers self-heal) or set the GUC: `ALTER DATABASE p8db SET p8.internal_api_url = 'http://p8-api.p8.svc:8000';`
 
 ## KEDA Scaling
 

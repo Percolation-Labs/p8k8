@@ -64,6 +64,7 @@ class FileProcessingHandler:
             )
 
             return {
+                "status": "ok",
                 "bytes_processed": size_bytes,
                 "chunks": result.chunk_count,
                 "total_chars": result.total_chars,

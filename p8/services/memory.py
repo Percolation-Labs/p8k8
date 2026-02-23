@@ -22,6 +22,12 @@ def format_moment_context(md: dict) -> str:
     summary = md.get("summary", "")
     parts = [f"[Session context]\n{summary}"]
     meta = md.get("metadata") or {}
+    if isinstance(meta, str):
+        import json as _json
+        try:
+            meta = _json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
     if meta.get("resource_keys") and "Resources:" not in summary:
         parts.append(f"Resources: {', '.join(meta['resource_keys'][:10])}")
     if meta.get("file_name") and "File:" not in summary:

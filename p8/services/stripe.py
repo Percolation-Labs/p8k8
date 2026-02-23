@@ -1,32 +1,64 @@
 """Stripe billing service — checkout sessions, portal, webhooks.
 
-Stripe Webhook Configuration
------------------------------
-Webhook endpoint: POST /billing/webhooks
-Created via Stripe CLI (test mode, acct_1T2vF939KSGRMEM5):
-  stripe webhook_endpoints create \\
-    -d "url=https://api.percolationlabs.ai/billing/webhooks" \\
-    -d "enabled_events[]=checkout.session.completed" \\
-    -d "enabled_events[]=customer.subscription.created" \\
-    -d "enabled_events[]=customer.subscription.updated" \\
-    -d "enabled_events[]=customer.subscription.deleted" \\
-    -d "enabled_events[]=invoice.payment_failed" \\
-    -d "enabled_events[]=charge.refunded"
+API Endpoints (p8/api/routers/payments.py)
+-------------------------------------------
+  GET  /billing/subscription  — Current plan for authenticated user
+  GET  /billing/usage         — Metered usage across all resources
+  POST /billing/checkout      — Create Stripe Checkout Session (body: {plan_id})
+  POST /billing/addon         — One-time add-on purchase (body: {addon_id})
+  POST /billing/portal        — Stripe Billing Portal session
+  POST /billing/webhooks      — Stripe webhook (signature-verified, no JWT)
 
-The signing secret (whsec_...) is stored in K8s secret p8-app-secrets
-as P8_STRIPE_WEBHOOK_SECRET.
+Webhook Configuration
+----------------------
+Endpoint: POST /billing/webhooks
+Created via Stripe dashboard (test mode, acct_1T2vF939KSGRMEM5).
+Events: checkout.*, customer.subscription.*, invoice.*, charge.*
 
-Testing with Stripe test cards
--------------------------------
-Use test mode keys (sk_test_ / pk_test_) and these card numbers:
+The signing secret (whsec_...) is stored in three places:
+  1. .env — P8_STRIPE_WEBHOOK_SECRET
+  2. Shell — export P8_STRIPE_WEBHOOK_SECRET=whsec_...
+  3. K8s — p8-app-secrets in namespace p8
+
+Stripe SDK v14 Compatibility
+------------------------------
+Stripe SDK v14+ makes Subscription objects inherit from dict. This means
+sub.items returns dict.items() (a builtin method), NOT the subscription
+line items. All access in _update_subscription_from_stripe uses bracket
+notation: sub["items"], sub["status"], sub["id"], sub["customer"].
+
+Testing
+--------
+Unit tests (no DB): uv run pytest tests/unit/test_stripe_webhooks.py
+  - invoice.payment_failed marks past_due (with idempotent guard)
+  - Duplicate event returns 'duplicate' without processing
+  - charge.refunded reverses addon credits via granted_extra
+  - charge.refunded on unknown payment_intent logs warning
+  - charge.refunded on subscription payment is a no-op
+  - checkout.session.completed populates payment_intents audit table
+  - Unknown price_id defaults to 'free' plan
+  - SDK v14 bracket access (pro upgrade via real dict-like objects)
+  - SDK v14 handles missing current_period_end
+  - Full checkout → subscription upgrade flow (SDK v14)
+
+Integration tests (needs Postgres):
+  uv run pytest tests/integration/billing/  — quotas, usage, API 429s
+
+Test cards (Stripe test mode):
   4242 4242 4242 4242  — Succeeds (any future exp, any CVC/zip)
   4000 0025 0000 3155  — Requires 3D Secure authentication
   4000 0000 0000 9995  — Declined (insufficient funds)
   4000 0000 0000 0341  — Attaching card fails
 
-Trigger test webhooks locally:
+Local webhook testing:
   stripe listen --forward-to localhost:8000/billing/webhooks
   stripe trigger checkout.session.completed
+
+Live E2E verification (K8s):
+  1. Reset user to free: UPDATE stripe_customers SET plan_id='free' WHERE user_id=...
+  2. Retrieve real subscription: stripe.Subscription.retrieve(sub_id)
+  3. Run handler: await svc._update_subscription_from_stripe(sub)
+  4. Verify: SELECT plan_id FROM stripe_customers WHERE user_id=...
 """
 
 from __future__ import annotations
@@ -177,19 +209,25 @@ class StripeService:
         return session.url  # type: ignore[return-value]
 
     async def _update_subscription_from_stripe(self, sub) -> None:
-        """Update local stripe_customers row from a Stripe Subscription object."""
-        price_id: str | None = sub.items.data[0].price.id if sub.items.data else None
+        """Update local stripe_customers row from a Stripe Subscription object.
+
+        Uses bracket access throughout because Stripe SDK v14+ shadows
+        ``sub.items`` with ``dict.items()``.
+        """
+        items_data = sub["items"]["data"] if sub.get("items") else []
+        price_id: str | None = items_data[0]["price"]["id"] if items_data else None
         plan_id = PRICE_TO_PLAN.get(price_id, "free") if price_id else "free"
-        period_end = datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc) if sub.current_period_end else None
+        raw_end = sub.get("current_period_end")
+        period_end = datetime.fromtimestamp(raw_end, tz=timezone.utc) if raw_end else None
 
         await self.db.execute(
             "UPDATE stripe_customers SET "
             "  plan_id = $1, subscription_status = $2, "
             "  stripe_subscription_id = $3, current_period_end = $4 "
             "WHERE stripe_customer_id = $5",
-            plan_id, sub.status, sub.id, period_end, sub.customer,
+            plan_id, sub["status"], sub["id"], period_end, sub["customer"],
         )
-        logger.info("Updated customer %s → plan=%s status=%s", sub.customer, plan_id, sub.status)
+        logger.info("Updated customer %s → plan=%s status=%s", sub["customer"], plan_id, sub["status"])
 
     async def handle_webhook(self, payload: bytes, sig_header: str) -> dict:
         """Verify and process a Stripe webhook event."""
@@ -214,14 +252,15 @@ class StripeService:
             sub = event.data.object
             if event.type == "customer.subscription.deleted":
                 # Downgrade to free on cancellation
+                cust_id = sub["customer"]
                 await self.db.execute(
                     "UPDATE stripe_customers SET "
                     "  plan_id = 'free', subscription_status = 'canceled', "
                     "  stripe_subscription_id = NULL, current_period_end = NULL "
                     "WHERE stripe_customer_id = $1",
-                    sub.customer,
+                    cust_id,
                 )
-                logger.info("Customer %s downgraded to free (subscription deleted)", sub.customer)
+                logger.info("Customer %s downgraded to free (subscription deleted)", cust_id)
             else:
                 await self._update_subscription_from_stripe(sub)
 

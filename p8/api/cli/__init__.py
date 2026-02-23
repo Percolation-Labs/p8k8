@@ -53,6 +53,14 @@ from p8.api.cli.verify_links import verify_links_app  # noqa: E402
 
 app.add_typer(verify_links_app, name="verify-links")
 
+from p8.api.cli.admin import admin_app  # noqa: E402
+
+app.add_typer(admin_app, name="admin")
+
+from p8.api.cli.db import db_app  # noqa: E402
+
+app.add_typer(db_app, name="db")
+
 from p8.api.cli.dreaming import register_dream_command  # noqa: E402
 
 register_dream_command(app)

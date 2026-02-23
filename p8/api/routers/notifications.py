@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -35,6 +38,17 @@ async def send_notification(request: Request, body: SendRequest):
     svc = _get_service(request)
     all_results = []
     for uid in body.user_ids:
-        results = await svc.send_to_user(uid, body.title, body.body, body.data)
-        all_results.extend(results)
+        try:
+            results = await svc.send_to_user(uid, body.title, body.body, body.data)
+            all_results.extend(results)
+            errors = [r for r in results if r.get("status") == "error"]
+            if errors:
+                logger.warning("notification send errors for user %s: %s", uid, errors)
+            elif not results:
+                logger.warning("notification send returned no results for user %s (no devices?)", uid)
+            else:
+                logger.info("notification sent to user %s: %d device(s)", uid, len(results))
+        except Exception:
+            logger.exception("notification send failed for user %s", uid)
+            raise
     return {"results": all_results}

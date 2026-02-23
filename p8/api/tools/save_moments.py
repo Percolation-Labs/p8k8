@@ -23,7 +23,7 @@ async def save_moments(
     """Save dream moments to the database and merge graph edges on related entities.
 
     Each moment dict should contain:
-      - name: str — kebab-case identifier (e.g. "dream-ml-patterns")
+      - name: str — identifier (e.g. "ml-patterns" or "ML Patterns")
       - summary: str — 2-4 sentence insight
       - topic_tags: list[str] — relevant topics
       - emotion_tags: list[str] — emotional tones (optional)
@@ -64,9 +64,12 @@ async def save_moments(
             if a.get("target")
         ]
 
-        # Ensure dream moment names are prefixed with "dream-"
+        # Convert kebab-case name to Title Case for display
         raw_name = m.get("name", "unnamed")
-        name = raw_name if raw_name.startswith("dream-") else f"dream-{raw_name}"
+        # Strip any dream- prefix (redundant — moment_type is already "dream")
+        if raw_name.startswith("dream-"):
+            raw_name = raw_name[6:]
+        name = raw_name.replace("-", " ").title()
 
         moment = Moment(
             name=name,

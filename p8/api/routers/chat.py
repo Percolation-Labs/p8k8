@@ -10,10 +10,16 @@ from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic_ai.ui.ag_ui import AGUIAdapter
+from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.responses import Response
 
-from ag_ui.core.events import CustomEvent
+from ag_ui.core.events import (
+    BaseEvent,
+    CustomEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+)
 
 from p8.agentic.adapter import DEFAULT_AGENT_NAME
 from p8.agentic.delegate import set_child_event_sink
@@ -27,6 +33,28 @@ from p8.services.usage import check_quota, get_user_plan, increment_usage
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class _ToolStatusEventStream(AGUIEventStream):
+    """Emit TOOL_CALL_START / TOOL_CALL_END so the client can show thinking status."""
+
+    async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseEvent]:
+        yield ToolCallStartEvent(
+            tool_call_id=event.part.tool_call_id,
+            tool_call_name=event.part.tool_name,
+        )
+
+    async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
+        yield ToolCallEndEvent(tool_call_id=event.result.tool_call_id)
+        async for e in super().handle_function_tool_result(event):
+            yield e
+
+
+class _ToolStatusAdapter(AGUIAdapter):
+    """AGUIAdapter that emits tool call start/end events."""
+
+    def build_event_stream(self):
+        return _ToolStatusEventStream(self.run_input, accept=self.accept)
 
 
 def _extract_user_prompt(body: dict) -> str:
@@ -287,7 +315,7 @@ async def chat(
 
     try:
         # Option 2: build adapter, run_stream, wrap with multiplexer
-        adapter = await AGUIAdapter.from_request(request, agent=ctx.agent)
+        adapter = await _ToolStatusAdapter.from_request(request, agent=ctx.agent)
 
         # Workaround for pydantic-ai 1.62.0 bug: when user_prompt is None
         # (AGUIAdapter flow), static system prompts from Agent(system_prompt=...)

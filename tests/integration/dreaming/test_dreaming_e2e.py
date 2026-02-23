@@ -83,7 +83,7 @@ async def test_dreaming_agent_e2e(db, encryption):
     assert stats["moments"] >= 2, f"Expected >=2 moments, got {stats['moments']}"
     assert stats["sessions"] >= 2, f"Expected >=2 sessions, got {stats['sessions']}"
 
-    # Run the full dreaming handler (Phase 1 + Phase 2)
+    # Run the dreaming handler
     result = await handler.handle(
         {"user_id": str(TEST_USER_ID), "lookback_days": 1},
         ctx,
