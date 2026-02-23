@@ -15,17 +15,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-
 from p8.ontology.types import Message, Moment, Session
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
@@ -150,26 +139,16 @@ class DreamingHandler:
                 u = result.usage()
                 io_tokens = u.total_tokens
 
-            # Extract structured output and persist dream moments
+            # Extract structured output and persist dream moments.
+            # Each dream moment gets a companion session via create_moment_session()
+            # so users can chat about individual insights.
             moments_saved = 0
             output = result.output
+            memory = MemoryService(ctx.db, ctx.encryption)
             if hasattr(output, "dream_moments") and output.dream_moments:
                 moments_saved = await self._persist_dream_moments(
-                    output.dream_moments, user_id, session_id, ctx,
+                    output.dream_moments, user_id, session_id, ctx, memory,
                 )
-
-            # Persist all messages from the agent run into the session
-            all_messages = (
-                result.all_messages()
-                if hasattr(result, "all_messages")
-                else []
-            )
-            model_name = adapter.config.model or "openai:gpt-4.1-mini"
-            memory = MemoryService(ctx.db, ctx.encryption)
-            await self._persist_agent_messages(
-                memory, session_id, all_messages, user_id,
-                model=model_name, agent_name="dreaming-agent",
-            )
 
             return {
                 "status": "ok",
@@ -191,19 +170,19 @@ class DreamingHandler:
         self,
         dream_moments: list,
         user_id: UUID,
-        session_id: UUID,
+        dreaming_session_id: UUID,
         ctx,
+        memory: MemoryService,
     ) -> int:
         """Persist DreamMoment structured output to the database.
 
         For each dream moment:
         1. Convert affinity_fragments → graph_edges
-        2. Create a Moment entity and upsert it
+        2. Create a Moment + companion session via create_moment_session()
         3. Merge back-edges onto referenced entities (bidirectional links)
 
         Returns the number of moments saved.
         """
-        repo = Repository(Moment, ctx.db, ctx.encryption)
         saved = 0
 
         for dm in dream_moments:
@@ -228,18 +207,27 @@ class DreamingHandler:
                     raw_name = raw_name[6:]
                 name = raw_name.replace("-", " ").title()
 
-                moment = Moment(
+                summary = dm.summary if hasattr(dm, "summary") else dm.get("summary", "")
+                topic_tags = dm.topic_tags if hasattr(dm, "topic_tags") else dm.get("topic_tags", [])
+                emotion_tags = dm.emotion_tags if hasattr(dm, "emotion_tags") else dm.get("emotion_tags", [])
+
+                saved_moment, _session = await memory.create_moment_session(
                     name=name,
                     moment_type="dream",
-                    summary=dm.summary if hasattr(dm, "summary") else dm.get("summary", ""),
-                    topic_tags=dm.topic_tags if hasattr(dm, "topic_tags") else dm.get("topic_tags", []),
-                    emotion_tags=dm.emotion_tags if hasattr(dm, "emotion_tags") else dm.get("emotion_tags", []),
-                    graph_edges=graph_edges,
-                    user_id=user_id,
-                    source_session_id=session_id,
+                    summary=summary,
                     metadata={"source": "dreaming"},
+                    user_id=user_id,
+                    topic_tags=topic_tags,
+                    graph_edges=graph_edges,
                 )
-                [saved_moment] = await repo.upsert(moment)
+
+                # Patch emotion_tags (not in create_moment_session)
+                if emotion_tags:
+                    await ctx.db.execute(
+                        "UPDATE moments SET emotion_tags = $1::text[] WHERE id = $2",
+                        emotion_tags, saved_moment.id,
+                    )
+
                 saved += 1
 
                 # Merge back-edges on referenced entities
@@ -311,88 +299,6 @@ class DreamingHandler:
             f"UPDATE {entity_type} SET graph_edges = $1::jsonb WHERE id = $2",
             json.dumps(merged),
             entity_id,
-        )
-
-    async def _persist_agent_messages(
-        self,
-        memory: MemoryService,
-        session_id: UUID,
-        messages: list[ModelMessage],
-        user_id: UUID,
-        *,
-        model: str = "",
-        agent_name: str = "",
-    ) -> None:
-        """Persist pydantic-ai messages as individual rows in the dreaming session."""
-        repo = memory.message_repo
-        total_tokens = 0
-
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, SystemPromptPart):
-                        continue  # system prompts live in the agent definition, not messages
-                    elif isinstance(part, UserPromptPart):
-                        content = part.content if isinstance(part.content, str) else str(part.content)
-                        tc = estimate_tokens(content)
-                        m = Message(
-                            session_id=session_id, message_type="user",
-                            content=content, token_count=tc,
-                            user_id=user_id, agent_name=agent_name,
-                        )
-                        await repo.upsert(m)
-                        total_tokens += tc
-                    elif isinstance(part, ToolReturnPart):
-                        content = part.content if isinstance(part.content, str) else json.dumps(part.content)
-                        tc = estimate_tokens(content)
-                        m = Message(
-                            session_id=session_id, message_type="tool_call",
-                            content=content, token_count=tc,
-                            tool_calls={
-                                "name": part.tool_name,
-                                "id": part.tool_call_id or "",
-                            },
-                            user_id=user_id, model=model, agent_name=agent_name,
-                        )
-                        await repo.upsert(m)
-                        total_tokens += tc
-
-            elif isinstance(msg, ModelResponse):
-                text_parts: list[str] = []
-                tool_calls_data: list[dict] = []
-                for part in msg.parts:  # type: ignore[assignment]  # ModelResponsePart, not request parts
-                    if isinstance(part, TextPart):
-                        text_parts.append(part.content)
-                    elif isinstance(part, ToolCallPart):
-                        # args can be str, dict, or None
-                        args = part.args
-                        if isinstance(args, str):
-                            try:
-                                args = json.loads(args)
-                            except (json.JSONDecodeError, TypeError):
-                                args = {"raw": args}
-                        elif args is None:
-                            args = {}
-                        tool_calls_data.append({
-                            "name": part.tool_name,
-                            "id": part.tool_call_id or "",
-                            "arguments": args,
-                        })
-                content = "\n".join(text_parts) if text_parts else ""
-                tc = estimate_tokens(content)
-                tool_calls = {"calls": tool_calls_data} if tool_calls_data else None
-                m = Message(
-                    session_id=session_id, message_type="assistant",
-                    content=content, token_count=tc, tool_calls=tool_calls,
-                    user_id=user_id, model=model, agent_name=agent_name,
-                )
-                await repo.upsert(m)
-                total_tokens += tc
-
-        # Update session total_tokens once
-        await memory.db.execute(
-            "UPDATE sessions SET total_tokens = total_tokens + $1 WHERE id = $2",
-            total_tokens, session_id,
         )
 
     # ------------------------------------------------------------------

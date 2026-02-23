@@ -6,9 +6,9 @@ Requires:
 
 Verifies:
   - Context loading produces meaningful text
-  - Agent generates and persists dream moments (moment_type='dream')
+  - Agent generates dream moments (moment_type='dream') via structured output
   - Dream moments have summaries, topic_tags, and graph_edges with reasons
-  - Full agent conversation is persisted as a dreaming session
+  - Each dream moment gets a companion session for follow-up chat
   - Back-edges are merged onto related entities
 """
 
@@ -58,11 +58,11 @@ async def _setup(clean_db, db, encryption):
     )
     await db.execute(
         "DELETE FROM messages WHERE session_id IN "
-        "(SELECT id FROM sessions WHERE mode = 'dreaming' AND user_id = $1)",
+        "(SELECT id FROM sessions WHERE mode IN ('dreaming', 'dream') AND user_id = $1)",
         TEST_USER_ID,
     )
     await db.execute(
-        "DELETE FROM sessions WHERE mode = 'dreaming' AND user_id = $1",
+        "DELETE FROM sessions WHERE mode IN ('dreaming', 'dream') AND user_id = $1",
         TEST_USER_ID,
     )
     await setup_dreaming_fixtures(db, encryption)
@@ -71,7 +71,7 @@ async def _setup(clean_db, db, encryption):
 
 @pytest.mark.llm
 async def test_dreaming_agent_e2e(db, encryption):
-    """Full pipeline: load context → run agent → verify session + dream moments."""
+    """Full pipeline: load context → run agent → verify companion sessions + dream moments."""
     handler = DreamingHandler()
     ctx = _Ctx(db, encryption)
 
@@ -107,50 +107,15 @@ async def test_dreaming_agent_e2e(db, encryption):
     assert sess["agent_name"] == "dreaming-agent"
     log.info("Dreaming session: %s (%s)", sess["name"], session_id)
 
-    # ── Verify messages were persisted in the session ──
+    # ── Dreaming session should have no persisted messages (no bloat) ──
     msg_rows = await db.fetch(
-        "SELECT message_type, content, tool_calls FROM messages"
-        " WHERE session_id = $1 AND deleted_at IS NULL"
-        " ORDER BY created_at",
+        "SELECT message_type FROM messages"
+        " WHERE session_id = $1 AND deleted_at IS NULL",
         session_id,
     )
-    log.info("Session messages: %d total", len(msg_rows))
-    msg_types = [r["message_type"] for r in msg_rows]
-    for r in msg_rows:
-        tc = r["tool_calls"]
-        if r["message_type"] == "assistant" and tc:
-            calls = tc.get("calls", []) if isinstance(tc, dict) else []
-            names = [c["name"] for c in calls]
-            log.info("  [assistant] tool_calls=%s", names)
-        elif r["message_type"] == "tool_call":
-            name = tc.get("name", "") if isinstance(tc, dict) else ""
-            log.info("  [tool_call] %s: %s", name, (r["content"] or "")[:80])
-        else:
-            log.info("  [%s] %s", r["message_type"], (r["content"] or "")[:80])
-
-    # Must have: at least 1 user, 1+ assistant, tool calls for search + save_moments
-    assert "user" in msg_types, "Session should have user prompt"
-    assert "assistant" in msg_types, "Session should have assistant responses"
-    assert "tool_call" in msg_types, "Session should have tool call results"
-
-    # Verify search was called (tool_call rows with search in tool_calls)
-    search_calls = [
-        r for r in msg_rows
-        if r["message_type"] == "tool_call"
-        and isinstance(r["tool_calls"], dict)
-        and r["tool_calls"].get("name") == "search"
-    ]
-    log.info("Search tool calls: %d", len(search_calls))
-    assert len(search_calls) >= 1, "Agent should have called search at least once"
-
-    # Verify save_moments was called
-    save_calls = [
-        r for r in msg_rows
-        if r["message_type"] == "tool_call"
-        and isinstance(r["tool_calls"], dict)
-        and r["tool_calls"].get("name") == "save_moments"
-    ]
-    assert len(save_calls) >= 1, "Agent should have called save_moments"
+    assert len(msg_rows) == 0, (
+        f"Dreaming session should have no messages, got {len(msg_rows)}"
+    )
 
     # ── Verify dream moments ──
     moment_repo = Repository(Moment, db, encryption)
@@ -170,14 +135,28 @@ async def test_dreaming_agent_e2e(db, encryption):
 
     for dream in dreams:
         assert dream.moment_type == "dream"
-        assert dream.name.startswith("dream-"), f"Name should start with 'dream-': {dream.name}"
         assert dream.summary and len(dream.summary) > 20, f"Summary too short: {dream.summary!r}"
         assert len(dream.topic_tags) >= 1, f"Should have topic_tags: {dream.name}"
         assert dream.metadata.get("source") == "dreaming"
-        # Dream moments pinned to the dreaming session
-        assert dream.source_session_id == session_id, (
-            f"Dream {dream.name} should be pinned to session {session_id}"
+        # Each dream moment should have its own companion session (not the dreaming session)
+        assert dream.source_session_id is not None
+        assert dream.source_session_id != session_id, (
+            f"Dream {dream.name} should have a companion session, not the dreaming session"
         )
+
+    # ── Verify companion sessions exist for each dream moment ──
+    for dream in dreams:
+        companion = await db.fetchrow(
+            "SELECT id, name, mode, description, metadata FROM sessions"
+            " WHERE id = $1 AND deleted_at IS NULL",
+            dream.source_session_id,
+        )
+        assert companion is not None, f"Companion session missing for {dream.name}"
+        assert companion["mode"] == "dream"
+        assert companion["description"], f"Companion should have description for {dream.name}"
+        meta = companion["metadata"] or {}
+        assert "moment_id" in meta, f"Companion metadata missing moment_id for {dream.name}"
+        log.info("  Companion session: %s (%s)", companion["name"], companion["id"])
 
     # Verify graph_edges have reasons
     dreams_with_edges = [d for d in dreams if d.graph_edges]
@@ -214,6 +193,6 @@ async def test_dreaming_agent_e2e(db, encryption):
                 log.info("Back-edge on %s: %s", name, dreamed_edges)
 
     log.info(
-        "E2E complete: session=%s, %d dreams, %d messages, %d io_tokens",
-        session_id, len(dreams), len(msg_rows), result.get("io_tokens", 0),
+        "E2E complete: session=%s, %d dreams, %d io_tokens",
+        session_id, len(dreams), result.get("io_tokens", 0),
     )

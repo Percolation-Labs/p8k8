@@ -111,23 +111,10 @@ async def session_timeline(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Interleaved messages + moments for a session, chronologically ordered.
-
-    Returns ``{"session": {...}, "timeline": [...]}`` so the client knows
-    the session mode (e.g. ``"dreaming"``) and can apply collapse logic.
-    """
-    # Fetch session metadata first
-    session_row = await db.fetchrow(
-        """SELECT id, name, description, agent_name, mode,
-                  total_tokens, metadata
-           FROM sessions WHERE id = $1 AND deleted_at IS NULL""",
-        session_id,
-    )
-    session_dict = dict(session_row) if session_row else None
-
+    """Interleaved messages + moments for a session, chronologically ordered."""
     rows = await db.rem_session_timeline(session_id, limit=limit)
     if not rows:
-        return {"session": session_dict, "timeline": []}
+        return []
 
     # Use per-row encryption_level as primary signal (stamped at write time).
     needs_decrypt = any(
@@ -136,7 +123,7 @@ async def session_timeline(
         for r in rows
     )
     if not needs_decrypt:
-        return {"session": session_dict, "timeline": [dict(r) for r in rows]}
+        return [dict(r) for r in rows]
 
     # Batch-fetch full rows for encrypted items and decrypt via Repository
     from p8.services.repository import Repository
@@ -183,7 +170,7 @@ async def session_timeline(
         if eid in decrypted_content and decrypted_content[eid] is not None:
             data["content_or_summary"] = decrypted_content[eid]
         timeline.append(data)
-    return {"session": session_dict, "timeline": timeline}
+    return timeline
 
 
 @router.get("/reminders")
