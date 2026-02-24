@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 
-_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
 
 def _describe_cron(expr: str) -> str:
@@ -34,7 +34,7 @@ def _describe_cron(expr: str) -> str:
                 days.append(_DAYS[int(d) % 7])
             except (ValueError, IndexError):
                 days.append(d)
-        if len(days) == 5 and all(d in days for d in _DAYS[:5]):
+        if len(days) == 5 and all(d in days for d in _DAYS[1:6]):
             return f"Weekdays{time_str}"
         return f"Every {', '.join(days)}{time_str}"
     # Specific day of month

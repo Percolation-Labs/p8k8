@@ -29,7 +29,7 @@ async def _setup_tools(db, encryption, clean_db):
 
 
 @pytest.mark.asyncio
-async def test_remind_me_onetime_iso(db):
+async def test_remind_me_onetime_iso(db, encryption):
     """One-time reminder from ISO datetime schedules a pg_cron job."""
     from p8.api.tools.remind_me import remind_me
 
@@ -43,14 +43,18 @@ async def test_remind_me_onetime_iso(db):
     assert result["status"] == "success"
     assert result["recurrence"] == "once"
     assert result["name"] == "dentist-appointment"
-    assert result["schedule"] == "0 15 15 4 *"
     assert result["reminder_id"]
-    assert result["job_name"].startswith("reminder-")
+    assert "Once" in result["frequency"]
 
-    # Verify the job exists in cron.job
+    # Verify the job exists in cron.job via the moment metadata
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+    moment_repo = Repository(Moment, db, encryption)
+    moment = await moment_repo.get(result["moment_id"])
+    job_name = moment.metadata["job_name"]
     row = await db.fetchrow(
         "SELECT jobname, schedule, command FROM cron.job WHERE jobname = $1",
-        result["job_name"],
+        job_name,
     )
     assert row is not None, "pg_cron job was not created"
     assert row["schedule"] == "0 15 15 4 *"
@@ -61,7 +65,7 @@ async def test_remind_me_onetime_iso(db):
     assert "cron.unschedule" in row["command"]
 
     # Cleanup
-    await db.execute("SELECT cron.unschedule($1)", result["job_name"])
+    await db.execute("SELECT cron.unschedule($1)", job_name)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ async def test_remind_me_onetime_iso(db):
 
 
 @pytest.mark.asyncio
-async def test_remind_me_recurring_cron(db):
+async def test_remind_me_recurring_cron(db, encryption):
     """Recurring reminder from cron expression schedules a pg_cron job."""
     from p8.api.tools.remind_me import remind_me
 
@@ -83,13 +87,17 @@ async def test_remind_me_recurring_cron(db):
 
     assert result["status"] == "success"
     assert result["recurrence"] == "recurring"
-    assert result["schedule"] == "0 9 * * *"
-    assert result["next_fire"]
+    assert "Daily" in result["frequency"]
 
-    # Verify the job in cron.job
+    # Verify the job in cron.job via moment metadata
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+    moment_repo = Repository(Moment, db, encryption)
+    moment = await moment_repo.get(result["moment_id"])
+    job_name = moment.metadata["job_name"]
     row = await db.fetchrow(
         "SELECT jobname, schedule, command FROM cron.job WHERE jobname = $1",
-        result["job_name"],
+        job_name,
     )
     assert row is not None, "pg_cron job was not created"
     assert row["schedule"] == "0 9 * * *"
@@ -98,7 +106,7 @@ async def test_remind_me_recurring_cron(db):
     assert "cron.unschedule" not in row["command"]
 
     # Cleanup
-    await db.execute("SELECT cron.unschedule($1)", result["job_name"])
+    await db.execute("SELECT cron.unschedule($1)", job_name)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +153,7 @@ async def test_remind_me_missing_user():
 
 
 @pytest.mark.asyncio
-async def test_remind_me_payload_in_job(db):
+async def test_remind_me_payload_in_job(db, encryption):
     """The pg_cron job command contains the correct notification payload."""
     from p8.api.tools.remind_me import remind_me
 
@@ -158,9 +166,16 @@ async def test_remind_me_payload_in_job(db):
 
     assert result["status"] == "success"
 
+    # Look up job_name from moment metadata
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+    moment_repo = Repository(Moment, db, encryption)
+    moment = await moment_repo.get(result["moment_id"])
+    job_name = moment.metadata["job_name"]
+
     row = await db.fetchrow(
         "SELECT command FROM cron.job WHERE jobname = $1",
-        result["job_name"],
+        job_name,
     )
     command = row["command"]
 
@@ -171,7 +186,7 @@ async def test_remind_me_payload_in_job(db):
     assert result["reminder_id"] in command
 
     # Cleanup
-    await db.execute("SELECT cron.unschedule($1)", result["job_name"])
+    await db.execute("SELECT cron.unschedule($1)", job_name)
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +195,7 @@ async def test_remind_me_payload_in_job(db):
 
 
 @pytest.mark.asyncio
-async def test_remind_me_weekly_cron(db):
+async def test_remind_me_weekly_cron(db, encryption):
     """Weekly cron expression (e.g. Monday at 9am) works correctly."""
     from p8.api.tools.remind_me import remind_me
 
@@ -192,7 +207,14 @@ async def test_remind_me_weekly_cron(db):
 
     assert result["status"] == "success"
     assert result["recurrence"] == "recurring"
-    assert result["schedule"] == "0 9 * * 1"
+    assert "Mon" in result["frequency"]
+
+    # Verify schedule stored in moment metadata
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+    moment_repo = Repository(Moment, db, encryption)
+    moment = await moment_repo.get(result["moment_id"])
+    assert moment.metadata["schedule"] == "0 9 * * 1"
 
     # Cleanup
-    await db.execute("SELECT cron.unschedule($1)", result["job_name"])
+    await db.execute("SELECT cron.unschedule($1)", moment.metadata["job_name"])
