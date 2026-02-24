@@ -2,6 +2,9 @@
 
 Fetches news sources, scores items against the user's interests/categories
 (from UserMetadata), and upserts the results as Resources + a digest Moment.
+
+TODO: upsert is bulk by default - test with this instead of looping
+
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ class NewsHandler:
 
         # ── 1. Load user metadata ────────────────────────────────
         row = await ctx.db.fetchrow(
-            "SELECT metadata FROM users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT metadata FROM users WHERE (id = $1 OR user_id = $1) AND deleted_at IS NULL",
             user_id,
         )
         if not row or not row["metadata"]:

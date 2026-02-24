@@ -1,10 +1,12 @@
-"""Reading pipeline handler — fetch feeds, ingest resources, build reading moment.
+"""Reading pipeline handler — daily feed digest.
 
-Full pipeline modeled after NewsHandler:
+Handles both 'news' and 'reading_summary' task types (single pipeline).
+The pg_cron job enqueues 'news' tasks; the worker dispatches them here.
+
 1. Load user metadata (feeds, interests, categories)
 2. Run platoon (resolve_for_user + FeedProvider)
 3. Upsert resources
-4. Build reading moment with timestamp-based name (multiple per day OK)
+4. Build reading moment (one per day, date-based name)
 5. Generate mosaic thumbnail
 6. LLM summarize
 7. Create companion session
@@ -50,7 +52,7 @@ class ReadingSummaryHandler:
 
         # ── 1. Load user metadata ────────────────────────────────
         row = await ctx.db.fetchrow(
-            "SELECT metadata FROM users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT metadata FROM users WHERE (id = $1 OR user_id = $1) AND deleted_at IS NULL",
             user_id,
         )
         if not row or not row["metadata"]:
@@ -108,7 +110,7 @@ class ReadingSummaryHandler:
 
         # ── 4. Build reading moment ───────────────────────────────
         now = datetime.now(timezone.utc)
-        moment_name = f"reading-{now.strftime('%Y%m%dT%H%M%S')}"
+        moment_name = f"reading-{now.strftime('%Y-%m-%d')}"
 
         items = []
         all_tags: list[str] = []

@@ -169,6 +169,10 @@ def _cache_key(name: str, user_id: UUID | None) -> str:
 
 DELEGATE_TOOL_NAMES = {"ask_agent"}
 
+# Resource URI tools — tools backed by MCP resources instead of MCP tools.
+# These are resolved separately from FastMCPToolset.
+RESOURCE_SCHEME_MARKER = "://"
+
 
 # ---------------------------------------------------------------------------
 # AgentAdapter
@@ -258,11 +262,44 @@ class AgentAdapter:
         return tools
 
     def _get_mcp_tool_names(self) -> set[str]:
-        """Get tool names that should be loaded from MCP (excluding delegates)."""
+        """Get tool names that should be loaded from MCP (excluding delegates and resources)."""
         return {
             t.name for t in self.agent_schema.tools
-            if t.name not in DELEGATE_TOOL_NAMES
+            if t.name not in DELEGATE_TOOL_NAMES and not t.uri
         }
+
+    def _get_resource_tools(self) -> list:
+        """Create callable tools from resource URI references.
+
+        Tools with a ``uri`` field are backed by MCP resources. Parametric
+        templates (e.g. ``user://profile/{user_id}``) become tools whose
+        parameters match the URI template variables.
+        """
+        import asyncio
+        import inspect
+        import re
+
+        tools = []
+        for ref in self.agent_schema.tools:
+            if not ref.uri:
+                continue
+
+            uri_template = ref.uri
+            tool_name = ref.name
+            description = ref.description or f"Read resource: {uri_template}"
+            params = re.findall(r"\{(\w+)\}", uri_template)
+
+            if params:
+                tool = _create_parameterized_resource_tool(
+                    tool_name, uri_template, params, description,
+                )
+            else:
+                tool = _create_static_resource_tool(
+                    tool_name, uri_template, description,
+                )
+            tools.append(tool)
+
+        return tools
 
     def resolve_toolsets(
         self,
@@ -291,10 +328,10 @@ class AgentAdapter:
         toolsets: list = []
         tools: list = []
 
-        # Group tools by server name
+        # Group tools by server name (skip delegates and resource-backed tools)
         tools_by_server: dict[str, set[str]] = {}
         for ref in self.agent_schema.tools:
-            if ref.name in DELEGATE_TOOL_NAMES:
+            if ref.name in DELEGATE_TOOL_NAMES or ref.uri:
                 continue
             srv = ref.server or "local"
             tools_by_server.setdefault(srv, set()).add(ref.name)
@@ -326,6 +363,9 @@ class AgentAdapter:
 
         # Delegate tools — registered as direct Python functions
         tools.extend(self._get_delegate_tools())
+
+        # Resource tools — MCP resources exposed as callable tools
+        tools.extend(self._get_resource_tools())
 
         return toolsets, tools
 
@@ -745,3 +785,107 @@ class AgentAdapter:
             session_id, "observation", content,
             user_id=user_id,
         )
+
+
+# ---------------------------------------------------------------------------
+# Resource → Tool wrappers
+# ---------------------------------------------------------------------------
+
+
+def _create_static_resource_tool(
+    tool_name: str,
+    uri: str,
+    description: str,
+) -> Any:
+    """Create a no-arg tool that reads a static MCP resource URI."""
+
+    async def resource_tool() -> str:
+        from p8.api.mcp_server import get_mcp_server
+
+        mcp = get_mcp_server()
+        result = await mcp.read_resource(uri)
+        # ResourceResult.contents is str | bytes | list[ResourceContent]
+        contents = result.contents
+        if isinstance(contents, (str, bytes)):
+            return contents if isinstance(contents, str) else contents.decode()
+        # list[ResourceContent] — join text items
+        return "\n".join(
+            str(c.content) if hasattr(c, "content") else str(c) for c in contents
+        )
+
+    resource_tool.__name__ = tool_name
+    resource_tool.__qualname__ = tool_name
+    resource_tool.__doc__ = description
+    return resource_tool
+
+
+def _create_parameterized_resource_tool(
+    tool_name: str,
+    uri_template: str,
+    params: list[str],
+    description: str,
+) -> Any:
+    """Create a tool with parameters matching URI template variables.
+
+    Context-aware parameters (``user_id``, ``session_id``) are auto-resolved
+    from the per-request tool context and hidden from the LLM signature.
+    Remaining parameters become LLM-visible keyword arguments.
+
+    Builds a proper ``__signature__`` so pydantic-ai discovers the
+    parameters for LLM tool-call generation.
+    """
+    import inspect
+    from p8.api.tools import get_session_id, get_user_id
+
+    # Parameters auto-resolved from tool context — not exposed to the LLM
+    _CONTEXT_RESOLVERS: dict[str, Any] = {
+        "user_id": get_user_id,
+        "session_id": get_session_id,
+    }
+    context_params = [p for p in params if p in _CONTEXT_RESOLVERS]
+    llm_params = [p for p in params if p not in _CONTEXT_RESOLVERS]
+
+    async def _impl(**kwargs: str) -> str:
+        from p8.api.mcp_server import get_mcp_server
+
+        # Inject context-resolved values
+        for cp in context_params:
+            val = _CONTEXT_RESOLVERS[cp]()
+            if val is not None:
+                kwargs[cp] = str(val)
+            elif cp not in kwargs:
+                return f"Error: {cp} not available in context"
+
+        mcp = get_mcp_server()
+        uri = uri_template.format(**kwargs)
+        result = await mcp.read_resource(uri)
+        contents = result.contents
+        if isinstance(contents, (str, bytes)):
+            return contents if isinstance(contents, str) else contents.decode()
+        return "\n".join(
+            str(c.content) if hasattr(c, "content") else str(c) for c in contents
+        )
+
+    if llm_params:
+        # Some params still need to come from the LLM
+        sig_params = [
+            inspect.Parameter(p, inspect.Parameter.KEYWORD_ONLY, annotation=str)
+            for p in llm_params
+        ]
+        sig = inspect.Signature(sig_params, return_annotation=str)
+
+        async def resource_tool(**kwargs: str) -> str:
+            return await _impl(**kwargs)
+
+        resource_tool.__signature__ = sig  # type: ignore[attr-defined]
+        resource_tool.__annotations__ = {p: str for p in llm_params}
+        resource_tool.__annotations__["return"] = str
+    else:
+        # All params are context-resolved — zero-arg tool for the LLM
+        async def resource_tool() -> str:  # type: ignore[misc]
+            return await _impl()
+
+    resource_tool.__name__ = tool_name
+    resource_tool.__qualname__ = tool_name
+    resource_tool.__doc__ = description
+    return resource_tool

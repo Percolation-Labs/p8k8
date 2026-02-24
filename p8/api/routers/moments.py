@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 """GET /moments — list, get, timeline, today summary, search, rate."""
 
-from __future__ import annotations
+# TODO: move to having a moment controller and make sure CLI and routers share the same controller
+#       remove imports in functions and move to top
 
 from uuid import UUID
 
@@ -11,6 +14,10 @@ from p8.ontology.types import Message, Moment
 from p8.services.database import Database
 from p8.services.encryption import EncryptionService
 from p8.services.memory import MemoryService
+from p8.services.repository import Repository
+import logging
+
+
 
 router = APIRouter()
 
@@ -125,8 +132,7 @@ async def session_timeline(
     if not needs_decrypt:
         return [dict(r) for r in rows]
 
-    # Batch-fetch full rows for encrypted items and decrypt via Repository
-    from p8.services.repository import Repository
+
 
     msg_ids = [
         r["event_id"] for r in rows
@@ -222,7 +228,6 @@ async def list_reminders(
         *args,
     )
 
-    from p8.services.repository import Repository
 
     repo = Repository(Moment, db, encryption)
     await repo._ensure_deks(rows)
@@ -253,13 +258,12 @@ async def search_moments(
     Returns flat moment objects (same shape as GET /moments/) so clients can
     render them with the same card widgets used on the feed.
     """
-    import logging
+
     log = logging.getLogger(__name__)
 
     embedding_service = request.app.state.embedding_service
     user_id = user.user_id if user else None
 
-    from p8.services.repository import Repository
 
     _DROP_COLS = {"encryption_level", "tenant_id", "user_id", "deleted_at", "graph_edges"}
 

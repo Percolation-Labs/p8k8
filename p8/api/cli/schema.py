@@ -8,6 +8,8 @@ from typing import Optional
 from uuid import UUID
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 import p8.services.bootstrap as _svc
 from p8.ontology.types import Schema
@@ -15,6 +17,7 @@ from p8.ontology.verify import register_models, verify_all
 from p8.services.repository import Repository
 
 schema_app = typer.Typer(no_args_is_help=True)
+_con = Console()
 
 
 async def _list_schemas(kind: str | None, limit: int):
@@ -23,12 +26,17 @@ async def _list_schemas(kind: str | None, limit: int):
         filters = {"kind": kind} if kind else None
         entities = await repo.find(filters=filters, limit=limit)
 
-        for e in entities:
-            desc = (e.description or "")[:60]
-            preview = desc + "..." if len(e.description or "") > 60 else desc
-            typer.echo(f"  {e.kind:12s} {e.name:30s} {preview}")
+        table = Table(title=f"Schemas ({len(entities)})", show_lines=False)
+        table.add_column("Kind", style="cyan", no_wrap=True)
+        table.add_column("Name", style="bold")
+        table.add_column("Description", style="dim")
 
-        typer.echo(f"\n{len(entities)} schema(s)")
+        for e in entities:
+            desc = (e.description or "")[:80]
+            preview = desc + "..." if len(e.description or "") > 80 else desc
+            table.add_row(e.kind, e.name, preview)
+
+        _con.print(table)
 
 
 async def _get_schema(schema_id: str):

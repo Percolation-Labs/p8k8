@@ -150,11 +150,17 @@ class MCPToolReference(BaseModel):
         server: Server alias (omit or None for local; "rem" = local MCP)
         description: Optional suffix appended to the tool's base description
             from the MCP server. Gives agent-specific context.
+        uri: MCP resource URI or template. When set, the tool is backed by
+            an MCP resource instead of an MCP tool. Parametric templates
+            (e.g. ``user://profile/{user_id}``) become callable tools with
+            matching parameters. The agent calls the tool; the adapter
+            resolves it via ``mcp.read_resource(uri)``.
     """
 
     name: str
     server: str | None = None
     description: str | None = None
+    uri: str | None = None
 
 
 # =============================================================================

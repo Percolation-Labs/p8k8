@@ -402,8 +402,10 @@ $$ LANGUAGE plpgsql;
 
 
 -- enqueue_news_tasks — called by pg_cron daily.
--- Creates one news task per user who has interests or categories in metadata
--- and hasn't had a news task today.
+-- Creates one news task per user who has interests, categories, or feeds
+-- in metadata and hasn't had a news task today.
+-- The news task is handled by ReadingSummaryHandler which fetches feeds,
+-- upserts resources, and creates a reading moment with LLM summary.
 CREATE OR REPLACE FUNCTION enqueue_news_tasks() RETURNS INT AS $$
 DECLARE
     v_count INT := 0;
@@ -417,6 +419,7 @@ BEGIN
           AND (
               u.metadata->>'interests' IS NOT NULL
               OR u.metadata->>'categories' IS NOT NULL
+              OR u.metadata->>'feeds' IS NOT NULL
           )
           -- Skip users who already have a pending/processing/completed news task today
           AND NOT EXISTS (

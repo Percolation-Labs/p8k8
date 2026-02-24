@@ -150,7 +150,7 @@ class NotificationService:
         Returns result per device. Auto-deactivates tokens on 410/UNREGISTERED.
         """
         row = await self._db.fetchrow(
-            "SELECT devices, tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT devices, tenant_id FROM users WHERE (id = $1 OR user_id = $1) AND deleted_at IS NULL",
             user_id,
         )
         if not row:

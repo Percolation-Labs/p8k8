@@ -15,9 +15,44 @@ cp .env.example .env
 
 # 3. Build and start Postgres + OpenBao (KMS)
 docker compose up -d --build
-# 4. Run migrations (blank DB — no SQL baked into the image)
+# 4. Run migrations - docker compose should run the installs but you can do this
 p8 migrate
 ```
+
+### Running CLI commands
+
+The `p8` CLI is installed as a package entry point. There are two ways to run it:
+
+**Option A: Use `uv run` (no setup needed)**
+
+```bash
+uv run p8 --help
+uv run p8 serve --reload
+uv run p8 chat
+```
+
+**Option B: Activate the virtualenv so `p8` is on your PATH**
+
+```bash
+source .venv/bin/activate
+p8 --help
+p8 serve --reload
+```
+
+To make this automatic in VS Code, add `.vscode/settings.json`:
+
+```json
+{
+  "python.terminal.activateEnvironment": true,
+  "terminal.integrated.env.osx": {
+    "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}"
+  }
+}
+```
+
+Then open a new terminal in VS Code and `p8` will be available directly.
+
+> **Note:** The CLI uses Typer/Click, so use `--help` (not `help`) for usage info.
 
 **Critical env vars:**
 
@@ -48,8 +83,6 @@ curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
     \"messages\": [{\"id\": \"$(uuidgen)\", \"role\": \"user\", \"content\": \"hello\"}]
   }"
 ```
-
-`p8 migrate` is required after `docker compose up` to initialize the database schema.
 
 ## Starting the server
 

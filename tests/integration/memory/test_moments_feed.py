@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -50,7 +50,7 @@ async def _load_seed(db, encryption, *, user_id: UUID | None = None):
         await session_repo.upsert(session)
 
     # Insert messages with backdated created_at via raw SQL
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     for m in raw["messages"]:
         days_ago = m.get("days_ago", 0)
         ts = (now - timedelta(days=days_ago)).replace(microsecond=0)
@@ -261,7 +261,7 @@ async def test_today_summary_text(db, encryption):
     await _load_seed(db, encryption, user_id=USER_ID)
 
     feed = await db.rem_moments_feed(user_id=USER_ID, limit=20)
-    today = datetime.utcnow().date()
+    today = datetime.now(UTC).date()
     today_summaries = [
         r for r in feed
         if r["event_type"] == "daily_summary" and r["event_date"] == today
@@ -275,7 +275,7 @@ async def test_yesterday_summary_text(db, encryption):
     await _load_seed(db, encryption, user_id=USER_ID)
 
     feed = await db.rem_moments_feed(user_id=USER_ID, limit=20)
-    yesterday = (datetime.utcnow() - timedelta(days=1)).date()
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).date()
     yesterday_summaries = [
         r for r in feed
         if r["event_type"] == "daily_summary" and r["event_date"] == yesterday

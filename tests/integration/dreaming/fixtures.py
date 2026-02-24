@@ -114,4 +114,31 @@ async def setup_dreaming_fixtures(db, encryption):
     )
     [ra, rb] = await resource_repo.upsert([resource_a, resource_b])
 
+    # Content upload moments — link resources to sessions so Phase 1 enrichment fires
+    upload_ml = Moment(
+        name="upload-ml-report",
+        moment_type="content_upload",
+        summary=f"Uploaded ml-report.pdf (1 chunks, 280 chars).\nResources: {RESOURCE_ML}",
+        source_session_id=sa.id,
+        user_id=TEST_USER_ID,
+        metadata={
+            "source": "upload",
+            "file_name": "ml-report.pdf",
+            "resource_keys": [RESOURCE_ML],
+        },
+    )
+    upload_arch = Moment(
+        name="upload-arch-doc",
+        moment_type="content_upload",
+        summary=f"Uploaded arch-doc.pdf (1 chunks, 250 chars).\nResources: {RESOURCE_ARCH}",
+        source_session_id=sb.id,
+        user_id=TEST_USER_ID,
+        metadata={
+            "source": "upload",
+            "file_name": "arch-doc.pdf",
+            "resource_keys": [RESOURCE_ARCH],
+        },
+    )
+    await moment_repo.upsert([upload_ml, upload_arch])
+
     return sa, sb, ma, mb, ra, rb

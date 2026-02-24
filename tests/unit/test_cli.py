@@ -218,7 +218,10 @@ class TestChatCLI:
             return_value=(mock_ctx.session_id, MagicMock())
         )
         mock_controller.prepare = AsyncMock(return_value=mock_ctx)
-        mock_controller.run_turn = AsyncMock(return_value=mock_turn)
+
+        async def _mock_stream(*a, **kw):
+            yield "Hello!"
+        mock_controller.run_turn_stream = MagicMock(side_effect=_mock_stream)
         mock_controller_cls.return_value = mock_controller
 
         with (
@@ -313,7 +316,10 @@ class TestChatCLI:
             return_value=(mock_ctx.session_id, MagicMock())
         )
         mock_controller.prepare = AsyncMock(return_value=mock_ctx)
-        mock_controller.run_turn = AsyncMock(return_value=mock_turn)
+
+        async def _mock_stream(*a, **kw):
+            yield "The child agent said: answer is 42"
+        mock_controller.run_turn_stream = MagicMock(side_effect=_mock_stream)
         mock_controller_cls.return_value = mock_controller
 
         with (

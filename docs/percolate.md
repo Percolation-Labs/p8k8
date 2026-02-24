@@ -4,7 +4,7 @@
 
 Percolation Labs builds agentic memory infrastructure. The core thesis is that intelligence belongs in the data tier, not the application tier. Rather than treating databases as dumb stores with AI bolted on top, Percolation Labs embeds semantic reasoning, tool orchestration, and memory management directly into PostgreSQL.
 
-The name reflects the organizing metaphor: ideas, relationships, and patterns gradually **percolate** through a system — accumulating, forming connections, and reorganizing into larger coherent structures over time.
+The name reflects the organizing metaphor: ideas, relationships, and patterns gradually **percolate** through a system — accumulating, forming connections, and reorganizing into larger coherent structures over time. The idea is based actually on percolation theory in physics relating to permeability probabilities in different structures. We want a memory system where queries find their way to hidden memories.
 
 ## Percolate
 
@@ -17,6 +17,8 @@ Traditional RAG (Retrieval-Augmented Generation) is stateless — each query is 
 - **Memory consolidates over time.** Short-term interactions are progressively distilled into durable knowledge through background processing ("dreaming"), much like how sleep consolidates episodic memory into long-term storage.
 - **Knowledge is a living graph.** Entities accumulate relationships through use. The system discovers connections that were never explicitly defined — patterns emerge from the data, not from upfront schema design.
 - **Learning is generative, not extractive.** The system doesn't just retrieve what was stored. It synthesizes new insights by finding affinities between distant pieces of knowledge — a conversation about API design might connect to a document about ML pipelines through shared architectural principles.
+- ** Dreaming Processes consolidate short to long term memories **
+When we sleep, short term memories are integrated with our other memories.
 
 ### What Percolate is not
 
@@ -27,7 +29,7 @@ Percolate is not a chatbot framework or a thin wrapper around an LLM. It is a **
 - Memory is multi-modal (relational + vector + graph + key-value), not just embeddings
 - Knowledge evolves through background processes, not just user interaction
 
-### The percolation process
+### The percolation process (Dreaming)
 
 ```
 Raw content (conversations, documents, uploads)

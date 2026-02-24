@@ -19,7 +19,7 @@ p8 dream <user-id> -o /tmp/dreams.yaml
 ```
 
 > **Validation**: All changes to the dreaming system MUST be validated by running
-> `p8 dream <user-id>` (or `uv run python scripts/simulate_dreaming.py` for the full
+> `p8 dream <user-id>` (or `p8 dream --simulate` for the full
 > seeded test harness) and confirming:
 > 1. Session messages — correct role counts (user, assistant, tool_call), no failed searches
 > 2. Structured output — `dream_moments` populated with `affinity_fragments` (not empty)
@@ -51,9 +51,11 @@ VALUES ('dreaming', 'small', user_id, tenant_id,
 
 A worker claims the task via `QueueService.claim("small", worker_id)`. Before processing, `check_task_quota()` runs a **pre-flight** check on `dreaming_minutes` to enforce plan limits. If the user is over quota, the task is skipped.
 
-### Phase 1 — First-order dreaming (consolidation)
+### Phase 1 — First-order dreaming (consolidation + resource enrichment)
 
-`DreamingHandler._build_session_moments()` finds the 10 most recently updated sessions for the user (`ORDER BY updated_at DESC LIMIT 10`) and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
+`DreamingHandler._build_session_moments()` finds the 10 most recently updated sessions for the user (`ORDER BY updated_at DESC LIMIT 10`, excluding `mode='dreaming'`) and calls `rem_build_moment(session_id, tenant_id, user_id, 6000)` for each. This SQL function creates `session_chunk` moments that summarize conversation segments exceeding the token threshold. No LLM, no API tokens — purely SQL text processing.
+
+After each moment is built, `_enrich_moment_with_resources()` checks whether the session has any `content_upload` moments. If so, it extracts `chunk-0000` resource keys from their metadata, queries the `resources` table for content, and appends an `[Uploaded Resources]` section to the moment summary (each resource truncated to 500 chars). The `resource_keys` are also merged into the moment's metadata for downstream use. This ensures file uploads are visible in session_chunk consolidation without modifying the `rem_build_moment()` SQL function.
 
 ### Phase 2 — Second-order dreaming (semantic affinity)
 
@@ -197,7 +199,7 @@ AND graph_edges @> '[{"relation": "dreamed_from"}]';
 ## Simulation
 
 ```bash
-uv run python scripts/simulate_dreaming.py
+p8 dream --simulate
 ```
 
 ## Notes

@@ -1,3 +1,5 @@
+name: p8
+
 services:
   db:
     # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)

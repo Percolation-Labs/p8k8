@@ -7,7 +7,7 @@ _decrypt_row → model_validate pipeline.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import asyncpg
@@ -223,7 +223,7 @@ async def test_single_moment(db, encryption, session_id):
     """Moment: starts/ends_timestamp (datetime), present_persons (JSONB list[dict]),
     emotion_tags/topic_tags (text[]), source_session_id (UUID FK)."""
     repo = Repository(Moment, db, encryption)
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     m = Moment(
         name="standup-2025-01-15",
         moment_type="meeting",
@@ -262,7 +262,7 @@ async def test_single_moment(db, encryption, session_id):
 async def test_single_storage_grant(db, encryption, user_row):
     """StorageGrant: user_id_ref (UUID FK), auto_sync (bool), last_sync_at, sync_mode."""
     repo = Repository(StorageGrant, db, encryption)
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     sg = StorageGrant(
         user_id_ref=user_row,
         provider="google-drive",

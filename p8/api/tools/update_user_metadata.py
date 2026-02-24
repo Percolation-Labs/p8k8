@@ -63,9 +63,19 @@ async def update_user_metadata(
     encryption = get_encryption()
     repo = Repository(User, db, encryption)
 
+    # Resolve user_id (identity) → row id for merge_metadata
+    # Use direct query to match exact user_id (not shared records)
+    rows = await db.fetch(
+        "SELECT id FROM users WHERE user_id = $1 AND deleted_at IS NULL LIMIT 1",
+        user_id,
+    )
+    if not rows:
+        return {"status": "error", "error": "User not found"}
+    row_id = rows[0]["id"]
+
     try:
         result = await repo.merge_metadata(
-            user_id, metadata, remove_keys=remove_keys,
+            row_id, metadata, remove_keys=remove_keys,
         )
     except Exception as exc:
         logger.exception("Failed to update user metadata for user_id=%s", user_id)

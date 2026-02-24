@@ -34,7 +34,7 @@ p8 migrate
 Execute REM dialect queries. Without arguments, starts an interactive REPL.
 
 ```bash
-p8 query 'LOOKUP "sarah-chen"'
+p8 query 'LOOKUP percolate'
 p8 query 'SEARCH "database" FROM schemas LIMIT 5'
 p8 query 'FUZZY "sara" LIMIT 10'
 p8 query 'SELECT name, kind FROM schemas LIMIT 5'
@@ -47,7 +47,7 @@ p8 query                        # interactive REPL
 Bulk upsert from files. Markdown defaults to `ontologies`. JSON/YAML requires an explicit table.
 
 ```bash
-p8 upsert docs/architecture.md               # .md → ontologies (default)
+p8 upsert docs/percolate.md               # .md → ontologies (default)
 p8 upsert docs/                               # folder of .md → ontologies
 p8 upsert schemas data/agents.yaml            # YAML → schemas
 p8 upsert resources data/chunks.json           # JSON → resources
@@ -142,6 +142,95 @@ p8 dream <user-id> -l 7 -e -o /tmp/dreams.yaml  # all options combined
 
 Output includes: activity chunks built (Phase 1), dream moments saved with graph edges (Phase 2), and `dreamed_from` back-edges merged onto source entities (resources, moments).
 
+### moments
+
+List moments, view session timelines, and trigger compaction.
+
+```bash
+p8 moments                              # today's summary + recent moments
+p8 moments --type session_chunk          # filter by moment_type
+p8 moments --user-id <uuid>             # filter by user
+p8 moments --limit 50                   # max results
+p8 moments timeline <session-uuid>      # interleaved messages + moments for a session
+p8 moments timeline <session-uuid> -n 100
+p8 moments compact <session-uuid>       # trigger moment compaction
+p8 moments compact <session-uuid> -t 500  # custom token threshold
+```
+
+### encryption
+
+Inspect KMS provider status, configure tenant encryption, and run round-trip tests.
+
+```bash
+p8 encryption status                              # show KMS provider + tenant keys
+p8 encryption configure <tenant-id>               # configure encryption (default: platform mode)
+p8 encryption configure <tenant-id> --mode client  # client-side encryption
+p8 encryption configure <tenant-id> --mode sealed  # sealed mode (server-generated key)
+p8 encryption configure <tenant-id> --mode disabled
+p8 encryption test                                 # round-trip test (default: platform mode)
+p8 encryption test --tenant my-tenant --mode client
+p8 encryption test-isolation                       # verify cross-tenant decryption fails
+```
+
+### admin
+
+Operations tooling for the processing pipeline. Defaults to remote (Hetzner via port-forward on `localhost:5490`). Use `--local` to target the local docker-compose DB.
+
+```bash
+# Health — pipeline checks + per-user task diagnostics
+p8 admin health                          # all users
+p8 admin health --email alice            # filter by email (partial match)
+p8 admin health --user <uuid>            # filter by user UUID
+
+# Queue — inspect task_queue
+p8 admin queue                           # aggregate pending tasks by tenant/type
+p8 admin queue --status failed           # aggregate failed tasks
+p8 admin queue --detail                  # individual task rows
+p8 admin queue --detail --type dreaming  # filter by task_type
+p8 admin queue --detail --status failed -n 50  # paginated detail
+
+# Quota — user utilization reports
+p8 admin quota                           # all users
+p8 admin quota --user <uuid>             # single user
+p8 admin quota --user <uuid> --reset     # reset all current-period quotas
+p8 admin quota --user <uuid> --reset --resource chat_tokens  # reset one resource
+
+# Enqueue — manually enqueue a one-off task
+p8 admin enqueue dreaming --user <uuid>
+p8 admin enqueue news --user <uuid> --delay 30   # delay 30 minutes
+
+# Heal — fix stale reminder cron jobs
+p8 admin heal-jobs
+
+# Env — validate .env keys are covered by K8s manifests
+p8 admin env
+
+# Sync secrets — push .env secrets into OpenBao KV v2
+p8 admin sync-secrets
+p8 admin sync-secrets --addr http://127.0.0.1:8200 --token <BAO_TOKEN>
+```
+
+All admin commands accept `--local` / `-L` to target the local docker-compose DB instead of remote.
+
+### db
+
+Compare local and remote database schemas, generate and apply migrations.
+
+```bash
+# Diff local vs remote (requires port-forward)
+p8 db diff                                        # default remote port 5433
+p8 db diff --remote-url postgresql://user:pass@localhost:5433/dbname
+p8 db diff --tables-only                          # skip functions/triggers/indexes
+p8 db diff --counts                               # include row count comparison
+p8 db diff --generate                             # write sql/migrations/NNN_db_diff.sql
+p8 db diff --generate -m "add_user_prefs"         # custom migration label
+
+# Apply a migration
+p8 db apply sql/migrations/001_db_diff.sql                         # apply to local
+p8 db apply sql/migrations/001_db_diff.sql --remote-url <URL>      # apply to remote
+p8 db apply sql/migrations/001_db_diff.sql --dry-run               # print SQL only
+```
+
 ### mcp
 
 Run the MCP server over stdio transport for local development with Claude Code, Cursor, etc.
@@ -184,7 +273,9 @@ api/cli/
 ├── chat.py         # p8 chat
 ├── moments.py      # p8 moments / p8 moments timeline / p8 moments compact
 ├── dreaming.py     # p8 dream
-├── encryption.py   # p8 encryption status/configure/test
+├── encryption.py   # p8 encryption status/configure/test/test-isolation
+├── admin.py        # p8 admin health/queue/quota/enqueue/heal-jobs/env/sync-secrets
+├── db.py           # p8 db diff/apply
 ├── mcp.py          # p8 mcp (stdio transport)
 └── verify_links.py # p8 verify-links
 ```
@@ -215,6 +306,21 @@ typer callback → asyncio.run(_run_*()) → bootstrap_services() → service me
 | `schema verify` | `verify_all(db)` |
 | `schema register` | `register_models(db)` |
 | `chat` | `ChatController.prepare()` + `ChatController.run_turn()` |
+| `moments` | `MemoryService.build_today_summary()` + `Repository.find()` |
+| `moments timeline` | `Database.rem_session_timeline()` |
+| `moments compact` | `MemoryService.maybe_build_moment()` |
 | `dream` | `DreamingHandler.handle()` (Phase 1 + Phase 2) |
+| `encryption status` | `Database.fetch()` on `tenant_keys` |
+| `encryption configure` | `Encryption.configure_tenant()` |
+| `encryption test` | `Encryption.configure_tenant()` + `Repository.upsert()` round-trip |
+| `admin health` | Direct SQL on `task_queue`, `cron.job`, `users` |
+| `admin queue` | Direct SQL on `task_queue` (aggregate or detail) |
+| `admin quota` | `usage.get_all_usage()` + `usage.get_user_plan()` |
+| `admin enqueue` | `INSERT INTO task_queue` |
+| `admin heal-jobs` | `_heal_reminder_jobs(db)` |
+| `admin env` | Local file parsing (.env vs K8s manifests) |
+| `admin sync-secrets` | OpenBao KV v2 API / `bao` CLI |
+| `db diff` | `asyncpg` introspection queries on local + remote |
+| `db apply` | `asyncpg.connect()` + `conn.execute()` in transaction |
 | `mcp` | `bootstrap_services()` + `init_tools()` + `FastMCP.run_async(stdio)` |
 | `verify-links` | `utils.links.verify_links()` |

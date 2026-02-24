@@ -36,6 +36,11 @@ MAX_MESSAGES_PER_SESSION = 20
 MAX_RESOURCES = 10
 LOOKBACK_DAYS = 1
 
+# Phase 1 constants
+MAX_SESSIONS_PHASE1 = 10
+PHASE1_THRESHOLD = 6000
+MAX_RESOURCE_SUMMARY_CHARS = 500
+
 
 class DreamingHandler:
     """Background AI processing for a user — moment consolidation and insights."""
@@ -52,7 +57,14 @@ class DreamingHandler:
         tenant_id = task.get("tenant_id")
         lookback_days = task.get("lookback_days", LOOKBACK_DAYS)
 
-        # Run dreaming agent (loads messages + moments directly as context)
+        # Phase 1 — consolidate recent sessions into session_chunk moments
+        phase1 = await self._build_session_moments(user_id, tenant_id, ctx.db, ctx.encryption)
+        log.info(
+            "Phase 1 complete for user %s: %d moments built from %d sessions",
+            user_id, phase1["moments_built"], phase1["sessions_checked"],
+        )
+
+        # Phase 2 — run dreaming agent (loads messages + moments directly as context)
         result = await self._run_dreaming_agent(user_id, lookback_days, ctx)
 
         io_tokens = result.get("io_tokens", 0)
@@ -73,11 +85,121 @@ class DreamingHandler:
 
         return {
             "io_tokens": io_tokens,
+            "phase1": phase1,
             "phase2": result,
         }
 
     # ------------------------------------------------------------------
-    # Dreaming agent
+    # Phase 1 — session consolidation + resource enrichment
+    # ------------------------------------------------------------------
+
+    async def _build_session_moments(
+        self,
+        user_id: UUID,
+        tenant_id: str | None,
+        db: Database,
+        encryption: EncryptionService,
+    ) -> dict:
+        """Find recent sessions and build session_chunk moments for each.
+
+        Returns {"sessions_checked": int, "moments_built": int}.
+        """
+        rows = await db.fetch(
+            "SELECT id FROM sessions"
+            " WHERE user_id = $1 AND deleted_at IS NULL"
+            "   AND COALESCE(mode, '') != 'dreaming'"
+            " ORDER BY updated_at DESC LIMIT $2",
+            user_id, MAX_SESSIONS_PHASE1,
+        )
+
+        memory = MemoryService(db, encryption)
+        sessions_checked = 0
+        moments_built = 0
+
+        for row in rows:
+            session_id = row["id"]
+            sessions_checked += 1
+            try:
+                moment = await memory.maybe_build_moment(
+                    session_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    threshold=PHASE1_THRESHOLD,
+                )
+                if moment:
+                    moments_built += 1
+                    await self._enrich_moment_with_resources(db, moment, session_id)
+            except Exception:
+                log.exception("Phase 1: failed to build moment for session %s", session_id)
+
+        return {"sessions_checked": sessions_checked, "moments_built": moments_built}
+
+    @staticmethod
+    async def _enrich_moment_with_resources(
+        db: Database, moment: Moment, session_id: UUID,
+    ) -> None:
+        """Append uploaded resource content to a session_chunk moment.
+
+        Looks up content_upload moments for the session, extracts chunk-0000
+        resource keys, queries the resources table for content, and appends
+        a summary to the moment.
+        """
+        upload_rows = await db.fetch(
+            "SELECT metadata FROM moments"
+            " WHERE source_session_id = $1"
+            "   AND moment_type = 'content_upload'"
+            "   AND deleted_at IS NULL",
+            session_id,
+        )
+        if not upload_rows:
+            return
+
+        resource_keys: list[str] = []
+        for urow in upload_rows:
+            meta = ensure_parsed(urow["metadata"], default={})
+            if not isinstance(meta, dict):
+                continue
+            for key in meta.get("resource_keys", []):
+                if key.endswith("-chunk-0000") and key not in resource_keys:
+                    resource_keys.append(key)
+
+        if not resource_keys:
+            return
+
+        # Fetch content for chunk-0000 resources
+        resource_rows = await db.fetch(
+            "SELECT name, content FROM resources"
+            " WHERE name = ANY($1) AND deleted_at IS NULL",
+            resource_keys,
+        )
+        if not resource_rows:
+            return
+
+        parts: list[str] = []
+        for rrow in resource_rows:
+            content = rrow["content"] or ""
+            if len(content) > MAX_RESOURCE_SUMMARY_CHARS:
+                content = content[:MAX_RESOURCE_SUMMARY_CHARS] + "..."
+            parts.append(f"- {rrow['name']}: {content}")
+
+        resource_section = "\n\n[Uploaded Resources]\n" + "\n".join(parts)
+
+        # Append to moment summary and merge resource_keys into metadata
+        existing_meta = ensure_parsed(moment.metadata, default={})
+        if not isinstance(existing_meta, dict):
+            existing_meta = {}
+        existing_meta["resource_keys"] = resource_keys
+
+        await db.execute(
+            "UPDATE moments SET summary = summary || $1, metadata = $2::jsonb"
+            " WHERE id = $3",
+            resource_section,
+            json.dumps(existing_meta),
+            moment.id,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 2 — Dreaming agent
     # ------------------------------------------------------------------
 
     async def _run_dreaming_agent(

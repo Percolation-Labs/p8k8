@@ -2,6 +2,8 @@
 
 Percolate is a memory for a world in which humans an AI collaborate to create and get stuff done! At its foundation their is acloud native agentic tech stack build on Postgres and layered on top of this is a memory layer that handles ingestion and retrieval of specially designed content and content indexes. 
 
+> The name reflects the organizing metaphor: ideas, relationships, and patterns gradually **percolate** through a system — accumulating, forming connections, and reorganizing into larger coherent structures over time. The idea is based actually on percolation theory in physics relating to permeability probabilities in different structures. We want a memory system where queries find their way to hidden memories.
+
 Percolate is modelled on real human memory - different types of "indexes" for episodic and procedural and ontological memory are used to model concepts and events. The system constantly updates its memory to model a users interaction with the system or an organisation's knowledge. This knowledge can be like a Wiki that describes everything about the business including processes which can be thought of as agents that can join your team and get stuff done. As such you can think of Percolate as modelling your memory or your organisations memory. 
 
 

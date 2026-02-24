@@ -6,11 +6,18 @@ for agent resolution, session management, history loading, and persistence.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 
 from p8.agentic.adapter import AgentAdapter
 from p8.agentic.types import ContextInjector
@@ -160,6 +167,55 @@ class ChatController:
             background_compaction=background_compaction,
         )
         return ChatTurn(assistant_text=assistant_text, all_messages=all_messages)
+
+    async def run_turn_stream(
+        self,
+        ctx: ChatContext,
+        user_prompt: str,
+        *,
+        user_id: UUID | None = None,
+        background_compaction: bool = True,
+    ) -> AsyncIterator[str]:
+        """Run an agent turn with streaming, yielding text deltas as they arrive.
+
+        After all deltas are yielded, persists the full turn (user + assistant).
+        Tool calls are handled internally by pydantic-ai between streamed text chunks.
+        """
+        accumulated: list[str] = []
+        all_messages: list[ModelMessage] | None = None
+
+        async with ctx.agent.iter(
+            user_prompt,
+            message_history=ctx.message_history or None,
+            instructions=ctx.injector.instructions,
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            if isinstance(event, PartStartEvent):
+                                if isinstance(event.part, TextPart) and event.part.content:
+                                    accumulated.append(event.part.content)
+                                    yield event.part.content
+                            elif isinstance(event, PartDeltaEvent):
+                                if isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
+                                    accumulated.append(event.delta.content_delta)
+                                    yield event.delta.content_delta
+                elif Agent.is_call_tools_node(node):
+                    # Execute tools silently (consume the stream to drive execution)
+                    async with node.stream(agent_run.ctx) as tools_stream:
+                        async for _ in tools_stream:
+                            pass
+
+            all_messages = agent_run.result.all_messages() if agent_run.result else None
+
+        assistant_text = "".join(accumulated)
+        await ctx.adapter.persist_turn(
+            ctx.session_id, user_prompt, assistant_text,
+            user_id=user_id, tenant_id=ctx.tenant_id,
+            all_messages=all_messages,
+            background_compaction=background_compaction,
+        )
 
     async def persist_turn(
         self,

@@ -182,9 +182,10 @@ async def test_content_upload_creates_moment(db, encryption):
     ):
         result = await svc.ingest(b"pdf bytes", "test-doc.pdf", mime_type="application/pdf")
 
-    # Verify content_upload moment exists
+    # Verify content_upload moment exists (use result.session_id for precise match)
     rows = await db.fetch(
         "SELECT * FROM moments WHERE name = 'upload-test-doc' AND deleted_at IS NULL"
+        " ORDER BY created_at DESC LIMIT 1"
     )
     assert len(rows) >= 1
     moment_data = dict(rows[0])
@@ -489,6 +490,7 @@ async def test_upload_moment_has_content_preview(db, encryption):
 
     rows = await db.fetch(
         "SELECT * FROM moments WHERE name = 'upload-ml-report' AND deleted_at IS NULL"
+        " ORDER BY created_at DESC LIMIT 1"
     )
     assert len(rows) >= 1
     summary = rows[0]["summary"]

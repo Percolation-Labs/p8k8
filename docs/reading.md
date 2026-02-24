@@ -1,16 +1,16 @@
 # Reading
 
-Track which news items users click or bookmark, aggregate them into a daily reading moment, summarize with a cheap model, and provide a horizontal-swipe drill-down with chat.
+A job suggests web resources for reading - aggregated into a daily moment. We track which news items users click or bookmark - these can/could influence future daily reading moments. We summarize with a cheap model, and provide a horizontal-swipe drill-down with chat.
 
-## Motivation
+> This is one of the Queued Worker systems - see below for details on this queue
 
-The news/digest system ingests articles and surfaces them in the feed, but there's no signal for what the user actually engages with. Interaction tracking (clicks and bookmarks) closes this loop — it tells the system which topics the user cares about (not just what was served), enables lightweight summarization of consumed content, and creates a daily mosaic card that reflects actual reading behavior.
+
+The news/digest system ingests articles and surfaces them in the feed - we add a signal for what the user actually engages with. Interaction tracking (clicks and bookmarks) closes this loop — it tells the system which topics the user cares about (not just what was served), enables lightweight summarization of consumed content, and creates a daily mosaic card that reflects actual reading behavior.
 
 ## Moment Type
 
 `moment_type = "reading"` — one per user per day, upserted on each interaction (click or bookmark).
 
-Unlike digests (which are pushed), reading moments are pulled — they only exist when the user interacts with something. A day with no clicks or bookmarks produces no reading moment.
 
 ## Interaction Tracking
 

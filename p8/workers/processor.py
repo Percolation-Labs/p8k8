@@ -63,7 +63,6 @@ def _register_default_handlers() -> None:
     """Register built-in handlers."""
     from p8.workers.handlers.dreaming import DreamingHandler
     from p8.workers.handlers.file_processing import FileProcessingHandler
-    from p8.workers.handlers.news import NewsHandler
     from p8.workers.handlers.reading import ReadingSummaryHandler
     from p8.workers.handlers.scheduled import ScheduledHandler
 
@@ -71,10 +70,14 @@ def _register_default_handlers() -> None:
         register_handler("file_processing", FileProcessingHandler())  # type: ignore[arg-type]
     if "dreaming" not in _HANDLER_REGISTRY:
         register_handler("dreaming", DreamingHandler())  # type: ignore[arg-type]
+    # "news" cron tasks use ReadingSummaryHandler — single pipeline that
+    # fetches feeds, upserts resources, and creates a reading moment with
+    # LLM summary + mosaic thumbnail.
+    _reading = ReadingSummaryHandler()
     if "news" not in _HANDLER_REGISTRY:
-        register_handler("news", NewsHandler())  # type: ignore[arg-type]
+        register_handler("news", _reading)  # type: ignore[arg-type]
     if "reading_summary" not in _HANDLER_REGISTRY:
-        register_handler("reading_summary", ReadingSummaryHandler())  # type: ignore[arg-type]
+        register_handler("reading_summary", _reading)  # type: ignore[arg-type]
     if "scheduled" not in _HANDLER_REGISTRY:
         register_handler("scheduled", ScheduledHandler())  # type: ignore[arg-type]
 

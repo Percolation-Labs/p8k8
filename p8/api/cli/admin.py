@@ -31,17 +31,27 @@ REMOTE_PG_PORT = 5490          # kubectl port-forward svc/p8-postgres-rw 5490:54
 REMOTE_VAULT_PORT = 8201       # kubectl port-forward svc/openbao 8201:8200
 LOCAL_PG_PORT = 5488           # docker-compose default
 
+# Remote DB conventions (CNPG cluster uses different user/db than local dev)
+REMOTE_DB_USER = "p8user"
+REMOTE_DB_NAME = "p8db"
+
 # Known task types and their pg_cron source
 _TASK_TYPES = {
     "dreaming": "qms-dreaming-enqueue (hourly)",
-    "news": "qms-news-enqueue (daily 06:00 UTC)",
-    "reading_summary": "on-demand (reading moment created)",
+    "news": "qms-news-enqueue (daily 06:00 UTC) → ReadingSummaryHandler",
     "file_processing": "on-demand (file upload)",
     "scheduled": "on-demand (kv_rebuild, embedding_backfill)",
 }
 
-# Module-level flag set by the callback
+# Module-level flag set by the callback or per-command --local
 _use_local: bool = False
+
+
+def _set_local(local: bool) -> None:
+    """Set the local flag from either the callback or a subcommand option."""
+    global _use_local
+    if local:
+        _use_local = True
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -53,6 +63,51 @@ def _check_port(port: int, host: str = "localhost", timeout: float = 1.0) -> boo
             return True
     except OSError:
         return False
+
+
+def _db_connect_error(exc: Exception, *, local: bool) -> None:
+    """Pretty-print a DB connection failure with actionable hints, then exit."""
+    _con.print(f"[red bold]Database connection failed:[/red bold] {exc}")
+    _con.print()
+    if local:
+        _con.print("Check that your local Postgres container is healthy:")
+        _con.print("  docker compose ps")
+        _con.print("  docker compose logs postgres")
+    else:
+        _con.print("The remote port-forward is open but the connection was rejected.")
+        _con.print("Check that P8_DATABASE_URL has the correct credentials for the remote DB.")
+        _con.print()
+        _con.print("Port-forward commands:")
+        _con.print(f"  kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw {REMOTE_PG_PORT}:5432 &")
+        _con.print(f"  kubectl --context=p8-w-1 -n p8 port-forward svc/openbao {REMOTE_VAULT_PORT}:8200 &")
+        _con.print()
+        _con.print("Or use [bold]--local[/bold] to target the local docker-compose DB instead.")
+    raise typer.Exit(1)
+
+
+def _fetch_remote_db_password() -> str:
+    """Read the remote DB password from the k8s secret, or prompt."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "kubectl", "--context=p8-w-1", "-n", "p8",
+                "get", "secret", "p8-database-credentials",
+                "-o", "jsonpath={.data.password}",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            import base64
+            return base64.b64decode(result.stdout.strip()).decode()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    _con.print("[yellow]Could not read remote DB password from k8s secret.[/yellow]")
+    _con.print("Set P8_DATABASE_URL with remote credentials, e.g.:")
+    _con.print(f"  export P8_DATABASE_URL=postgresql://{REMOTE_DB_USER}:PASSWORD@localhost:{REMOTE_PG_PORT}/{REMOTE_DB_NAME}")
+    raise typer.Exit(1)
 
 
 @asynccontextmanager
@@ -67,8 +122,15 @@ async def _admin_services():
             _con.print(f"[red]Local Postgres not reachable on port {LOCAL_PG_PORT}[/red]")
             _con.print("Start it: docker compose up -d")
             raise typer.Exit(1)
-        async with _svc.bootstrap_services() as svc:
+        try:
+            ctx = _svc.bootstrap_services()
+            svc = await ctx.__aenter__()
+        except Exception as exc:
+            _db_connect_error(exc, local=True)
+        try:
             yield svc
+        finally:
+            await ctx.__aexit__(None, None, None)
     else:
         if not _check_port(REMOTE_PG_PORT):
             _con.print(f"[red bold]Remote Postgres not reachable on localhost:{REMOTE_PG_PORT}[/red bold]")
@@ -81,15 +143,19 @@ async def _admin_services():
             raise typer.Exit(1)
 
         # Rewrite DB URL to point at port-forwarded remote.
-        # If the current URL targets the local dev port, swap to remote port.
+        # If the current URL is the local dev default, build a proper remote URL
+        # with the correct user/dbname. Fetch the password from the k8s secret.
         # If user already set a custom URL (e.g. with real creds), respect it.
         from p8.settings import get_settings
         current_url = os.environ.get("P8_DATABASE_URL", get_settings().database_url)
         old_url = os.environ.get("P8_DATABASE_URL")
 
         if f":{LOCAL_PG_PORT}" in current_url:
-            os.environ["P8_DATABASE_URL"] = current_url.replace(
-                f":{LOCAL_PG_PORT}", f":{REMOTE_PG_PORT}"
+            # Local dev URL — need to swap user, password, port, and dbname
+            remote_password = _fetch_remote_db_password()
+            os.environ["P8_DATABASE_URL"] = (
+                f"postgresql://{REMOTE_DB_USER}:{remote_password}"
+                f"@localhost:{REMOTE_PG_PORT}/{REMOTE_DB_NAME}"
             )
 
         # Hint vault if port-forward is up
@@ -98,9 +164,14 @@ async def _admin_services():
             os.environ["P8_KMS_VAULT_URL"] = f"http://localhost:{REMOTE_VAULT_PORT}"
 
         try:
-            async with _svc.bootstrap_services() as svc:
-                yield svc
+            ctx = _svc.bootstrap_services()
+            svc = await ctx.__aenter__()
+        except Exception as exc:
+            _db_connect_error(exc, local=False)
+        try:
+            yield svc
         finally:
+            await ctx.__aexit__(None, None, None)
             if old_url is not None:
                 os.environ["P8_DATABASE_URL"] = old_url
             elif "P8_DATABASE_URL" in os.environ:
@@ -530,8 +601,10 @@ async def _health(user_email: str | None, user_id: UUID | None):
 def health(
     email: Optional[str] = typer.Option(None, "--email", "-e", help="Filter by user email (partial match)"),
     user_id: Optional[str] = typer.Option(None, "--user", "-u", help="Filter by user UUID"),
+    local: bool = typer.Option(False, "--local", "-L", help="Target local docker-compose DB instead of remote"),
 ):
     """Task health per user — what's due, what ran, what's stuck, and why."""
+    _set_local(local)
     _run(_health(email, UUID(user_id) if user_id else None))
 
 
@@ -641,8 +714,10 @@ def queue(
     task_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by task_type"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max groups (aggregate) or rows (detail)"),
     offset: int = typer.Option(0, "--offset", "-o", help="Pagination offset (detail mode)"),
+    local: bool = typer.Option(False, "--local", "-L", help="Target local docker-compose DB instead of remote"),
 ):
     """Queue tasks — aggregate by tenant or paginated detail. Use --status to filter."""
+    _set_local(local)
     if detail:
         _run(_queue_detail(status, task_type, limit, offset))
     else:
@@ -732,8 +807,10 @@ def quota(
     reset: bool = typer.Option(False, "--reset", "-r", help="Reset quotas instead of reporting"),
     resource: Optional[str] = typer.Option(None, "--resource", help="Specific resource to reset (with --reset)"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max users to show"),
+    local: bool = typer.Option(False, "--local", "-L", help="Target local docker-compose DB instead of remote"),
 ):
     """User quota report — utilization percentage per resource, or reset quotas."""
+    _set_local(local)
     if reset:
         if not user_id:
             _con.print("--user is required with --reset", style="red")
@@ -784,8 +861,10 @@ def enqueue(
     task_type: str = typer.Argument(help=f"Task type: {', '.join(_VALID_TASK_TYPES)}"),
     user_id: str = typer.Option(..., "--user", "-u", help="User UUID"),
     delay: int = typer.Option(0, "--delay", "-d", help="Minutes to delay before task is due"),
+    local: bool = typer.Option(False, "--local", "-L", help="Target local docker-compose DB instead of remote"),
 ):
     """Enqueue a one-off task for a user (reading_summary, dreaming, news, etc.)."""
+    _set_local(local)
     if task_type not in _VALID_TASK_TYPES:
         _con.print(f"[red]Invalid task type '{task_type}'. Choose from: {', '.join(_VALID_TASK_TYPES)}[/red]")
         raise typer.Exit(1)
@@ -804,6 +883,235 @@ async def _heal_jobs():
 
 
 @admin_app.command("heal-jobs")
-def heal_jobs():
+def heal_jobs(
+    local: bool = typer.Option(False, "--local", "-L", help="Target local docker-compose DB instead of remote"),
+):
     """Fix reminder cron jobs that hardcode a URL instead of using the GUC."""
+    _set_local(local)
     _run(_heal_jobs())
+
+
+# ── Env ──────────────────────────────────────────────────────────────────────
+
+
+def _parse_env_keys(env_path: str) -> list[str]:
+    """Parse keys from a .env file, skipping comments and blank lines."""
+    keys = []
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key:
+                keys.append(key)
+    return keys
+
+
+def _parse_kustomization_literals(path: str) -> list[str]:
+    """Parse configMapGenerator literal keys from a kustomization.yaml."""
+    import pathlib
+    p = pathlib.Path(path)
+    if not p.exists():
+        return []
+    keys = []
+    in_literals = False
+    for line in p.read_text().splitlines():
+        if "literals:" in line and not line.strip().startswith("#"):
+            in_literals = True
+            continue
+        if in_literals:
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                item = stripped[2:].split("=", 1)[0].strip().split("#")[0].strip()
+                if item:
+                    keys.append(item)
+            elif stripped.startswith("#"):
+                continue
+            elif stripped:
+                in_literals = False
+    return keys
+
+
+def _parse_secret_keys(path: str) -> list[str]:
+    """Parse p8-app-secrets stringData keys from secrets.yaml."""
+    import pathlib
+    p = pathlib.Path(path)
+    if not p.exists():
+        return []
+    keys = []
+    in_app_secrets = False
+    in_stringdata = False
+    for line in p.read_text().splitlines():
+        if "name:" in line and "p8-app-secrets" in line:
+            in_app_secrets = True
+            continue
+        if line.strip() == "---":
+            in_app_secrets = False
+            in_stringdata = False
+            continue
+        if in_app_secrets and line.startswith("stringData:"):
+            in_stringdata = True
+            continue
+        if in_stringdata:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if line[0].isalpha():
+                in_stringdata = False
+                in_app_secrets = False
+                continue
+            key = stripped.split(":")[0].strip()
+            if key:
+                keys.append(key)
+    return keys
+
+
+@admin_app.command("env")
+def env_check():
+    """Validate that every .env key is covered by K8s manifests."""
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+
+    env_file = repo_root / ".env"
+    if not env_file.exists():
+        env_file = repo_root / ".env.example"
+    if not env_file.exists():
+        _con.print("[red]No .env or .env.example found at repo root[/red]")
+        raise typer.Exit(2)
+
+    _con.print(f"Using env file: {env_file.relative_to(repo_root)}")
+    env_keys = _parse_env_keys(str(env_file))
+    _con.print(f"Found {len(env_keys)} keys in env file")
+
+    base_kust = repo_root / "manifests/application/p8-stack/base/kustomization.yaml"
+    hetzner_kust = repo_root / "manifests/application/p8-stack/overlays/hetzner/kustomization.yaml"
+    secrets_file = repo_root / "manifests/application/p8-stack/overlays/hetzner/secrets.yaml"
+
+    configmap_keys = _parse_kustomization_literals(str(base_kust)) + _parse_kustomization_literals(str(hetzner_kust))
+    _con.print(f"Found {len(configmap_keys)} configMap literals")
+
+    secret_keys = _parse_secret_keys(str(secrets_file))
+    _con.print(f"Found {len(secret_keys)} secret keys in p8-app-secrets")
+
+    # Dev-only keys intentionally not in K8s
+    dev_only = {"P8_DATABASE_URL", "P8_KMS_LOCAL_KEYFILE"}
+    covered = set(configmap_keys) | set(secret_keys)
+
+    gaps = []
+    skipped = []
+    for key in env_keys:
+        if key in dev_only:
+            skipped.append(key)
+        elif key not in covered:
+            gaps.append(key)
+
+    _con.print()
+    if skipped:
+        _con.print(f"Skipped {len(skipped)} dev-only key(s): {', '.join(skipped)}")
+
+    if not gaps:
+        _con.print("[green]All env keys are covered by K8s manifests.[/green]")
+    else:
+        _con.print(f"[red bold]GAPS: {len(gaps)} env key(s) not found in configMap or secrets:[/red bold]")
+        for g in gaps:
+            _con.print(f"  - {g}")
+        raise typer.Exit(1)
+
+
+# ── Sync Secrets ─────────────────────────────────────────────────────────────
+
+
+@admin_app.command("sync-secrets")
+def sync_secrets(
+    bao_addr: str = typer.Option("http://127.0.0.1:8200", "--addr", "-a", envvar="BAO_ADDR",
+                                  help="OpenBao address"),
+    bao_token: Optional[str] = typer.Option(None, "--token", "-t", envvar="BAO_TOKEN",
+                                             help="OpenBao token (falls back to VAULT_TOKEN)"),
+):
+    """Sync p8-app-secrets from .env into OpenBao KV v2."""
+    import pathlib
+    import shutil
+    import subprocess
+
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+
+    token = bao_token or os.environ.get("VAULT_TOKEN", "")
+    if not token:
+        _con.print("[red]BAO_TOKEN (or VAULT_TOKEN) must be set[/red]")
+        raise typer.Exit(1)
+
+    env_file = repo_root / ".env"
+    if not env_file.exists():
+        _con.print("[red]No .env found at repo root[/red]")
+        raise typer.Exit(1)
+
+    secrets_file = repo_root / "manifests/application/p8-stack/overlays/hetzner/secrets.yaml"
+    allowed_keys = set(_parse_secret_keys(str(secrets_file)))
+    _con.print(f"Allowed keys from p8-app-secrets: {len(allowed_keys)}")
+
+    # Read .env and collect matching key=value pairs
+    kv_pairs = []
+    kv_dict = {}
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key in allowed_keys:
+            kv_pairs.append(f"{key}={value}")
+            kv_dict[key] = value
+
+    if not kv_pairs:
+        _con.print("No matching keys found in .env — nothing to sync.")
+        return
+
+    _con.print(f"Syncing {len(kv_pairs)} key(s) to OpenBao at {bao_addr}...")
+
+    use_cli = shutil.which("bao") is not None
+
+    if use_cli:
+        _con.print("Using: bao CLI")
+        env = {**os.environ, "BAO_ADDR": bao_addr, "BAO_TOKEN": token}
+        subprocess.run(["bao", "kv", "put", "secret/p8/app-secrets"] + kv_pairs,
+                        env=env, check=True)
+    else:
+        import json as _json
+        import urllib.request
+        import urllib.error
+
+        _con.print("Using: HTTP API (bao CLI not found)")
+
+        # Enable KV v2
+        try:
+            req = urllib.request.Request(
+                f"{bao_addr}/v1/sys/mounts/secret",
+                data=_json.dumps({"type": "kv", "options": {"version": "2"}}).encode(),
+                headers={"X-Vault-Token": token, "Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req)
+            _con.print("Enabled KV v2 engine at secret/")
+        except urllib.error.HTTPError as e:
+            if e.code == 400:
+                _con.print("KV v2 engine already mounted at secret/")
+            else:
+                _con.print(f"Mount check returned HTTP {e.code} (continuing)")
+
+        # Write secrets
+        payload = _json.dumps({"data": kv_dict}).encode()
+        req = urllib.request.Request(
+            f"{bao_addr}/v1/secret/data/p8/app-secrets",
+            data=payload,
+            headers={"X-Vault-Token": token, "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            _con.print(f"[red]OpenBao returned HTTP {e.code}[/red]")
+            raise typer.Exit(1)
+
+    _con.print(f"[green]Done. Wrote {len(kv_pairs)} key(s) to secret/p8/app-secrets[/green]")

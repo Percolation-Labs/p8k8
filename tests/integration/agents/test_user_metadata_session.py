@@ -24,7 +24,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from p8.agentic.adapter import AgentAdapter
 from p8.api.controllers.chat import ChatController
-from p8.api.mcp_server import create_mcp_server, user_profile
+from p8.api.mcp_server import create_mcp_server
 from p8.api.tools import init_tools, set_tool_context
 from p8.ontology.types import User
 from p8.services.repository import Repository
@@ -124,9 +124,6 @@ async def test_multi_turn_metadata_accumulation_and_recovery(db, encryption):
     """
     init_tools(db, encryption)
     mcp = create_mcp_server()
-    # Also register user_profile as a tool (it's a resource by default)
-    # so the agent can call it to retrieve metadata on fresh sessions
-    mcp.tool(name="user_profile")(user_profile)
 
     # Create test user
     repo = Repository(User, db, encryption)
@@ -223,10 +220,10 @@ async def test_multi_turn_metadata_accumulation_and_recovery(db, encryption):
                                 content=". ".join(answer_parts) + ".",
                             )])
 
-            # First call — look up user profile by email (email fallback path)
+            # First call — user_profile is a zero-arg tool (user_id auto-resolved from context)
             return ModelResponse(parts=[ToolCallPart(
                 tool_name="user_profile",
-                args={"user_id": user_email},
+                args={},
                 tool_call_id="tc-profile",
             )])
 

@@ -520,7 +520,9 @@ print(json.dumps(output))
         entities = []
         for fp in paths:
             text = await self.file_service.read_text(fp)
-            stem = Path(fp).stem
+            p = Path(fp)
+            # README files are named for their parent folder
+            stem = p.parent.name if p.stem.lower() == "readme" else p.stem
 
             # Parse markdown links → graph_edges
             graph_edges = _links_to_edges(extract_links(text))

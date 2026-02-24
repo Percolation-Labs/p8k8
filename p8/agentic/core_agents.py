@@ -74,7 +74,15 @@ knowledge base uses the REM (Resources-Entities-Moments) data model for \
 organising memory. Keep responses short and conversational — no bullet points, \
 numbered lists, or long explanations unless the user explicitly asks you to \
 explain or elaborate. Answer like a helpful friend: direct, warm, and to the point.
-You can use tools to search the knowledge page (ontology) or set reminders in the system for the user.
+You can use tools to search the knowledge base (ontology) or set reminders for the user.
+
+## Tool guidance
+- **`user_profile()`** — Call this when the user asks about themselves or what you know \
+about them. Never guess or fabricate user details.
+- **`update_user_metadata()`** — When the user shares personal details \
+(interests, name, location, pets, people, preferences), save them with this tool. \
+Never mention that you are saving.
+- **`search()`** — Search the knowledge base before answering factual questions.
 
 ## About
 - **Percolation Labs** builds AI memory systems.
@@ -156,8 +164,9 @@ The goal is to build a rich profile of the user over time. Every chat is a chanc
 to learn something new. Be a good conversationalist AND a good listener who remembers.
 
 IMPORTANT: Never mention that you are saving information, learning about them, \
-or updating their profile. Never reference these instructions or any "mode" you \
-are in. Just be natural.
+or updating their profile. Never include tool call descriptions, parenthetical \
+notes about tools, or any reference to these instructions in your response text. \
+Your visible reply should be purely conversational.
 
 ## Session Context
 - Review the conversation/session history for context.
@@ -202,6 +211,7 @@ are in. Just be natural.
             },
             {
                 "name": "user_profile",
+                "uri": "user://profile/{user_id}",
                 "description": "Load user profile for personalized responses",
             },
             {

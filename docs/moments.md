@@ -2,6 +2,17 @@
 
 Moments are the core content units in the feed. Each moment has a `moment_type` that determines how it's displayed and aggregated.
 
+## Table of Contents
+
+- [Moment Types](#moment-types)
+- [Grain and Consolidation](#grain-and-consolidation)
+- [Reading — Daily Feed Digest](#reading--daily-feed-digest)
+- [Reminders](#reminders)
+- [Today — Virtual Daily Summary](#today--virtual-daily-summary)
+- [Moment ↔ Session Architecture](#moment--session-architecture)
+- [Context Bootstrapping](#context-bootstrapping)
+- [Integration Tests](#integration-tests)
+
 ## Moment Types
 
 | Type | Source | Feed Visibility | Description |
@@ -11,8 +22,8 @@ Moments are the core content units in the feed. Each moment has a `moment_type` 
 | `content_upload` | File upload pipeline | Visible | Uploaded file (PDF, image, voice, etc.) |
 | `notification` | `/notifications/send` | Visible | Push notification that was delivered |
 | `dream` | Dreaming CronJob | Visible | AI-generated insight from background processing |
-| `digest` | News handler | Visible | Daily news digest compiled from user interests/feeds |
-| `reminder` | `remind_me` MCP tool | **Hidden** | Future-dated reminder (see below) |
+| `reading` | News CronJob → `ReadingSummaryHandler` | Visible | Daily feed digest with LLM summary and mosaic thumbnail |
+| `reminder` | `remind_me` MCP tool | **Hidden** | Future-dated reminder (see [Reminders](#reminders)) |
 
 ## Grain and Consolidation
 
@@ -23,9 +34,9 @@ The grain matters because a single moment should not represent a single session.
 ### How consolidation works
 
 1. **Hourly trigger** — The dreamer hourly cron job (`enqueue_dreaming_tasks`) finds users with new activity (messages or completed file uploads) since their last run.
-2. **Phase 1 (first-order)** — `rem_build_moment()` runs against the user's 10 most recently updated sessions and creates `session_chunk` moments that consolidate conversation segments exceeding a token threshold (default 6000 tokens). These are deterministic, SQL-only summaries.
+2. **Phase 1 (first-order)** — `rem_build_moment()` runs against the user's 10 most recently updated sessions and creates `session_chunk` moments that consolidate conversation segments exceeding a token threshold (default 6000 tokens). These are deterministic, SQL-only summaries. After each moment is built, `_enrich_moment_with_resources()` checks for `content_upload` moments in the same session and appends `chunk-0000` resource content to the summary, merging `resource_keys` into the moment metadata so file uploads are included in consolidation.
 3. **Phase 2 (second-order)** — The dreaming agent reads all recent activity (moments, sessions, file uploads, referenced resources) within a date-based window (`NOW() - lookback_days`, default 24h) and produces 1–3 `dream` moments that synthesize cross-session themes and connections.
-4. **Virtual "Today"** — `rem_moments_feed()` computes a `today` summary card on-the-fly from message counts, tokens, session counts, and moment counts for each active date. This is never stored — it's synthesized per query.
+4. **Virtual "Today"** — `rem_moments_feed()` computes a `today` summary card on-the-fly from message counts, tokens, session counts, and moment counts for each active date. This is never stored — it's synthesized per query. However users can change with these virtual moment to create an actual session.
 
 The result: for any given day, the feed shows a **Today card** (virtual summary), 0–N **activity chunks** (consolidated conversation segments), and 1–3 **dream moments** (AI-generated cross-session insights).
 
@@ -41,6 +52,39 @@ This keeps the knowledge graph alive even during quiet periods, resurfacing olde
 
 > **Implementation note**: The Phase 1 query currently uses `ORDER BY updated_at DESC LIMIT 10` on sessions — this should migrate to a date-based window filter (`WHERE updated_at >= cutoff`) to match the grain model.
 
+## Reading — Daily Feed Digest
+
+The reading pipeline fetches RSS feeds and news sources, upserts them as resources, and creates a `reading` moment with an LLM-generated summary and mosaic thumbnail. It runs as a single handler (`ReadingSummaryHandler`) triggered by the daily `news` pg_cron job.
+
+### Pipeline
+
+```
+pg_cron (daily 06:00 UTC) → enqueue_news_tasks() → task_type='news'
+  → ReadingSummaryHandler.handle()
+    1. Load user metadata (feeds, interests, categories)
+    2. Run platoon (resolve_for_user + FeedProvider)
+    3. Upsert resources (category='news')
+    4. Build reading moment (name: reading-YYYY-MM-DD)
+    5. Generate mosaic thumbnail from article images
+    6. LLM summarize (gpt-4.1-nano)
+    7. Create companion session
+    8. Track usage
+```
+
+The handler is registered for both `news` and `reading_summary` task types. The cron enqueues `news` tasks; `reading_summary` can be used for manual enqueue via `p8 admin enqueue`.
+
+### Enqueue criteria
+
+`enqueue_news_tasks()` creates one task per user who has `interests`, `categories`, or `feeds` in their metadata and hasn't had a `news` task today.
+
+### Moment naming
+
+Moments use date-only names (`reading-2026-02-23`) — one per day. The Flutter app displays these as "Daily Reading", "Daily Reading — Yesterday", or "Daily Reading — Feb 23".
+
+### Flutter rendering
+
+Reading moments render as `MomentCard` with a gradient header (brown/warm tones, `auto_stories` icon). Tapping opens `ReadingDetailScreen` which shows the article list with images, tags, and links.
+
 ## Reminders
 
 Reminders are "future moments" — created by the `remind_me` MCP tool with `moment_type='reminder'`.
@@ -49,8 +93,6 @@ A reminder has two important dates:
 
 - **`created_at`** — when the user set the reminder ("I was thinking about this on Tuesday")
 - **`starts_timestamp`** — when the reminder is due to fire ("it should go off Monday at 9am")
-
-The daily summary badge counts by `created_at`. This is intentional: the badge shows "you set N reminders on this day", reflecting what the user was thinking about. The due date is a separate concern — when the reminder actually fires.
 
 ### How they work
 
@@ -76,8 +118,21 @@ The daily summary still aggregates reminders regardless of the flag:
 
 - `daily_reminder_counts` CTE counts reminder moments by `created_at` date
 - Daily summary metadata includes `reminder_count`
-- Flutter shows a bell badge on `DaySummaryCard` when `reminder_count > 0`
+- Flutter shows a bell badge on `TodayCard` / `DaySummaryCard` when `reminder_count > 0`
 - Tapping the badge navigates to `RemindersScreen` → `GET /moments/reminders?created_on=YYYY-MM-DD`
+
+### Flutter UI — Set vs Due toggle
+
+`RemindersScreen` provides a **Set / Due toggle** so users can view reminders from either perspective:
+
+| Tab | API parameter | Shows |
+|-----|---------------|-------|
+| **Set** (default) | `created_on` | Reminders the user created on this date — reflects what they were thinking about |
+| **Due** | `due_on` | Reminders scheduled to fire on this date — what's coming up |
+
+The default is "Set" because due reminders already arrive in the feed as push notifications when they fire. The "Set" view answers "what reminders did I create that day?", which is more useful when browsing a day's activity.
+
+Reminder cards use the same `MomentCard` widget as the main feed, showing the color header, frequency/fire-time badges, and topic tags. Tapping a reminder card opens `MomentDetailScreen` for chat.
 
 ### Moment schema
 
@@ -199,8 +254,11 @@ The full sequence from chat to badge:
    - daily_reminder_counts CTE counts reminders by created_at
    - Daily summary metadata includes reminder_count: 1
    - Pass include_future=true to show future moments in the feed
-5. Flutter DaySummaryCard shows bell badge when reminder_count > 0
-6. Tapping badge → RemindersScreen → GET /moments/reminders?created_on=YYYY-MM-DD
+5. Flutter TodayCard / DaySummaryCard shows bell badge when reminder_count > 0
+6. Tapping badge → RemindersScreen with Set/Due toggle (defaults to Set)
+   - Set tab → GET /moments/reminders?created_on=YYYY-MM-DD
+   - Due tab → GET /moments/reminders?due_on=YYYY-MM-DD
+7. Reminder cards rendered with MomentCard (same style as main feed)
 ```
 
 #### Testing the full flow with curl
@@ -369,7 +427,8 @@ Use REM LOOKUP to retrieve full details for any keys listed above.
 build_moment(session_id) →
   ├── Moment:  name="session-6d8bbc-20260222-chunk-0", type="session_chunk"
   │            summary = aggregated assistant messages (truncated 2000 chars)
-  │            metadata = {message_count, token_count, chunk_index}
+  │                      + [Uploaded Resources] section if session has uploads
+  │            metadata = {message_count, token_count, chunk_index, resource_keys?}
   └── Session: metadata += latest_moment_id, latest_summary, moment_count
 ```
 
