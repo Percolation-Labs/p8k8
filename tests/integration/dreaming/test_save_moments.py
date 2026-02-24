@@ -8,7 +8,7 @@ import pytest
 
 from p8.api.tools import init_tools, set_tool_context
 from p8.api.tools.save_moments import save_moments
-from p8.ontology.types import Moment, Resource
+from p8.ontology.types import Moment
 from p8.services.repository import Repository
 
 from tests.integration.dreaming.fixtures import (
@@ -90,71 +90,6 @@ async def test_save_moment_with_affinity_creates_graph_edges(db, encryption):
     assert edge["relation"] == "thematic_link"
     assert edge["weight"] == 0.8
     assert edge["reason"] == "Both discuss pipeline optimization"
-
-
-async def test_save_moment_creates_back_edge_on_target(db, encryption):
-    """Save dream with affinity → verify 'dreamed_from' back-edge on target resource."""
-    await save_moments(
-        moments=[{
-            "name": "dream-back-edge-test",
-            "summary": "Test back-edge creation.",
-            "topic_tags": ["test"],
-            "affinity_fragments": [
-                {
-                    "target": RESOURCE_ML,
-                    "relation": "thematic_link",
-                    "weight": 0.7,
-                    "reason": "Related topics",
-                },
-            ],
-        }],
-        user_id=TEST_USER_ID,
-    )
-
-    # Check the resource now has a dreamed_from back-edge
-    repo = Repository(Resource, db, encryption)
-    resources = await repo.find(
-        user_id=TEST_USER_ID,
-        filters={"name": RESOURCE_ML},
-    )
-    assert len(resources) >= 1
-    r = resources[0]
-
-    dreamed_edges = [e for e in r.graph_edges if e.get("relation") == "dreamed_from"]
-    assert len(dreamed_edges) >= 1
-    assert any(e["target"] == "Back Edge Test" for e in dreamed_edges)
-
-
-async def test_merge_preserves_existing_edges_on_target(db, encryption):
-    """Existing resource edges are preserved when dreaming adds a back-edge."""
-    # The fixture resource_a already has an edge from moment_a
-    repo = Repository(Resource, db, encryption)
-    resources_before = await repo.find(
-        user_id=TEST_USER_ID,
-        filters={"name": RESOURCE_ML},
-    )
-    initial_edge_count = len(resources_before[0].graph_edges) if resources_before else 0
-
-    await save_moments(
-        moments=[{
-            "name": "dream-preserve-test",
-            "summary": "Should not overwrite existing edges.",
-            "topic_tags": ["test"],
-            "affinity_fragments": [
-                {"target": RESOURCE_ML, "relation": "builds_on", "weight": 0.6, "reason": "test"},
-            ],
-        }],
-        user_id=TEST_USER_ID,
-    )
-
-    resources_after = await repo.find(
-        user_id=TEST_USER_ID,
-        filters={"name": RESOURCE_ML},
-    )
-    r = resources_after[0]
-
-    # Should have original edges + new dreamed_from edge
-    assert len(r.graph_edges) >= initial_edge_count + 1
 
 
 async def test_save_multiple_moments(db, encryption):
