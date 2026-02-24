@@ -1310,6 +1310,7 @@ real_moments AS (
             'previous_moment_keys', mo.previous_moment_keys,
             'topic_tags', mo.topic_tags,
             'entities', mo.present_persons,
+            'category', mo.category,
             'moment_metadata', mo.metadata,
             'session_name', s.name,
             'session_description', s.description,
@@ -1321,7 +1322,7 @@ real_moments AS (
       AND (p_user_id IS NULL OR mo.user_id = p_user_id)
       AND mo.moment_type != 'session_chunk'
       AND (mo.created_at AT TIME ZONE 'UTC')::date IN (SELECT d FROM active_dates)
-      AND (p_include_future OR mo.starts_timestamp IS NULL OR mo.starts_timestamp <= CURRENT_TIMESTAMP)
+      AND (p_include_future OR mo.moment_type = 'reminder' OR mo.starts_timestamp IS NULL OR mo.starts_timestamp <= CURRENT_TIMESTAMP)
 ),
 
 -- 6. Combined feed — daily summaries sort before real moments on the same date
