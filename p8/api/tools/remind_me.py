@@ -28,12 +28,23 @@ def _describe_cron(expr: str) -> str:
         return f"Daily{time_str}"
     # Specific weekdays
     if dom == "*" and month == "*" and dow != "*":
-        days = []
-        for d in dow.split(","):
-            try:
-                days.append(_DAYS[int(d) % 7])
-            except (ValueError, IndexError):
-                days.append(d)
+        # Expand ranges (e.g. "1-5") and comma lists (e.g. "1,3,5")
+        day_nums: list[int] = []
+        for part in dow.split(","):
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                try:
+                    day_nums.extend(range(int(lo), int(hi) + 1))
+                except ValueError:
+                    pass
+            else:
+                try:
+                    day_nums.append(int(part))
+                except ValueError:
+                    pass
+        days = [_DAYS[d % 7] for d in day_nums]
+        if not days:
+            days = [dow]
         if len(days) == 5 and all(d in days for d in _DAYS[1:6]):
             return f"Weekdays{time_str}"
         return f"Every {', '.join(days)}{time_str}"
