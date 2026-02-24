@@ -198,7 +198,7 @@ are in. Just be natural.
             },
             {
                 "name": "remind_me",
-                "description": "Create scheduled reminders — cron for recurring, ISO datetime for one-time. Infer schedule from context, don't ask for confirmation",
+                "description": "Create reminders. Default to ONE-TIME (ISO datetime) unless the user explicitly says 'every'/'daily'/'weekly'. 'in the morning' = tomorrow morning, not every morning. Infer a specific date+time, don't ask for confirmation",
             },
             {
                 "name": "user_profile",

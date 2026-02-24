@@ -18,16 +18,21 @@ async def remind_me(
 ) -> dict[str, Any]:
     """Create a scheduled reminder that triggers a push notification.
 
-    One-time reminders use an ISO datetime string (e.g. "2025-03-01T09:00:00").
+    IMPORTANT — default to ONE-TIME reminders unless the user explicitly says
+    "every", "daily", "weekly", "each", or similar recurring language.
+    Examples:
+      "remind me in the morning" → one-time, tomorrow morning (ISO datetime)
+      "remind me every morning"  → recurring cron (0 7 * * *)
+      "remind me on Friday"      → one-time, next Friday (ISO datetime)
+      "remind me every Friday"   → recurring cron (0 9 * * 5)
+
+    One-time reminders use an ISO datetime string (e.g. "2026-03-01T09:00:00").
     Recurring reminders use a cron expression (e.g. "0 9 * * 1" for every Monday at 9am).
 
-    Each reminder becomes a pg_cron job that calls /notifications/send directly.
-    A moment_type='reminder' moment is also created to track the reminder in the feed.
-
     Args:
-        name: Short name for the reminder (e.g. "take-vitamins")
+        name: Short kebab-case name for the reminder (e.g. "take-vitamins")
         description: What to remind the user about
-        crontab: Cron expression for recurring, or ISO datetime for one-time
+        crontab: ISO datetime for one-time, or cron expression for recurring
         tags: Optional tags for categorization
 
     Returns:
@@ -126,6 +131,7 @@ async def remind_me(
     moment = Moment(
         name=name,
         moment_type="reminder",
+        category="reminder",
         summary=description,
         starts_timestamp=next_fire,
         topic_tags=tags or [],

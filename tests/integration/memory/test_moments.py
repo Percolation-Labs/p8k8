@@ -354,7 +354,7 @@ async def test_content_upload_moment_in_feed(db, encryption):
 
     # Query moments table directly — simulates what load_context would find
     moment_repo = Repository(Moment, db, encryption)
-    moments = await moment_repo.find(filters={"moment_type": "content_upload"})
+    moments = await moment_repo.find(filters={"moment_type": "content_upload", "name": "upload-q4-report"})
     assert len(moments) >= 1
     m = moments[0]
     assert m.name == "upload-q4-report"
