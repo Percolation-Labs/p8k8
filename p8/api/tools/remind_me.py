@@ -9,6 +9,46 @@ from uuid import uuid4
 
 from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 
+_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _describe_cron(expr: str) -> str:
+    """Human-readable label for common cron patterns."""
+    parts = expr.strip().split()
+    if len(parts) != 5:
+        return f"Custom ({expr})"
+    minute, hour, dom, month, dow = parts
+
+    time_str = ""
+    if hour != "*" and minute != "*":
+        time_str = f" at {int(hour):02d}:{int(minute):02d}"
+
+    # Every day
+    if dom == "*" and month == "*" and dow == "*":
+        return f"Daily{time_str}"
+    # Specific weekdays
+    if dom == "*" and month == "*" and dow != "*":
+        days = []
+        for d in dow.split(","):
+            try:
+                days.append(_DAYS[int(d) % 7])
+            except (ValueError, IndexError):
+                days.append(d)
+        if len(days) == 5 and all(d in days for d in _DAYS[:5]):
+            return f"Weekdays{time_str}"
+        return f"Every {', '.join(days)}{time_str}"
+    # Specific day of month
+    if dom != "*" and month == "*" and dow == "*":
+        return f"Monthly on the {_ordinal(int(dom))}{time_str}"
+
+    return f"Custom ({expr})"
+
+
+def _ordinal(n: int) -> str:
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{['th','st','nd','rd'][min(n % 10, 4)] if n % 10 < 4 else 'th'}"
+
 
 async def remind_me(
     name: str,
@@ -57,6 +97,7 @@ async def remind_me(
         # Convert to cron: minute hour day month *
         cron_expr = f"{fire_at.minute} {fire_at.hour} {fire_at.day} {fire_at.month} *"
         recurrence = "once"
+        frequency = f"Once — {fire_at.strftime('%b %d at %H:%M')}"
         next_fire = fire_at
     except ValueError:
         # Cron expression (recurring)
@@ -64,6 +105,7 @@ async def remind_me(
             return {"status": "error", "error": f"Invalid crontab expression: {crontab}"}
         cron_expr = crontab
         recurrence = "recurring"
+        frequency = _describe_cron(crontab)
         cron = croniter(crontab, now)
         next_fire = cron.get_next(datetime)
         if next_fire.tzinfo is None:
@@ -143,7 +185,7 @@ async def remind_me(
             "job_name": job_name,
             "schedule": cron_expr,
             "recurrence": recurrence,
-            "next_fire": next_fire.isoformat(),
+            "frequency": frequency,
         },
     )
     [saved] = await repo.upsert(moment)
@@ -152,9 +194,7 @@ async def remind_me(
         "status": "success",
         "reminder_id": str(reminder_id),
         "moment_id": str(saved.id),
-        "job_name": job_name,
         "name": name,
-        "schedule": cron_expr,
-        "next_fire": next_fire.isoformat(),
+        "frequency": frequency,
         "recurrence": recurrence,
     }
