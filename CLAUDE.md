@@ -10,8 +10,8 @@ If you follow the instructions to ingest the ontology and the MCP server is enab
 Minimal agentic framework where **ontology is everything**. Every entity — models, agents, evaluators, tools — is a row in the `schemas` table.
 
 - **p8/ontology/** — Pydantic models -> JSON Schema -> Postgres tables -> agents
-- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content, queue, usage, web_search
-- **p8/agentic/** — pydantic-ai agent adapter, streaming, delegation, routing
+- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content, queue, usage, web_search, files, graph, notifications, stripe, providers
+- **p8/agentic/** — pydantic-ai agent adapter, agent_schema, streaming, delegation, routing, core_agents, otel
 - **p8/api/** — FastAPI + FastMCP server, AG-UI chat, CLI (Typer)
 
 ## Key Design Rules
@@ -29,17 +29,17 @@ Minimal agentic framework where **ontology is everything**. Every entity — mod
 ```
 p8/
 ├── ontology/       # CoreModel (base.py), built-in types (types.py), verify
-├── services/       # database/, repository, embeddings, encryption, kms, memory, content, queue, usage
-├── agentic/        # adapter, streaming, delegate, routing, types
+├── services/       # database/, repository, embeddings, encryption, kms, memory, content, queue, usage, files, graph, notifications, stripe, providers
+├── agentic/        # adapter, agent_schema, streaming, delegate, routing, core_agents, types, otel
 ├── api/
 │   ├── main.py         # FastAPI app factory + lifespan
-│   ├── mcp_server.py   # FastMCP: search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me
+│   ├── mcp_server.py   # FastMCP: search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me + user://profile resource
 │   ├── controllers/    # ChatController (shared API+CLI logic)
 │   ├── routers/        # chat, query, schemas, moments, admin, auth, content, embeddings, resources, notifications, share, payments
-│   ├── tools/          # MCP tool implementations
-│   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments, dream)
-├── workers/        # TieredWorker processor, task handlers (dreaming, file_processing, news, scheduled)
-├── utils/          # Parsing, token estimation, ID generation
+│   ├── tools/          # MCP tool implementations (search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me, save_moments)
+│   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments, dream, admin, db, encryption, mcp, verify-links)
+├── workers/        # TieredWorker processor, task handlers (dreaming, file_processing, news, reading, scheduled)
+├── utils/          # Parsing, token estimation, ID generation, data, links
 ├── settings.py
 sql/
 ├── 01_install_entities.sql  # Entity tables + embeddings tables
@@ -86,6 +86,21 @@ p8 chat [SESSION_ID] [--agent query-agent]
 p8 dream <USER_ID> [--lookback 7] [--allow-empty]
 p8 moments [--type session_chunk]
 p8 moments timeline SESSION_ID
+p8 mcp                                          # Start FastMCP stdio server
+p8 verify-links <PATH> [--check-db]             # Check markdown links
+p8 encryption status                             # KMS/encryption status
+p8 encryption configure <TENANT> <MODE>          # Configure tenant encryption
+p8 encryption test <TENANT> <MODE>               # Test encryption round-trip
+p8 encryption test-isolation                     # Test cross-tenant isolation
+p8 db diff [--remote-url URL]                    # Diff local vs remote schema
+p8 db apply <SQL_FILE> [--target-url URL] [--dry-run]
+
+# Admin (defaults to remote Hetzner via port-forward; use --local for docker-compose)
+p8 admin health [--email PARTIAL] [--user UUID]
+p8 admin queue [--status pending|failed] [--detail] [--type TYPE]
+p8 admin quota [--user UUID] [--reset] [--resource chat_tokens]
+p8 admin enqueue <TASK_TYPE> --user UUID [--delay MINUTES]
+p8 admin heal-jobs                               # Fix stale reminder cron jobs
 ```
 
 ## Settings
@@ -104,7 +119,7 @@ Two deployment recipes exist for the p8 stack:
 - **AWS recipe** (`reminiscent/` repo): SQS queue + KEDA SQS trigger + ExternalSecrets from AWS Parameter Store + S3 native events. Full CDK setup.
 - **Hetzner recipe** (this repo): PostgreSQL queue (`task_queue`) + KEDA postgresql trigger + plain K8s Secrets from `.env`. Lighter weight, no NATS.
 
-**Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled tiered workers (file_processing, dreaming, news, scheduled).
+**Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled tiered workers (file_processing, dreaming, news, reading, scheduled).
 
 ## Default Test User
 

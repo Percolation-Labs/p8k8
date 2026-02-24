@@ -79,7 +79,6 @@ Both APNs and FCM are free and unlimited.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -227,22 +226,52 @@ class NotificationService:
         data: dict | None,
         tenant_id: str | None,
     ) -> None:
-        """Create a Moment with moment_type='notification' so it shows in the feed."""
-        moment_id = uuid4()
+        """Record that a notification fired in the user's feed.
+
+        If the notification originated from a reminder (``data`` contains
+        ``reminder_id``), stamp ``created_at`` on the *existing* reminder
+        moment so it moves to the current date/position in the feed.
+        This works for both one-time and recurring cron reminders —
+        each firing bumps the card to "now".
+
+        For non-reminder notifications, insert a new moment as before.
+        """
         now = datetime.now(timezone.utc)
+        reminder_id = (data or {}).get("reminder_id")
+
+        if reminder_id:
+            # Stamp the fire time onto the original reminder moment
+            updated = await self._db.execute(
+                """
+                UPDATE moments
+                   SET created_at = $1,
+                       updated_at = $1,
+                       starts_timestamp = $1
+                 WHERE metadata ->> 'reminder_id' = $2
+                   AND moment_type = 'reminder'
+                   AND deleted_at IS NULL
+                """,
+                now,
+                str(reminder_id),
+            )
+            # If the reminder moment was found and updated, we're done
+            if updated and updated != "UPDATE 0":
+                return
+
+        # Fallback: non-reminder notification or orphaned reminder_id
         await self._db.execute(
             """
             INSERT INTO moments (id, name, moment_type, summary, starts_timestamp,
                                  ends_timestamp, user_id, tenant_id, metadata)
             VALUES ($1, $2, 'notification', $3, $4, $4, $5, $6, $7)
             """,
-            moment_id,
+            uuid4(),
             title,
             body,
             now,
             user_id,
             tenant_id,
-            json.dumps(data) if data else "{}",
+            data if data else {},
         )
 
     # ------------------------------------------------------------------

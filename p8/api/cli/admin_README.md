@@ -44,6 +44,9 @@ p8 admin enqueue reading_summary --user <UUID>             # Run immediately
 p8 admin enqueue dreaming --user <UUID> --delay 5          # Run in 5 minutes
 p8 admin enqueue news --user <UUID>                        # News digest
 
+# Heal — fix stale reminder cron jobs
+p8 admin heal-jobs                                         # Rewrite hardcoded URLs to use GUC
+
 # Local dev
 p8 admin --local health
 p8 admin --local queue --status failed

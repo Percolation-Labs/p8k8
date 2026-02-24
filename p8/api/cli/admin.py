@@ -790,3 +790,20 @@ def enqueue(
         _con.print(f"[red]Invalid task type '{task_type}'. Choose from: {', '.join(_VALID_TASK_TYPES)}[/red]")
         raise typer.Exit(1)
     _run(_enqueue_task(UUID(user_id), task_type, delay, None))
+
+
+# ── Heal Jobs ────────────────────────────────────────────────────────────────
+
+
+async def _heal_jobs():
+    async with _admin_services() as (db, _enc, _settings, *_rest):
+        from p8.api.main import _heal_reminder_jobs
+
+        await _heal_reminder_jobs(db)
+        _con.print("[green]Reminder jobs healed[/green]")
+
+
+@admin_app.command("heal-jobs")
+def heal_jobs():
+    """Fix reminder cron jobs that hardcode a URL instead of using the GUC."""
+    _run(_heal_jobs())
