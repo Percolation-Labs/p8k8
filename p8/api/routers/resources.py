@@ -27,6 +27,19 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _add_source_url(d: dict) -> dict:
+    """Attach ``source_url`` — a link to the original document if available."""
+    meta = dict(ensure_parsed(d.get("metadata"), default={}) or {})
+    file_id = meta.get("file_id")
+    if file_id:
+        d["source_url"] = f"/content/files/{file_id}"
+    elif (d.get("uri") or "").startswith("http"):
+        d["source_url"] = d["uri"]
+    else:
+        d["source_url"] = None
+    return d
+
+
 async def _update_reading_mosaic(
     items: list[dict], moment_id: UUID, db: Database
 ) -> None:
@@ -310,6 +323,43 @@ async def rate_resource(
     return entity.model_dump(mode="json")
 
 
+@router.get("/by-name/{name}")
+async def get_resource_by_name(
+    name: str,
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Resolve a resource by its entity key (name).
+
+    Internal link shorthand: clients use `resource://entity-key` URIs
+    (e.g. in dream summaries) which resolve to this endpoint.
+    The Flutter app parses these URIs and calls GET /resources/by-name/{key}
+    to fetch the resource, then displays it in a detail sheet.
+    """
+    # Try as UUID first (resource IDs are unique and preferred for links)
+    resource_id = None
+    try:
+        resource_id = UUID(name)
+    except (ValueError, AttributeError):
+        pass
+
+    if resource_id is None:
+        # Fall back to kv_store entity_key lookup
+        row = await db.fetchrow(
+            "SELECT entity_id FROM kv_store WHERE entity_key = $1 AND entity_type = 'resources'",
+            name,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        resource_id = row["entity_id"]
+
+    repo = Repository(Resource, db, encryption)
+    entity = await repo.get(resource_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return _add_source_url(entity.model_dump(mode="json"))
+
+
 @router.get("/{resource_id}")
 async def get_resource(
     resource_id: UUID,
@@ -321,7 +371,7 @@ async def get_resource(
     entity = await repo.get(resource_id)
     if not entity:
         raise HTTPException(status_code=404, detail="Resource not found")
-    return entity.model_dump(mode="json")
+    return _add_source_url(entity.model_dump(mode="json"))
 
 
 @router.get("/")
@@ -379,5 +429,6 @@ async def list_resources(
         d = dict(r)
         res_meta = dict(ensure_parsed(d.get("metadata"), default={}) or {})
         d["bookmarked"] = uid in (res_meta.get("bookmarked_by") or []) if uid else False
+        _add_source_url(d)
         results.append(d)
     return results

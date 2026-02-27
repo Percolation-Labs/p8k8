@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from p8.ontology.types import Message, Moment, Session
@@ -154,11 +155,25 @@ class MemoryService:
             return None
         return self._moment_from_row(row)
 
-    async def build_today_summary(self, *, user_id: UUID | None = None) -> dict | None:
+    @staticmethod
+    def daily_session_id(user_id: UUID | None, d: "date | None" = None) -> UUID:
+        """Deterministic session UUID for a (user, date) pair.
+
+        Matches SQL: rem_daily_session_id(user_id, date)
+        which calls p8_deterministic_id('sessions', 'daily-' || date, user_id).
+        """
+        from datetime import date as _date
+
+        from p8.ontology.base import deterministic_id
+
+        d = d or _date.today()
+        return deterministic_id("sessions", f"daily-{d}", user_id)
+
+    async def build_today_summary(self, *, user_id: UUID | None = None) -> dict:
         """Virtual 'today' moment — delegates to rem_moments_feed().
 
-        Fetches the most recent daily_summary from the existing SQL function
-        and returns it in the expected dict shape, or None if no activity today.
+        Always returns a dict with at least ``session_id`` so the client
+        can open today's chat even before any activity exists.
         """
         from datetime import date
 
@@ -169,6 +184,7 @@ class MemoryService:
                 return {
                     "name": "today",
                     "moment_type": "today_summary",
+                    "session_id": str(r["session_id"]),
                     "summary": r.get("summary", ""),
                     "metadata": {
                         "message_count": meta.get("message_count", 0),
@@ -177,7 +193,19 @@ class MemoryService:
                         "sessions": meta.get("sessions", []),
                     },
                 }
-        return None
+        # No activity yet — return empty summary with deterministic session_id
+        return {
+            "name": "today",
+            "moment_type": "today_summary",
+            "session_id": str(self.daily_session_id(user_id)),
+            "summary": "Today: 0 messages across 0 session(s), 0 tokens. 0 moment(s).",
+            "metadata": {
+                "message_count": 0,
+                "total_tokens": 0,
+                "moment_count": 0,
+                "sessions": [],
+            },
+        }
 
     # ------------------------------------------------------------------
     # Message persistence
