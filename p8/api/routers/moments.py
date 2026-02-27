@@ -290,11 +290,15 @@ async def search_moments(
                 ids.append(d["id"])
         return ids
 
+    # Exclude session_chunk from search — users want dreams, readings, uploads, not chat logs
+    _EXCLUDE_FILTER = "AND moment_type != 'session_chunk'"
+
     # 1. Tag match — if the query looks like tags, try direct topic_tags overlap
     assert db.pool is not None
     tag_results = await db.pool.fetch(
         "SELECT * FROM moments "
         "WHERE deleted_at IS NULL "
+        f"  {_EXCLUDE_FILTER} "
         "  AND ($1::uuid IS NULL OR user_id IS NULL OR user_id = $1) "
         "  AND topic_tags && string_to_array($2, ',')::text[] "
         "ORDER BY starts_timestamp DESC NULLS LAST "
@@ -322,6 +326,7 @@ async def search_moments(
                 if ids:
                     rows = await db.pool.fetch(
                         "SELECT * FROM moments WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL "
+                        f"{_EXCLUDE_FILTER} "
                         "ORDER BY starts_timestamp DESC NULLS LAST",
                         ids,
                     )
@@ -338,6 +343,7 @@ async def search_moments(
             if ids:
                 rows = await db.pool.fetch(
                     "SELECT * FROM moments WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL "
+                    f"{_EXCLUDE_FILTER} "
                     "ORDER BY starts_timestamp DESC NULLS LAST",
                     ids,
                 )
