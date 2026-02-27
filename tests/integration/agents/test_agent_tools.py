@@ -702,12 +702,13 @@ async def test_action_tool_elicit():
 
 async def test_user_profile_resource(db, encryption, test_user):
     """user_profile resource loads a user by user_id."""
-    from p8.api.tools import init_tools
+    from p8.api.tools import init_tools, set_tool_context
     from p8.api.mcp_server import user_profile
 
     init_tools(db, encryption)
+    set_tool_context(user_id=USER_ADA)
 
-    result = await user_profile(str(USER_ADA))
+    result = await user_profile()
     data = json.loads(result)
     assert data["name"] == "Ada Lovelace"
     assert data["email"] == "ada@example.com"
