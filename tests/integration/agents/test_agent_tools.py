@@ -715,26 +715,16 @@ async def test_user_profile_resource(db, encryption, test_user):
     assert "computing" in data["tags"]
 
 
-async def test_user_profile_by_email(db, encryption, test_user):
-    """user_profile resource falls back to email lookup."""
-    from p8.api.tools import init_tools
-    from p8.api.mcp_server import user_profile
-
-    init_tools(db, encryption)
-
-    result = await user_profile("ada@example.com")
-    data = json.loads(result)
-    assert data["name"] == "Ada Lovelace"
-
-
 async def test_user_profile_not_found(db, encryption):
-    """user_profile returns error for nonexistent user."""
-    from p8.api.tools import init_tools
+    """user_profile returns error when no user in context."""
+    from p8.api.tools import init_tools, set_tool_context
     from p8.api.mcp_server import user_profile
+    from uuid import uuid4
 
     init_tools(db, encryption)
+    set_tool_context(user_id=uuid4())  # nonexistent user
 
-    result = await user_profile("nonexistent-user")
+    result = await user_profile()
     data = json.loads(result)
     assert "error" in data
 
