@@ -48,8 +48,9 @@ from p8.services.database import Database
 
 logger = logging.getLogger(__name__)
 
-GB = 1024 ** 3
+TB = 1024 ** 4
 
+GB = 1024 ** 3
 
 MB = 1024 ** 2
 
@@ -69,10 +70,10 @@ class PlanLimits:
 
 
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "free":       PlanLimits(50_000,    20 * GB, 60,  2,   12, 20 * MB,  200 * MB,  20_000,     20, 2),
-    "pro":        PlanLimits(100_000,   50 * GB, 120, 5,   12, 100 * MB,    1 * GB,  50_000,    50, 2),
-    "team":       PlanLimits(100_000,  100 * GB, 180, 10,  12, 500 * MB,    5 * GB, 100_000,   100, 5),
-    "enterprise": PlanLimits(250_000,  500 * GB, 360, 999,  6,   1 * GB,   50 * GB, 500_000,   500, 10),
+    "free":       PlanLimits(100_000,    40 * GB, 120,  4,  12, 40 * MB,  400 * MB,  40_000,     40, 4),
+    "pro":        PlanLimits(200_000,   100 * GB, 240, 10,  12, 200 * MB,   2 * GB, 100_000,   100, 4),
+    "team":       PlanLimits(200_000,   200 * GB, 360, 20,  12,   1 * GB,  10 * GB, 200_000,   200, 10),
+    "enterprise": PlanLimits(500_000,   1 * TB, 720, 999,  6,   2 * GB, 100 * GB, 1_000_000, 1000, 20),
 }
 
 # Resources tracked with daily periods instead of monthly.
