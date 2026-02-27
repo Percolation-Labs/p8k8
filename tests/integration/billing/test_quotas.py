@@ -167,10 +167,10 @@ async def test_get_user_plan_cache_invalidation(db):
 
 @pytest.mark.asyncio
 async def test_check_quota_no_usage(db):
-    """No usage row → QuotaStatus(used=0, limit=50000, exceeded=False)."""
+    """No usage row → QuotaStatus(used=0, limit=free chat_tokens, exceeded=False)."""
     uid = uuid4()
     status = await check_quota(db, uid, "chat_tokens", "free")
-    assert status == QuotaStatus(used=0, limit=50_000, exceeded=False)
+    assert status == QuotaStatus(used=0, limit=100_000, exceeded=False)
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_check_quota_after_increment(db):
     await increment_usage(db, uid, "chat_tokens", 5000, "free")
     status = await check_quota(db, uid, "chat_tokens", "free")
     assert status.used == 5000
-    assert status.limit == 50_000
+    assert status.limit == 100_000
     assert status.exceeded is False
 
 
@@ -286,7 +286,7 @@ def test_chat_429_when_quota_exceeded(client):
     _sql_seed(
         client,
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        f"VALUES ('{uid}', 'chat_tokens', date_trunc('month', CURRENT_DATE)::date, 51000)",
+        f"VALUES ('{uid}', 'chat_tokens', date_trunc('month', CURRENT_DATE)::date, 101000)",
     )
     _plan_cache.clear()
 
@@ -298,8 +298,8 @@ def test_chat_429_when_quota_exceeded(client):
     assert resp.status_code == 429
     detail = resp.json()["detail"]
     assert detail["error"] == "chat_token_quota_exceeded"
-    assert detail["used"] == 51000
-    assert detail["limit"] == 50_000
+    assert detail["used"] == 101000
+    assert detail["limit"] == 100_000
 
 
 # ── 8. API: content upload returns 429 on storage exceeded ────────────────
@@ -311,7 +311,7 @@ def test_content_upload_429_when_storage_exceeded(client):
     _sql_seed(
         client,
         "INSERT INTO files (id, name, size_bytes, user_id) "
-        f"VALUES ('{fid}', 'huge.bin', {21 * GB}, '{uid}')",
+        f"VALUES ('{fid}', 'huge.bin', {41 * GB}, '{uid}')",
     )
     _plan_cache.clear()
 
@@ -333,62 +333,62 @@ async def test_plan_upgrade_raises_limits(db):
     uid = uuid4()
     # Free plan
     status_free = await check_quota(db, uid, "chat_tokens", "free")
-    assert status_free.limit == 50_000
+    assert status_free.limit == 100_000
 
     # Pro plan
     status_pro = await check_quota(db, uid, "chat_tokens", "pro")
-    assert status_pro.limit == 100_000
+    assert status_pro.limit == 200_000
 
     # Verify via get_limits too
-    assert get_limits("free").chat_tokens == 50_000
-    assert get_limits("pro").chat_tokens == 100_000
-    assert get_limits("unknown_plan").chat_tokens == 50_000  # defaults to free
+    assert get_limits("free").chat_tokens == 100_000
+    assert get_limits("pro").chat_tokens == 200_000
+    assert get_limits("unknown_plan").chat_tokens == 100_000  # defaults to free
 
 
 # ── 10. Dreaming quota tests ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_dreaming_io_tokens_quota(db):
-    """dreaming_io_tokens quota: free plan limit=20000, tracks usage correctly."""
+    """dreaming_io_tokens quota: free plan limit=40000, tracks usage correctly."""
     uid = uuid4()
 
     # Fresh — no usage
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.limit == 20_000
+    assert status.limit == 40_000
     assert status.used == 0
     assert status.exceeded is False
 
     # Increment below limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 10_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 20_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 10_000
+    assert status.used == 20_000
     assert status.exceeded is False
 
     # Increment past limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 11_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 21_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 21_000
+    assert status.used == 41_000
     assert status.exceeded is True
 
 
 @pytest.mark.asyncio
 async def test_dreaming_minutes_quota(db):
-    """dreaming_minutes quota: free plan limit=60, tracks usage correctly."""
+    """dreaming_minutes quota: free plan limit=120, tracks usage correctly."""
     uid = uuid4()
 
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.limit == 60
+    assert status.limit == 120
     assert status.used == 0
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 30, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 60, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 30
+    assert status.used == 60
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 35, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 65, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 65
+    assert status.used == 125
     assert status.exceeded is True
 
 
@@ -398,10 +398,10 @@ async def test_dreaming_pre_flight_blocks_over_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage past the free-plan dreaming_minutes limit (60)
+    # Seed usage past the free-plan dreaming_minutes limit (120)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 65)",
+        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 125)",
         uid, "dreaming_minutes",
     )
 
@@ -419,7 +419,7 @@ async def test_dreaming_pre_flight_allows_under_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage under the free-plan dreaming_minutes limit (60)
+    # Seed usage under the free-plan dreaming_minutes limit (120)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
         "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 20)",
