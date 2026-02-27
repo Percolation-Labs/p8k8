@@ -210,8 +210,7 @@ Your visible reply should be purely conversational.
                 "description": "Create reminders. Default to ONE-TIME (ISO datetime) unless the user explicitly says 'every'/'daily'/'weekly'. 'in the morning' = tomorrow morning, not every morning. Infer a specific date+time, don't ask for confirmation",
             },
             {
-                "name": "user_profile",
-                "uri": "user://profile/{user_id}",
+                "name": "get_user_profile",
                 "description": "Load user profile for personalized responses",
             },
             {

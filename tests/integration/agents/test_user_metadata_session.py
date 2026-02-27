@@ -222,7 +222,7 @@ async def test_multi_turn_metadata_accumulation_and_recovery(db, encryption):
 
             # First call — user_profile is a zero-arg tool (user_id auto-resolved from context)
             return ModelResponse(parts=[ToolCallPart(
-                tool_name="user_profile",
+                tool_name="get_user_profile",
                 args={},
                 tool_call_id="tc-profile",
             )])
