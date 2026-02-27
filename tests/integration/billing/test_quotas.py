@@ -188,9 +188,9 @@ async def test_check_quota_after_increment(db):
 async def test_check_quota_exceeded(db):
     """Incrementing past the limit → exceeded=True."""
     uid = uuid4()
-    await increment_usage(db, uid, "chat_tokens", 51_000, "free")
+    await increment_usage(db, uid, "chat_tokens", 101_000, "free")
     status = await check_quota(db, uid, "chat_tokens", "free")
-    assert status.used == 51_000
+    assert status.used == 101_000
     assert status.exceeded is True
 
 
@@ -208,20 +208,20 @@ async def test_check_quota_storage_bytes(db):
         )
     status = await check_quota(db, uid, "storage_bytes", "free")
     assert status.used == 10 * GB
-    assert status.limit == 20 * GB
+    assert status.limit == 40 * GB
     assert status.exceeded is False
 
 
 @pytest.mark.asyncio
 async def test_check_quota_storage_bytes_exceeded(db):
-    """Exceeding 20*GB free plan storage → exceeded."""
+    """Exceeding 40*GB free plan storage → exceeded."""
     uid = uuid4()
     await db.execute(
         "INSERT INTO files (id, name, size_bytes, user_id) VALUES ($1, $2, $3, $4)",
-        uuid4(), "big.bin", 21 * GB, uid,
+        uuid4(), "big.bin", 41 * GB, uid,
     )
     status = await check_quota(db, uid, "storage_bytes", "free")
-    assert status.used == 21 * GB
+    assert status.used == 41 * GB
     assert status.exceeded is True
 
 
@@ -581,11 +581,11 @@ async def test_dreaming_handler_increments_usage(db, encryption):
 
 @pytest.mark.asyncio
 async def test_web_searches_daily_limits(db):
-    """web_searches_daily: free=20, pro=50."""
-    assert get_limits("free").web_searches_daily == 20
-    assert get_limits("pro").web_searches_daily == 50
-    assert get_limits("team").web_searches_daily == 100
-    assert get_limits("enterprise").web_searches_daily == 500
+    """web_searches_daily: free=40, pro=100."""
+    assert get_limits("free").web_searches_daily == 40
+    assert get_limits("pro").web_searches_daily == 100
+    assert get_limits("team").web_searches_daily == 200
+    assert get_limits("enterprise").web_searches_daily == 1000
 
 
 @pytest.mark.asyncio
@@ -595,20 +595,20 @@ async def test_web_searches_daily_quota(db):
 
     # Fresh — no usage
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.limit == 20
+    assert status.limit == 40
     assert status.used == 0
     assert status.exceeded is False
 
     # Increment below limit
-    await increment_usage(db, uid, "web_searches_daily", 10, "free")
+    await increment_usage(db, uid, "web_searches_daily", 20, "free")
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.used == 10
+    assert status.used == 20
     assert status.exceeded is False
 
     # Increment past limit
-    await increment_usage(db, uid, "web_searches_daily", 11, "free")
+    await increment_usage(db, uid, "web_searches_daily", 21, "free")
     status = await check_quota(db, uid, "web_searches_daily", "free")
-    assert status.used == 21
+    assert status.used == 41
     assert status.exceeded is True
 
 
