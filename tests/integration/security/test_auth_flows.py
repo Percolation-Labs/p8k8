@@ -211,7 +211,7 @@ class TestOAuthCallbacks:
     async def test_apple_callback_creates_user_with_name(self, auth, db, clean_db):
         await db.execute("DELETE FROM users WHERE name = 'Charlie Brown'")
         token_data = {"sub": "apple-00001", "email": "charlie@icloud.com"}
-        user_info = {"firstName": "Charlie", "lastName": "Brown"}
+        user_info = {"name": {"firstName": "Charlie", "lastName": "Brown"}}
 
         user, tenant_id = await auth.handle_apple_callback(token_data, user_info)
 
@@ -225,7 +225,7 @@ class TestOAuthCallbacks:
         """Apple only sends name on first auth — subsequent calls have no user_info."""
         await db.execute("DELETE FROM users WHERE name = 'Dave Wilson'")
         token_data = {"sub": "apple-00002", "email": "dave@icloud.com"}
-        user_info = {"firstName": "Dave", "lastName": "Wilson"}
+        user_info = {"name": {"firstName": "Dave", "lastName": "Wilson"}}
 
         # First auth — with name
         user1, _ = await auth.handle_apple_callback(token_data, user_info)

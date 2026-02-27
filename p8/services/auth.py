@@ -496,8 +496,10 @@ class AuthService:
         email = token_data.get("email", "")
         name = "Apple User"
         if user_info:
-            first = user_info.get("firstName", "")
-            last = user_info.get("lastName", "")
+            # Apple nests name under "name" key; support flat format too
+            name_info = user_info.get("name", user_info)
+            first = name_info.get("firstName", "")
+            last = name_info.get("lastName", "")
             name = f"{first} {last}".strip() or name
 
         tenant, user = await self.create_personal_tenant(name, email)

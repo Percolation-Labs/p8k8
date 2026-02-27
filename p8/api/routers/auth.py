@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 from p8.api.deps import CurrentUser, get_current_user
 from p8.ontology.types import StorageGrant
+from p8.services.providers.gdrive import GoogleDriveService
 from p8.services.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -471,13 +472,16 @@ async def mobile_drive_callback(request: Request):
             status_code=302,
         )
 
-    # Store in StorageGrant
+    # Store in StorageGrant — auto_sync off until user selects a folder
     grants_repo = Repository(StorageGrant, auth.db, auth.encryption)
     grant = StorageGrant(
         user_id_ref=UUID(user_id),
         tenant_id=tenant_id,
         provider="google-drive",
         status="active",
+        auto_sync=False,
+        provider_folder_id=None,
+        folder_name=None,
         metadata={
             "refresh_token": google_refresh,
             "scopes": token_data.get("scope", ""),
@@ -593,7 +597,133 @@ async def mobile_google_drive_status(request: Request):
         current.user_id,
     )
 
-    return {"connected": row is not None}
+    if not row:
+        return {"connected": False}
+
+    # Fetch richer status: folder name, last sync, file count, sync in progress
+    grant_row = await auth.db.fetchrow(
+        "SELECT provider_folder_id, folder_name, last_sync_at, auto_sync"
+        " FROM storage_grants WHERE id = $1",
+        row["id"],
+    )
+    folder_name = grant_row["folder_name"] if grant_row else None
+    last_sync_at = grant_row["last_sync_at"] if grant_row else None
+    auto_sync = grant_row["auto_sync"] if grant_row else False
+
+    file_count = 0
+    if folder_name:
+        fc_row = await auth.db.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM files"
+            " WHERE user_id = $1 AND metadata->>'provider' = 'google-drive'"
+            " AND deleted_at IS NULL",
+            current.user_id,
+        )
+        file_count = fc_row["cnt"] if fc_row else 0
+
+    # Check if a sync task is currently in progress
+    sync_row = await auth.db.fetchrow(
+        "SELECT id FROM task_queue"
+        " WHERE user_id = $1 AND task_type = 'drive_sync'"
+        " AND status IN ('pending', 'processing')"
+        " LIMIT 1",
+        current.user_id,
+    )
+
+    return {
+        "connected": True,
+        "folder_id": grant_row["provider_folder_id"] if grant_row else None,
+        "folder_name": folder_name,
+        "last_sync_at": last_sync_at.isoformat() if last_sync_at else None,
+        "file_count": file_count,
+        "auto_sync": auto_sync,
+        "sync_in_progress": sync_row is not None,
+    }
+
+
+def _get_gdrive_service(request: Request) -> GoogleDriveService:
+    """Construct a GoogleDriveService from app state."""
+    return GoogleDriveService(
+        db=request.app.state.db,
+        encryption=request.app.state.encryption,
+        settings=request.app.state.settings,
+        content_service=request.app.state.content_service,
+    )
+
+
+@router.get("/mobile/google/drive-folders")
+async def mobile_google_drive_folders(request: Request):
+    """List the user's top-level Google Drive folders."""
+    current = await get_current_user(request)
+    gdrive = _get_gdrive_service(request)
+    try:
+        folders = await gdrive.list_folders(current.user_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return [{"id": f.id, "name": f.name} for f in folders]
+
+
+class SelectFolderRequest(BaseModel):
+    folder_id: str
+    folder_name: str
+
+
+@router.post("/mobile/google/drive-select-folder")
+async def mobile_google_drive_select_folder(request: Request, body: SelectFolderRequest):
+    """Set the sync folder on the user's StorageGrant and enable auto_sync."""
+    current = await get_current_user(request)
+    auth = request.app.state.auth
+
+    rows = await auth.db.fetch(
+        "UPDATE storage_grants"
+        " SET provider_folder_id = $1, folder_name = $2, auto_sync = true"
+        " WHERE user_id_ref = $3 AND provider = 'google-drive' AND status = 'active'"
+        " RETURNING id",
+        body.folder_id, body.folder_name, current.user_id,
+    )
+    if not rows:
+        raise HTTPException(404, "No active Google Drive grant found")
+
+    # Return updated status
+    return await mobile_google_drive_status(request)
+
+
+@router.post("/mobile/google/drive-sync")
+async def mobile_google_drive_sync(request: Request):
+    """Enqueue a drive_sync task for the current user (with duplicate guard)."""
+    current = await get_current_user(request)
+    auth = request.app.state.auth
+
+    # Check the user has a grant with a folder selected
+    grant = await auth.db.fetchrow(
+        "SELECT id, provider_folder_id, tenant_id FROM storage_grants"
+        " WHERE user_id_ref = $1 AND provider = 'google-drive' AND status = 'active'"
+        " AND provider_folder_id IS NOT NULL"
+        " LIMIT 1",
+        current.user_id,
+    )
+    if not grant:
+        raise HTTPException(400, "No Drive folder selected — choose a folder first")
+
+    # Duplicate guard: skip if there's already a pending/processing drive_sync task
+    existing = await auth.db.fetchrow(
+        "SELECT id FROM task_queue"
+        " WHERE user_id = $1 AND task_type = 'drive_sync'"
+        " AND status IN ('pending', 'processing')"
+        " LIMIT 1",
+        current.user_id,
+    )
+    if existing:
+        return {"status": "already_queued", "task_id": str(existing["id"])}
+
+    queue = request.app.state.queue
+    task_id = await queue.enqueue(
+        "drive_sync",
+        {"trigger": "manual", "folder_id": grant["provider_folder_id"]},
+        tier="small",
+        user_id=current.user_id,
+        tenant_id=grant["tenant_id"],
+    )
+    return {"status": "queued", "task_id": str(task_id)}
 
 
 # ---------------------------------------------------------------------------
