@@ -372,8 +372,9 @@ async def test_user_profile_resource_includes_metadata(db, encryption):
     )
     [user] = await repo.upsert(user)
 
-    # user_profile looks up by user_id column first, then email fallback
-    profile_json = await user_profile("profile@test.dev")
+    from p8.api.tools import set_tool_context
+    set_tool_context(user_id=user.user_id)
+    profile_json = await user_profile()
     profile = json.loads(profile_json)
 
     assert profile["name"] == "profile-meta-user"

@@ -122,8 +122,10 @@ async def _seed_user(db, encryption):
 @pytest.mark.asyncio
 async def test_user_resource_found(_seed_user):
     from p8.api.mcp_server import user_profile
+    from p8.api.tools import set_tool_context
 
-    result_str = await user_profile(str(USER_ADA))
+    set_tool_context(user_id=USER_ADA)
+    result_str = await user_profile()
     data = json.loads(result_str)
     assert data["name"] == "Ada Lovelace"
     assert data["email"] == "ada@example.com"
@@ -138,7 +140,10 @@ async def test_user_resource_found(_seed_user):
 @pytest.mark.asyncio
 async def test_user_resource_not_found():
     from p8.api.mcp_server import user_profile
+    from p8.api.tools import set_tool_context
+    from uuid import uuid4
 
-    result_str = await user_profile("nonexistent")
+    set_tool_context(user_id=uuid4())
+    result_str = await user_profile()
     data = json.loads(result_str)
     assert "error" in data
