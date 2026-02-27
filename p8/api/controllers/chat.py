@@ -33,6 +33,7 @@ class ChatTurn:
 
     assistant_text: str
     all_messages: list[ModelMessage] | None = None
+    chained_tool_result: dict | None = None
 
 
 @dataclass
@@ -166,7 +167,25 @@ class ChatController:
             all_messages=all_messages,
             background_compaction=background_compaction,
         )
-        return ChatTurn(assistant_text=assistant_text, all_messages=all_messages)
+
+        # Execute chained tool if the agent produced structured output
+        chained_result = None
+        output = result.output if hasattr(result, "output") else None
+        if output is not None and not isinstance(output, str):
+            output_data = output.model_dump() if hasattr(output, "model_dump") else output
+            if isinstance(output_data, dict):
+                chained_result = await ctx.adapter.execute_chained_tool(
+                    output_data,
+                    session_id=ctx.session_id,
+                    user_id=user_id,
+                    tenant_id=ctx.tenant_id,
+                )
+
+        return ChatTurn(
+            assistant_text=assistant_text,
+            all_messages=all_messages,
+            chained_tool_result=chained_result,
+        )
 
     async def run_turn_stream(
         self,
@@ -208,6 +227,7 @@ class ChatController:
                             pass
 
             all_messages = agent_run.result.all_messages() if agent_run.result else None
+            agent_output = agent_run.result.output if agent_run.result else None
 
         assistant_text = "".join(accumulated)
         await ctx.adapter.persist_turn(
@@ -216,6 +236,17 @@ class ChatController:
             all_messages=all_messages,
             background_compaction=background_compaction,
         )
+
+        # Execute chained tool if the agent produced structured output
+        if agent_output is not None and not isinstance(agent_output, str):
+            output_data = agent_output.model_dump() if hasattr(agent_output, "model_dump") else agent_output
+            if isinstance(output_data, dict):
+                await ctx.adapter.execute_chained_tool(
+                    output_data,
+                    session_id=ctx.session_id,
+                    user_id=user_id,
+                    tenant_id=ctx.tenant_id,
+                )
 
     async def persist_turn(
         self,

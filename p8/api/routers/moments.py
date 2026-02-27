@@ -103,12 +103,13 @@ async def today_summary(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Virtual 'today' moment — delegates to rem_moments_feed for today's daily_summary."""
+    """Virtual 'today' moment with deterministic session_id.
+
+    Always returns a result (even with no activity) so the client can
+    obtain today's session UUID before the first chat message.
+    """
     memory = MemoryService(db, encryption)
-    result = await memory.build_today_summary(user_id=user.user_id if user else None)
-    if result is None:
-        return {"detail": "No activity today"}
-    return result
+    return await memory.build_today_summary(user_id=user.user_id if user else None)
 
 
 @router.get("/session/{session_id}")
@@ -349,6 +350,109 @@ async def search_moments(
 
 
 
+@router.get("/by-name/{name}")
+async def get_moment_by_name(
+    name: str,
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Resolve a moment by its entity key (name).
+
+    Internal link shorthand: clients use `moment://entity-key` URIs
+    (e.g. in dream summaries) which resolve to this endpoint.
+    The Flutter app parses these URIs and calls GET /moments/by-name/{key}
+    to fetch the moment, then navigates to the detail card.
+    """
+    # Try as UUID first (moment IDs are unique and preferred for links)
+    moment_id = None
+    try:
+        moment_id = UUID(name)
+    except (ValueError, AttributeError):
+        pass
+
+    if moment_id is None:
+        # Fall back to kv_store entity_key lookup
+        row = await db.fetchrow(
+            "SELECT entity_id FROM kv_store WHERE entity_key = $1 AND entity_type = 'moments'",
+            name,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Moment not found")
+        moment_id = row["entity_id"]
+
+    # Delegate to the same logic as GET /moments/{id}
+    moment_row = await db.fetchrow(
+        """SELECT mo.*, s.name AS session_name, s.description AS session_description,
+                  s.metadata AS session_metadata
+           FROM moments mo
+           LEFT JOIN sessions s ON s.id = mo.source_session_id AND s.deleted_at IS NULL
+           WHERE mo.id = $1 AND mo.deleted_at IS NULL""",
+        moment_id,
+    )
+    if not moment_row:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    repo = Repository(Moment, db, encryption)
+    await repo._ensure_deks([moment_row])
+    entity = repo._decrypt_row(moment_row)
+    result = entity.model_dump(mode="json")
+    for extra in ("session_name", "session_description", "session_metadata"):
+        if extra in dict(moment_row):
+            result[extra] = dict(moment_row)[extra]
+    return result
+
+
+_EDITABLE_MOMENT_TYPES = {"note", "content_upload", "voice_note"}
+
+
+@router.patch("/{moment_id}")
+async def update_moment(
+    moment_id: UUID,
+    body: dict = Body(...),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Update a text note moment (summary, name).
+
+    Only moments with editable types (note, content_upload, voice_note) can
+    be updated.  Changing the summary triggers automatic re-embedding via
+    the database trigger.
+    """
+    repo = Repository(Moment, db, encryption)
+    entity = await repo.get(moment_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    if user and entity.user_id and entity.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not your moment")
+    if entity.moment_type not in _EDITABLE_MOMENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only {', '.join(sorted(_EDITABLE_MOMENT_TYPES))} moments can be edited",
+        )
+
+    allowed = {"summary", "name"}
+    updates = {k: v for k, v in body.items() if k in allowed and v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    set_clauses = []
+    args: list = []
+    for key, val in updates.items():
+        args.append(val)
+        set_clauses.append(f"{key} = ${len(args)}")
+    args.append(moment_id)
+    set_sql = ", ".join(set_clauses)
+
+    await db.execute(
+        f"UPDATE moments SET {set_sql}, updated_at = NOW() WHERE id = ${len(args)}",
+        *args,
+    )
+
+    # Return refreshed entity
+    updated = await repo.get(moment_id)
+    return updated.model_dump(mode="json") if updated else {"updated": True}
+
+
 @router.post("/{moment_id}/rate")
 async def rate_moment(
     moment_id: UUID,
@@ -377,11 +481,17 @@ async def rate_moment(
 @router.delete("/reminders/{moment_id}")
 async def delete_reminder(
     moment_id: UUID,
+    cancel_cron: bool = Query(False, description="Also unschedule the pg_cron job"),
     user: CurrentUser | None = Depends(get_optional_user),
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Soft-delete a reminder moment by ID."""
+    """Soft-delete a reminder moment by ID.
+
+    By default only hides the reminder from the feed (soft-delete).
+    Pass ``cancel_cron=true`` to also unschedule the pg_cron job so
+    the reminder never fires again.
+    """
     from p8.services.repository import Repository
 
     repo = Repository(Moment, db, encryption)
@@ -392,10 +502,23 @@ async def delete_reminder(
     if user and entity.user_id and entity.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Not your reminder")
 
+    cron_cancelled = False
+    if cancel_cron:
+        job_name = (entity.metadata or {}).get("job_name")
+        if job_name:
+            try:
+                await db.execute("SELECT cron.unschedule($1)", job_name)
+                cron_cancelled = True
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Failed to unschedule cron job %s for reminder %s",
+                    job_name, moment_id,
+                )
+
     ok = await repo.delete(moment_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Reminder not found")
-    return {"deleted": True, "id": str(moment_id)}
+    return {"deleted": True, "id": str(moment_id), "cron_cancelled": cron_cancelled}
 
 
 @router.delete("/{moment_id}")

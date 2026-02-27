@@ -555,6 +555,7 @@ async def mobile_oauth_callback(request: Request, provider: str):
         "tenant_id": tenant_id,
         "email": user.email or "",
         "name": user.name or "",
+        "picture": (user.metadata or {}).get("picture", ""),
     })
     return RedirectResponse(
         url=f"{_MOBILE_APP_SCHEME}://auth-callback?{params}",

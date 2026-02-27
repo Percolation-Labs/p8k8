@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
 
 from p8.agentic.adapter import AgentAdapter
 from p8.agentic.delegate import get_child_event_sink
-from p8.api.tools import get_db, get_encryption
+from p8.api.tools import get_db, get_encryption, get_session_id, get_user_id
 
 
 async def _run_with_streaming(
@@ -53,6 +53,7 @@ async def _run_with_streaming(
     prompt: str,
     agent_name: str,
     event_sink: Any,
+    adapter: AgentAdapter | None = None,
 ) -> dict[str, Any]:
     """Run child agent with agent.iter(), pushing events to the sink in real-time."""
     accumulated_content: list[str] = []
@@ -119,13 +120,25 @@ async def _run_with_streaming(
     else:
         output_data = text_response
 
-    return {
+    result = {
         "status": "success",
         "output": output_data,
         "text_response": text_response,
         "agent_schema": agent_name,
         "is_structured_output": is_structured,
+        "chained_tool_result": None,
     }
+
+    # Execute chained tool if applicable
+    if is_structured and adapter is not None and isinstance(output_data, dict):
+        chained_result = await adapter.execute_chained_tool(
+            output_data,
+            session_id=get_session_id(),
+            user_id=get_user_id(),
+        )
+        result["chained_tool_result"] = chained_result
+
+    return result
 
 
 async def ask_agent(
@@ -181,7 +194,7 @@ async def ask_agent(
 
         if event_sink is not None:
             # Streaming mode: use agent.iter() and push events to sink
-            return await _run_with_streaming(agent, prompt, agent_name, event_sink)
+            return await _run_with_streaming(agent, prompt, agent_name, event_sink, adapter=adapter)
         else:
             # Non-streaming mode (CLI): use agent.run()
             result = await agent.run(prompt)
@@ -195,12 +208,22 @@ async def ask_agent(
             else:
                 output_data = text_response
 
+            # Execute chained tool if applicable
+            chained_result = None
+            if is_structured and isinstance(output_data, dict):
+                chained_result = await adapter.execute_chained_tool(
+                    output_data,
+                    session_id=get_session_id(),
+                    user_id=get_user_id(),
+                )
+
             return {
                 "status": "success",
                 "output": output_data,
                 "text_response": text_response,
                 "agent_schema": agent_name,
                 "is_structured_output": is_structured,
+                "chained_tool_result": chained_result,
             }
     except Exception as e:
         return {

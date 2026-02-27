@@ -332,9 +332,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 
--- enqueue_dreaming_tasks — called by pg_cron hourly.
+-- enqueue_dreaming_tasks — called by pg_cron every 12 hours.
 -- Creates one dreaming task per user who has had activity since their last
 -- dreaming run (or ever, if no prior dreaming task exists).
+-- Enforces a 12-hour cooldown: won't re-enqueue if a dreaming task completed
+-- within the last 12 hours.
 -- Activity = new messages OR new processed file uploads.
 -- Uses COALESCE(u.user_id, u.id) because sessions reference the auth-level
 -- user_id when set, falling back to the row id.
@@ -379,10 +381,14 @@ BEGIN
         )
         SELECT effective_uid, tenant_id FROM active_users
         WHERE NOT EXISTS (
+            -- Skip if there's a pending/processing task OR a completed one within 12 hours
             SELECT 1 FROM task_queue tq
             WHERE tq.task_type = 'dreaming'
               AND tq.user_id = active_users.effective_uid
-              AND tq.status IN ('pending', 'processing')
+              AND (
+                  tq.status IN ('pending', 'processing')
+                  OR (tq.status = 'completed' AND tq.completed_at > CURRENT_TIMESTAMP - INTERVAL '12 hours')
+              )
         )
     LOOP
         INSERT INTO task_queue (task_type, tier, user_id, tenant_id, payload)
@@ -453,8 +459,8 @@ $$ LANGUAGE plpgsql;
 -- Stale task recovery: every 5 minutes, reset stuck tasks
 SELECT cron.schedule('qms-recover-stale', '*/5 * * * *', 'SELECT recover_stale_tasks(15)');
 
--- Dreaming enqueue: hourly, enqueue dreaming tasks for active users
-SELECT cron.schedule('qms-dreaming-enqueue', '0 * * * *', 'SELECT enqueue_dreaming_tasks()');
+-- Dreaming enqueue: every 12 hours (6am and 6pm UTC)
+SELECT cron.schedule('qms-dreaming-enqueue', '0 6,18 * * *', 'SELECT enqueue_dreaming_tasks()');
 
 -- News feed: daily at 6am UTC, enqueue news digest for users with interests
 SELECT cron.schedule('qms-news-enqueue', '0 6 * * *', 'SELECT enqueue_news_tasks()');

@@ -1120,6 +1120,19 @@ CREATE OR REPLACE FUNCTION rem_session_timeline(
 $$ LANGUAGE sql;
 
 
+-- rem_daily_session_id — deterministic session UUID for a (user, date) pair.
+-- Uses p8_deterministic_id('sessions', 'daily-YYYY-MM-DD', user_id) so the
+-- namespace and format are consistent with all other deterministic IDs.
+-- Single source of truth used by rem_moments_feed and exposed to clients via
+-- the /moments/today endpoint so the app never has to generate its own UUID.
+CREATE OR REPLACE FUNCTION rem_daily_session_id(
+    p_user_id UUID    DEFAULT NULL,
+    p_date    DATE    DEFAULT CURRENT_DATE
+) RETURNS UUID AS $$
+    SELECT p8_deterministic_id('sessions', 'daily-' || p_date::text, p_user_id);
+$$ LANGUAGE sql IMMUTABLE;
+
+
 -- rem_moments_feed — cursor-paginated feed of real moments + virtual daily summary cards.
 --
 -- Pagination is cursor-based: p_before_date bounds all CTEs so they only scan
@@ -1148,6 +1161,7 @@ CREATE OR REPLACE FUNCTION rem_moments_feed(
     session_id       UUID,
     image            TEXT,
     encryption_level VARCHAR,
+    rating           INT,
     metadata         JSONB
 ) AS $$
 WITH
@@ -1248,14 +1262,11 @@ daily_sessions AS (
     GROUP BY 1
 ),
 
--- 4. Virtual daily summary cards — deterministic UUID from (user_id, date)
+-- 4. Virtual daily summary cards — deterministic UUID via rem_daily_session_id()
 daily_summaries AS (
     SELECT
         'daily_summary'::varchar                                       AS event_type,
-        uuid_generate_v5(
-            'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
-            COALESCE(p_user_id::text, 'global') || '/' || ad.d::text
-        )                                                              AS event_id,
+        rem_daily_session_id(p_user_id, ad.d)                          AS event_id,
         ad.d                                                           AS event_date,
         (ad.d + TIME '23:59:59')::timestamptz                         AS event_timestamp,
         ('daily-' || ad.d::text)::varchar                              AS name,
@@ -1269,12 +1280,10 @@ daily_summaries AS (
                COALESCE(ds.total_tokens, 0),
                COALESCE(dmc.moment_count, 0)
         )                                                              AS summary,
-        uuid_generate_v5(
-            'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
-            COALESCE(p_user_id::text, 'global') || '/' || ad.d::text
-        )                                                              AS session_id,
+        rem_daily_session_id(p_user_id, ad.d)                          AS session_id,
         NULL::text                                                     AS image,
         NULL::varchar                                                  AS encryption_level,
+        NULL::int                                                      AS rating,
         jsonb_build_object(
             'message_count', COALESCE(ds.msg_count, 0),
             'total_tokens', COALESCE(ds.total_tokens, 0),
@@ -1305,6 +1314,7 @@ real_moments AS (
         mo.source_session_id                                           AS session_id,
         mo.image_uri                                                   AS image,
         mo.encryption_level                                            AS encryption_level,
+        mo.rating                                                      AS rating,
         jsonb_build_object(
             'ends_timestamp', mo.ends_timestamp,
             'previous_moment_keys', mo.previous_moment_keys,
@@ -1333,7 +1343,7 @@ combined AS (
 )
 
 SELECT event_type, event_id, event_date, event_timestamp,
-       name, moment_type, summary, session_id, image, encryption_level, metadata
+       name, moment_type, summary, session_id, image, encryption_level, rating, metadata
 FROM combined
 ORDER BY event_date DESC, sort_priority ASC, event_timestamp DESC;
 $$ LANGUAGE sql;

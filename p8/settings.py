@@ -28,8 +28,29 @@ class Settings(BaseSettings):
 
     # MCP server instructions (system prompt for MCP clients)
     mcp_instructions: str = (
-        "REM is a multi-modal knowledge base. Use `search` for queries, "
-        "`action` to emit events, and `ask_agent` for delegation."
+        "Percolate is a personal memory and knowledge system. "
+        "It stores the user's notes, conversations, web bookmarks, and structured metadata "
+        "so you can help them recall, organize, and build on what they know.\n\n"
+        "## Tools\n\n"
+        "- **search**: Query the knowledge base using REM syntax — "
+        "LOOKUP (exact key), SEARCH (semantic), FUZZY (text match), TRAVERSE (graph walk). "
+        "Use this to find anything the user has saved or discussed before.\n"
+        "- **get_moments**: Retrieve timestamped memories (session summaries, dreams, meetings) "
+        "with filtering by type, category, tags, and date range. Great for recalling past conversations.\n"
+        "- **web_search**: Search the web and optionally save results as resources for later recall.\n"
+        "- **update_user_metadata**: Update the user's profile — relations, interests, feeds, preferences, facts. "
+        "Use this when the user shares personal details worth remembering.\n"
+        "- **remind_me**: Create one-time or recurring reminders with push notifications.\n"
+        "- **get_user_profile**: Retrieve the current user's profile (name, email, metadata, tags). "
+        "Call this early in a conversation to personalize responses.\n"
+        "- **action**: Emit observation or elicit events for streaming UI updates.\n"
+        "- **ask_agent**: Delegate to a specialized agent. "
+        "Use sparingly — most tasks are better served by the tools above. "
+        "Only delegate when a specific agent's expertise is needed (e.g. a domain-specific analyst).\n\n"
+        "## Guidelines\n\n"
+        "Prefer using search, get_moments, and update_user_metadata to help the user "
+        "directly rather than delegating to agents. The memory tools give you everything "
+        "you need to recall context, answer questions, and keep the user's profile current."
     )
     mcp_auth_enabled: bool = True  # set P8_MCP_AUTH_ENABLED=false to disable OAuth
 

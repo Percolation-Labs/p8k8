@@ -37,23 +37,21 @@ from p8.services.repository import Repository
 from p8.settings import Settings, get_settings
 
 
-async def user_profile(user_id: str) -> str:
-    """Load user profile: name, email, content, metadata, tags."""
-    from uuid import UUID
+async def user_profile() -> str:
+    """Load current user's profile: name, email, content, metadata, tags."""
+    from p8.api.tools import get_user_id
+    user_id = get_user_id()
+    if not user_id:
+        return json.dumps({"error": "No authenticated user in context"})
     db = get_db()
     encryption = get_encryption()
     repo = Repository(User, db, encryption)
-    try:
-        uid = UUID(user_id)
-        results = await repo.find(user_id=uid, limit=1)
-    except ValueError:
-        results = []
-    if not results:
-        results = await repo.find(filters={"email": user_id}, limit=1)
+    results = await repo.find(user_id=user_id, limit=1)
     if not results:
         return json.dumps({"error": "User not found"})
     user = results[0]
     profile = {
+        "user_id": str(user_id),
         "name": user.name,
         "email": user.email,
         "content": user.content,
@@ -113,8 +111,12 @@ def create_mcp_server() -> FastMCP:
     mcp.tool(name="web_search")(web_search)
     mcp.tool(name="update_user_metadata")(update_user_metadata)
 
-    # Register resources
-    mcp.resource("user://profile/{user_id}")(user_profile)
+    # Also register user_profile as a tool — the Claude.ai MCP connector
+    # only supports tools (not resources), so this ensures it works remotely.
+    mcp.tool(name="get_user_profile")(user_profile)
+
+    # Register resources (works over stdio, e.g. Claude Code)
+    mcp.resource("user://profile")(user_profile)
 
     return mcp
 

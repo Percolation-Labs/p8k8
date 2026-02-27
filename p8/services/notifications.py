@@ -15,6 +15,10 @@ Both APNs and FCM are free and unlimited.
        P8_APNS_ENVIRONMENT=production          # sandbox for dev/TestFlight
 
 2. FCM (Android)
+ 
+   Google close console is a pain in the ass. just give Claude gcloud access and do the thing
+   instead of spending ages clicking around adding roles and download this or that json file
+
    We enabled Firebase Cloud Messaging API on the existing Google Cloud
    project, then downloaded a service account JSON from
    IAM → Service Accounts → Keys → Create new key → JSON. Added:
@@ -73,6 +77,13 @@ Both APNs and FCM are free and unlimited.
    The Flutter app polls the feed every 60 seconds when in the foreground
    so new notification moments appear without manual pull-to-refresh.
    Push notifications also trigger an immediate refresh.
+
+
+  - The FCM service account (percolate-452917) needs the
+  cloudmessaging.messages.create permission in Google Cloud Console. Go to
+  Firebase Console → Project Settings → Service accounts, and ensure the service
+  account has the Firebase Admin SDK Service Agent or Firebase Cloud Messaging API
+   Admin role.
 
 ===============================================================================
 """

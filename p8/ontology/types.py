@@ -335,6 +335,19 @@ class StorageGrant(CoreModel):
     status: str = "active"  # active | paused | revoked
 
 
+class TenantMetadata(BaseModel):
+    """Structured tenant metadata — stored in tenants.metadata JSONB.
+
+    Controls tenant-level feature configuration and domain customization.
+    All fields are optional so partial updates only touch what changed.
+    """
+
+    dreamer_agents: list[str] | None = None
+    # Agent schema names to run during dreaming. Default: ["dreaming-agent"]
+    # Pro tenants can fork the built-in dreamer, customize the prompt, and list
+    # multiple agents here — all run per dreaming cycle.
+
+
 class Tenant(CoreModel):
     """Tenant entity — owns users, encryption keys, and all scoped data.
     Encryption mode determines how data-at-rest is handled for this tenant."""

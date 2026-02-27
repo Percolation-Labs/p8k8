@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 
 from p8.ontology.types import Moment
 from p8.services.memory import MemoryService
@@ -413,7 +414,7 @@ async def test_session_timeline_empty_session(db, encryption):
 
 
 async def test_today_summary_with_activity(db, encryption):
-    """Messages today → build_today_summary() returns valid summary."""
+    """Messages today → build_today_summary() returns valid summary with session_id."""
     from uuid import UUID
     test_uid = UUID("aaaaaaaa-0000-0000-0000-000000000001")
     # Clean prior run's messages for this user so count is deterministic
@@ -433,16 +434,53 @@ async def test_today_summary_with_activity(db, encryption):
     assert today["metadata"]["message_count"] == 4
     assert today["metadata"]["total_tokens"] == 100
     assert len(today["metadata"]["sessions"]) >= 1
+    # Must always include session_id for the client
+    assert "session_id" in today
+    assert today["session_id"] == str(MemoryService.daily_session_id(test_uid))
 
 
 async def test_today_summary_no_activity(db, encryption):
-    """No messages today → build_today_summary() returns None."""
+    """No activity today → still returns a summary with deterministic session_id."""
     from uuid import UUID
     # Use a user_id that definitely has no messages
     nobody_uid = UUID("aaaaaaaa-0000-0000-0000-ffffffffffff")
     memory = MemoryService(db, encryption)
     today = await memory.build_today_summary(user_id=nobody_uid)
-    assert today is None
+    # Must always return a result (never None) so the app gets a session_id
+    assert today is not None
+    assert today["moment_type"] == "today_summary"
+    assert today["session_id"] == str(MemoryService.daily_session_id(nobody_uid))
+    assert today["metadata"]["message_count"] == 0
+
+
+async def test_daily_session_id_matches_sql(db, encryption):
+    """Python MemoryService.daily_session_id() must match SQL rem_daily_session_id()."""
+    from datetime import date
+    from uuid import UUID
+
+    test_uid = UUID("7d31eddf-7ff7-542a-982f-7522e7a3ec67")
+    test_date = date(2026, 2, 24)
+
+    py_id = MemoryService.daily_session_id(test_uid, test_date)
+    row = await db.fetchrow(
+        "SELECT rem_daily_session_id($1, $2) AS sid", test_uid, test_date,
+    )
+    assert row["sid"] == py_id
+
+
+async def test_daily_session_id_deterministic(db, encryption):
+    """Same (user, date) always produces the same session UUID."""
+    from datetime import date
+    from uuid import UUID
+
+    uid = UUID("aaaaaaaa-0000-0000-0000-000000000001")
+    d = date(2026, 3, 15)
+    assert MemoryService.daily_session_id(uid, d) == MemoryService.daily_session_id(uid, d)
+    # Different date → different id
+    assert MemoryService.daily_session_id(uid, d) != MemoryService.daily_session_id(uid, date(2026, 3, 16))
+    # Different user → different id
+    uid2 = UUID("bbbbbbbb-0000-0000-0000-000000000001")
+    assert MemoryService.daily_session_id(uid, d) != MemoryService.daily_session_id(uid2, d)
 
 
 # ---------------------------------------------------------------------------
@@ -585,3 +623,157 @@ async def test_today_summary_includes_session_names(db, encryption):
     assert len(sessions) >= 1
     # At minimum, sessions should be present (verifying the data is there for bootstrapping)
     assert any(s for s in sessions)
+
+
+# ---------------------------------------------------------------------------
+# Reminder delete tests (two-phase: hide vs cancel cron)
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_reminder_hides_without_cancelling_cron(db, encryption):
+    """DELETE /reminders/{id} without cancel_cron → soft-deletes but cron job stays."""
+    from uuid import uuid4
+    from p8.api.routers.moments import delete_reminder
+
+    repo = Repository(Moment, db, encryption)
+    unique = uuid4().hex[:8]
+    moment = Moment(
+        name=f"test-reminder-hide-{unique}",
+        moment_type="reminder",
+        summary="Take vitamins",
+        metadata={"job_name": f"reminder-test-hide-{unique}", "schedule": "0 9 * * *"},
+    )
+    [moment] = await repo.upsert(moment)
+
+    # Soft-delete without cancel_cron
+    result = await delete_reminder(
+        moment_id=moment.id,
+        cancel_cron=False,
+        user=None,
+        db=db,
+        encryption=encryption,
+    )
+    assert result["deleted"] is True
+    assert result["cron_cancelled"] is False
+
+    # Moment is soft-deleted
+    row = await db.fetchrow(
+        "SELECT deleted_at FROM moments WHERE id = $1", moment.id,
+    )
+    assert row["deleted_at"] is not None
+
+
+async def test_delete_reminder_with_cancel_cron(db, encryption):
+    """DELETE /reminders/{id}?cancel_cron=true → soft-deletes AND unschedules cron."""
+    from uuid import uuid4
+    from p8.api.routers.moments import delete_reminder
+
+    repo = Repository(Moment, db, encryption)
+
+    # Create a real pg_cron job so we can verify it gets unscheduled
+    unique = uuid4().hex[:8]
+    job_name = f"reminder-test-cancel-{unique}"
+    try:
+        await db.execute(
+            "SELECT cron.schedule($1, '0 0 31 2 *', 'SELECT 1')", job_name,
+        )
+    except Exception:
+        pytest.skip("pg_cron not available")
+
+    moment = Moment(
+        name=f"test-reminder-cancel-{unique}",
+        moment_type="reminder",
+        summary="Water the plants",
+        metadata={"job_name": job_name, "schedule": "0 0 31 2 *"},
+    )
+    [moment] = await repo.upsert(moment)
+
+    result = await delete_reminder(
+        moment_id=moment.id,
+        cancel_cron=True,
+        user=None,
+        db=db,
+        encryption=encryption,
+    )
+    assert result["deleted"] is True
+    assert result["cron_cancelled"] is True
+
+    # Verify cron job is gone
+    row = await db.fetchrow(
+        "SELECT jobid FROM cron.job WHERE jobname = $1", job_name,
+    )
+    assert row is None
+
+
+# ---------------------------------------------------------------------------
+# PATCH moment tests (text note editing)
+# ---------------------------------------------------------------------------
+
+
+async def test_patch_note_moment_updates_summary(db, encryption):
+    """PATCH /moments/{id} on a note → summary is updated."""
+    from p8.api.routers.moments import update_moment
+
+    repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name="my-text-note",
+        moment_type="note",
+        summary="Original text.",
+    )
+    [moment] = await repo.upsert(moment)
+
+    result = await update_moment(
+        moment_id=moment.id,
+        body={"summary": "Updated text with **markdown**."},
+        user=None,
+        db=db,
+        encryption=encryption,
+    )
+    assert result["summary"] == "Updated text with **markdown**."
+    assert result["name"] == "my-text-note"
+
+
+async def test_patch_rejects_non_editable_moment_type(db, encryption):
+    """PATCH /moments/{id} on a session_chunk → 400 error."""
+    from p8.api.routers.moments import update_moment
+
+    repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name="session-chunk-xyz",
+        moment_type="session_chunk",
+        summary="Auto-generated chunk.",
+    )
+    [moment] = await repo.upsert(moment)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_moment(
+            moment_id=moment.id,
+            body={"summary": "Should not work."},
+            user=None,
+            db=db,
+            encryption=encryption,
+        )
+    assert exc_info.value.status_code == 400
+
+
+async def test_patch_rejects_empty_update(db, encryption):
+    """PATCH /moments/{id} with no valid fields → 400 error."""
+    from p8.api.routers.moments import update_moment
+
+    repo = Repository(Moment, db, encryption)
+    moment = Moment(
+        name="note-empty-patch",
+        moment_type="note",
+        summary="Some note.",
+    )
+    [moment] = await repo.upsert(moment)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_moment(
+            moment_id=moment.id,
+            body={"rating": 5},  # not in allowed fields
+            user=None,
+            db=db,
+            encryption=encryption,
+        )
+    assert exc_info.value.status_code == 400

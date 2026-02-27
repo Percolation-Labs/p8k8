@@ -1,0 +1,780 @@
+- event_type: daily_summary
+  event_id: d199cc0c-02e0-5729-abd2-749aa4d9aaef
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T23:59:59+00:00'
+  name: daily-2026-02-24
+  moment_type: daily_summary
+  summary: 'Today: 0 messages across 0 session(s), 0 tokens. 8 moment(s).'
+  session_id: d199cc0c-02e0-5729-abd2-749aa4d9aaef
+  image: null
+  encryption_level: null
+  metadata: '{"sessions": [], "moment_count": 8, "total_tokens": 0, "message_count":
+    0, "session_count": 0, "reminder_count": 8, "resource_counts": {}}'
+- event_type: moment
+  event_id: d6178f75-d96d-5593-9682-d0effb951a22
+  event_date: '2026-02-24'
+  event_timestamp: '2026-03-02T09:00:00+00:00'
+  name: weekly-review
+  moment_type: reminder
+  summary: Weekly planning review with the team
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["work", "planning"],
+    "session_name": null, "ends_timestamp": null, "moment_metadata": {"job_name":
+    "reminder-a111fce6-e5c0-4131-953d-e005259ace2a", "schedule": "0 9 * * 1", "frequency":
+    "Every Mon at 09:00", "recurrence": "recurring", "reminder_id": "a111fce6-e5c0-4131-953d-e005259ace2a"},
+    "session_metadata": null, "session_description": null, "previous_moment_keys":
+    []}'
+- event_type: moment
+  event_id: b7f6baba-fd59-580e-baa1-e0ab5bc16496
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-27T14:00:00+00:00'
+  name: dentist-appointment
+  moment_type: reminder
+  summary: Dentist checkup at Dr. Osei clinic
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["health"], "session_name":
+    null, "ends_timestamp": null, "moment_metadata": {"job_name": "reminder-7d1a2d50-c4e3-4115-8c7c-14dcbbfadf7a",
+    "schedule": "0 14 27 2 *", "frequency": "Once — Feb 27 at 14:00", "recurrence":
+    "once", "reminder_id": "7d1a2d50-c4e3-4115-8c7c-14dcbbfadf7a"}, "session_metadata":
+    null, "session_description": null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: f0aa3116-80d9-5c54-a98d-96976d6bb322
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-25T07:30:00+00:00'
+  name: morning-run
+  moment_type: reminder
+  summary: Go for a morning run at the park
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["fitness"], "session_name":
+    null, "ends_timestamp": null, "moment_metadata": {"job_name": "reminder-ed2e46a8-0137-463d-8be0-3940d95561d3",
+    "schedule": "30 7 25 2 *", "frequency": "Once — Feb 25 at 07:30", "recurrence":
+    "once", "reminder_id": "ed2e46a8-0137-463d-8be0-3940d95561d3"}, "session_metadata":
+    null, "session_description": null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 533462e5-01d0-5655-94dc-38e9673fd98a
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T18:00:00+00:00'
+  name: pick-up-groceries
+  moment_type: reminder
+  summary: Pick up groceries from Lidl after work
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["errands"], "session_name":
+    null, "ends_timestamp": null, "moment_metadata": {"job_name": "reminder-55ef82b9-888c-40ac-a73c-4c01af783a35",
+    "schedule": "0 18 24 2 *", "frequency": "Once — Feb 24 at 18:00", "recurrence":
+    "once", "reminder_id": "55ef82b9-888c-40ac-a73c-4c01af783a35"}, "session_metadata":
+    null, "session_description": null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 69ec9ae0-197d-4c73-9692-62e6ca9c2fd6
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T16:13:02.066891+00:00'
+  name: test-15min-reminder
+  moment_type: reminder
+  summary: 'Test reminder: verifying reminder timestamps and feed placement'
+  session_id: null
+  image: null
+  encryption_level: null
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": [], "session_name":
+    null, "ends_timestamp": null, "moment_metadata": {"job_name": "reminder-7967ed76-549f-4256-a5b7-8a0beacffb00",
+    "schedule": "13 16 24 2 *", "frequency": "Once — Feb 24 at 16:13", "recurrence":
+    "once", "reminder_id": "7967ed76-549f-4256-a5b7-8a0beacffb00"}, "session_metadata":
+    null, "session_description": null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 4f121017-dd9a-5088-8b92-3f8411b9c772
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T10:00:01.134274+00:00'
+  name: team-standup
+  moment_type: reminder
+  summary: Daily standup with the engineering team
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["work", "meetings"],
+    "session_name": null, "ends_timestamp": null, "moment_metadata": "{\"job_name\":
+    \"reminder-d4bdf04a-2f04-4047-8f17-20d64955ecc1\", \"schedule\": \"0 10 * * 1-5\",
+    \"frequency\": \"Weekdays at 10:00\", \"recurrence\": \"recurring\", \"reminder_id\":
+    \"d4bdf04a-2f04-4047-8f17-20d64955ecc1\"}", "session_metadata": null, "session_description":
+    null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 122fd8db-7c20-512e-882e-95aa2b5b1d44
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T07:45:01.090505+00:00'
+  name: turn-on-boiler
+  moment_type: reminder
+  summary: Remind Saoirse to turn on the boiler in the morning
+  session_id: 22ab59b0-3847-5a17-a12c-0a4324a103e3
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["morning", "boiler"],
+    "session_name": "Today", "ends_timestamp": null, "moment_metadata": {"job_name":
+    "reminder-c84ff531-3b0c-479c-a352-0a5f6edd61b0", "schedule": "45 7 24 2 *", "next_fire":
+    "2026-02-24T07:45:00+00:00", "recurrence": "once", "reminder_id": "c84ff531-3b0c-479c-a352-0a5f6edd61b0"},
+    "session_metadata": {}, "session_description": null, "previous_moment_keys": []}'
+- event_type: moment
+  event_id: f4f592e1-5f96-55e8-abe2-064f5e45af97
+  event_date: '2026-02-24'
+  event_timestamp: '2026-02-24T07:00:00.109867+00:00'
+  name: feeds-checks
+  moment_type: reminder
+  summary: Do feeds checks
+  session_id: 22ab59b0-3847-5a17-a12c-0a4324a103e3
+  image: null
+  encryption_level: none
+  metadata: '{"category": "reminder", "entities": [], "topic_tags": ["morning"], "session_name":
+    "Today", "ends_timestamp": null, "moment_metadata": {"job_name": "reminder-1f9a260a-ae80-4fbf-8fae-b7e6383c8036",
+    "schedule": "0 7 24 2 *", "next_fire": "2026-02-24T07:00:00+00:00", "recurrence":
+    "once", "reminder_id": "1f9a260a-ae80-4fbf-8fae-b7e6383c8036"}, "session_metadata":
+    {}, "session_description": null, "previous_moment_keys": []}'
+- event_type: daily_summary
+  event_id: eaeb8c35-1e65-5e34-9f12-5c702e533b20
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T23:59:59+00:00'
+  name: daily-2026-02-23
+  moment_type: daily_summary
+  summary: 'Yesterday: 66 messages across 6 session(s), 2327 tokens. 16 moment(s).'
+  session_id: eaeb8c35-1e65-5e34-9f12-5c702e533b20
+  image: null
+  encryption_level: null
+  metadata: '{"sessions": [{"name": "Today", "agent_name": "general", "session_id":
+    "22ab59b0-3847-5a17-a12c-0a4324a103e3"}, {"name": "chat-0de0a91c-2083-4d98-ae11-0d3357c5aa8e",
+    "agent_name": "general", "session_id": "0de0a91c-2083-4d98-ae11-0d3357c5aa8e"},
+    {"name": "chat-4b0138e3-4d72-4458-8143-4959dad682c3", "agent_name": "general",
+    "session_id": "4b0138e3-4d72-4458-8143-4959dad682c3"}, {"name": "chat-82097915-20c6-471b-8a06-e30be3069bec",
+    "agent_name": "general", "session_id": "82097915-20c6-471b-8a06-e30be3069bec"},
+    {"name": "chat-d49a02fb-5a8a-4e89-9a4e-51594bcb8963", "agent_name": "general",
+    "session_id": "d49a02fb-5a8a-4e89-9a4e-51594bcb8963"}, {"name": "reading-2026-02-23",
+    "agent_name": null, "session_id": "a4dafd4a-99db-5cd3-9a7d-685cc181de74"}], "moment_count":
+    16, "total_tokens": 2327, "message_count": 66, "session_count": 6, "reminder_count":
+    0, "resource_counts": {"news": 17, "note": 7}}'
+- event_type: moment
+  event_id: 1e7180ed-f84d-5a7c-8e2a-ba6de04faab6
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T22:00:44.196338+00:00'
+  name: Task Reminders Feedback Observability Pattern
+  moment_type: dream
+  summary: We noticed a recurring emphasis on task reminders, notification cards,
+    and feedback loops as core UI/UX elements to improve user workflows and observability.
+    This pattern spans multiple content uploads and moments, showing a strategic focus
+    on transparency and interaction that support user engagement and productivity.
+    The integration of feedback in app, reminders, and collapsible help videos reflects
+    a nuanced layering of observability features to make task management more dynamic
+    and user-friendly.
+  session_id: 339e6b8d-df7f-49a1-b778-6243aa05a801
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["task management",
+    "feedback", "observability", "UI design", "user experience"], "session_name":
+    "Task Reminders Feedback Observability Pattern", "ends_timestamp": null, "moment_metadata":
+    {"source": "dreaming"}, "session_metadata": {"source": "dreaming", "uploads":
+    [{"source": "dreaming", "moment_id": "1e7180ed-f84d-5a7c-8e2a-ba6de04faab6", "moment_name":
+    "Task Reminders Feedback Observability Pattern", "moment_type": "dream"}], "moment_id":
+    "1e7180ed-f84d-5a7c-8e2a-ba6de04faab6", "moment_name": "Task Reminders Feedback
+    Observability Pattern", "moment_type": "dream"}, "session_description": "We noticed
+    a recurring emphasis on task reminders, notification cards, and feedback loops
+    as core UI/UX elements to improve user workflows and observability. This pattern
+    spans multiple content uploads and moments, showing a strategic focus on transparency
+    and interaction that support user engagement and productivity. The integration
+    of feedback in app, reminders, and collapsible help videos reflects a nuanced
+    layering of observability features to make task management more dynamic and user-frien",
+    "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 1c76a54a-77e5-5af1-a4e6-30532dd5ef96
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T22:00:44.176864+00:00'
+  name: Insight Technology Culture Integration
+  moment_type: dream
+  summary: Our feeds and reading digest reveal a thematic blend of cutting-edge technology,
+    scientific innovation, and societal trends. The coverage ranges from Rust adoption
+    and lidar advances to environmental breakthroughs and cultural shifts like new
+    cafe health trends and undersea internet infrastructure changes. This holistic
+    perspective highlights the intersection of technological progress with environmental
+    and cultural impacts, suggesting a broad interest in how innovation shapes and
+    is shaped by society and nature.
+  session_id: 07c59f7e-6cea-418e-8604-8ad0d1273c8d
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["technology", "culture",
+    "society", "innovation", "environment"], "session_name": "Insight Technology Culture
+    Integration", "ends_timestamp": null, "moment_metadata": {"source": "dreaming"},
+    "session_metadata": {"source": "dreaming", "uploads": [{"source": "dreaming",
+    "moment_id": "1c76a54a-77e5-5af1-a4e6-30532dd5ef96", "moment_name": "Insight Technology
+    Culture Integration", "moment_type": "dream"}], "moment_id": "1c76a54a-77e5-5af1-a4e6-30532dd5ef96",
+    "moment_name": "Insight Technology Culture Integration", "moment_type": "dream"},
+    "session_description": "Our feeds and reading digest reveal a thematic blend of
+    cutting-edge technology, scientific innovation, and societal trends. The coverage
+    ranges from Rust adoption and lidar advances to environmental breakthroughs and
+    cultural shifts like new cafe health trends and undersea internet infrastructure
+    changes. This holistic perspective highlights the intersection of technological
+    progress with environmental and cultural impacts, suggesting a broad interest
+    in how innovation shapes and is shaped by s", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: ed14063b-45eb-51de-a177-4a02bd213f41
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T22:00:44.131524+00:00'
+  name: Synthesis Feedback Observability Collaboration
+  moment_type: dream
+  summary: We discovered a cohesive pattern linking collaborative knowledge editing,
+    task management, and UI design centered around feedback loops and observability.
+    The collaborative ontology editing tool (platoon.txt) pairs naturally with the
+    task features like shared chat, invites, and feedback in the todo list, while
+    design ideas emphasize notification cards and feedback mechanisms to enhance transparency
+    and user engagement. This integration reveals a deliberate strategy to build a
+    user-centric collaboration environment blending structured knowledge work with
+    interactive workflows and real-time feedback.
+  session_id: 95c61a9e-4632-4f36-9ed1-0c5a82b1f15d
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["collaboration", "feedback
+    loops", "observability", "UI design", "task management"], "session_name": "Synthesis
+    Feedback Observability Collaboration", "ends_timestamp": null, "moment_metadata":
+    {"source": "dreaming"}, "session_metadata": {"source": "dreaming", "uploads":
+    [{"source": "dreaming", "moment_id": "ed14063b-45eb-51de-a177-4a02bd213f41", "moment_name":
+    "Synthesis Feedback Observability Collaboration", "moment_type": "dream"}], "moment_id":
+    "ed14063b-45eb-51de-a177-4a02bd213f41", "moment_name": "Synthesis Feedback Observability
+    Collaboration", "moment_type": "dream"}, "session_description": "We discovered
+    a cohesive pattern linking collaborative knowledge editing, task management, and
+    UI design centered around feedback loops and observability. The collaborative
+    ontology editing tool (platoon.txt) pairs naturally with the task features like
+    shared chat, invites, and feedback in the todo list, while design ideas emphasize
+    notification cards and feedback mechanisms to enhance transparency and user engagement.
+    This integration reveals a deliberate strategy to build a user-centric collab",
+    "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 3cf0ddcc-ba36-5fdc-976d-d4c339681531
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T21:22:35.197674+00:00'
+  name: Integration Of Feedback And Observability In Ui Design
+  moment_type: dream
+  summary: The combination of content uploads and task management discussions reveals
+    a growing focus on observability and feedback loops within the UI/UX design, aiming
+    to enhance user experience through features like notification cards, feedback
+    implementation, and task reminders. This pattern suggests a deliberate effort
+    to make workflows more transparent and interactive, reinforcing user engagement
+    and collaboration.
+  session_id: ea2773b0-b74f-48c4-a908-269dee01c7fe
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["UI design", "feedback
+    loops", "observability", "user experience", "workflow"], "session_name": "Integration
+    Of Feedback And Observability In Ui Design", "ends_timestamp": null, "moment_metadata":
+    {"source": "dreaming"}, "session_metadata": {"source": "dreaming", "uploads":
+    [{"source": "dreaming", "moment_id": "3cf0ddcc-ba36-5fdc-976d-d4c339681531", "moment_name":
+    "Integration Of Feedback And Observability In Ui Design", "moment_type": "dream"}],
+    "moment_id": "3cf0ddcc-ba36-5fdc-976d-d4c339681531", "moment_name": "Integration
+    Of Feedback And Observability In Ui Design", "moment_type": "dream"}, "session_description":
+    "The combination of content uploads and task management discussions reveals a
+    growing focus on observability and feedback loops within the UI/UX design, aiming
+    to enhance user experience through features like notification cards, feedback
+    implementation, and task reminders. This pattern suggests a deliberate effort
+    to make workflows more transparent and interactive, reinforcing user engagement
+    and collaboration.", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 3c75b42c-f026-5aed-b889-f1e2727eb023
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T21:22:35.179437+00:00'
+  name: Technology And Cultural Trends In Feed
+  moment_type: dream
+  summary: Our recent reading digest shows a rich mix of technological advances such
+    as Rust adoption, lidar innovation, and environmental breakthroughs, alongside
+    cultural and societal trends like new cafe health trends, undersea cable shutdowns,
+    and space exploration stories. This blend reveals an ongoing interest in how cutting-edge
+    science and technology intersect with societal shifts and culture, offering a
+    holistic perspective on innovation and its broader impacts.
+  session_id: cb08a64b-b26f-4542-a23e-73a06546865e
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["technology", "science",
+    "culture", "societal trends", "environment"], "session_name": "Technology And
+    Cultural Trends In Feed", "ends_timestamp": null, "moment_metadata": {"source":
+    "dreaming"}, "session_metadata": {"source": "dreaming", "uploads": [{"source":
+    "dreaming", "moment_id": "3c75b42c-f026-5aed-b889-f1e2727eb023", "moment_name":
+    "Technology And Cultural Trends In Feed", "moment_type": "dream"}], "moment_id":
+    "3c75b42c-f026-5aed-b889-f1e2727eb023", "moment_name": "Technology And Cultural
+    Trends In Feed", "moment_type": "dream"}, "session_description": "Our recent reading
+    digest shows a rich mix of technological advances such as Rust adoption, lidar
+    innovation, and environmental breakthroughs, alongside cultural and societal trends
+    like new cafe health trends, undersea cable shutdowns, and space exploration stories.
+    This blend reveals an ongoing interest in how cutting-edge science and technology
+    intersect with societal shifts and culture, offering a holistic perspective on
+    innovation and its broader impacts.", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: c13d631f-ddaa-50a5-9174-8b3bb443489d
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T21:22:35.124839+00:00'
+  name: Collaborative Knowledge And Task Synthesis
+  moment_type: dream
+  summary: We discovered a strong thematic connection between collaborative knowledge
+    editing and task management systems across multiple sessions. The uploaded platoon.txt
+    outlines a collaborative ontology and schema editing tool emphasizing human-friendly
+    interaction, while the todo.txt and design_ideas.txt uploads focus on UI improvements,
+    feedback loops, and shared task management features like dark mode, shared chat,
+    invites, and quotas. Together, these reveal a pattern of building integrated,
+    user-centered collaboration environments that blend structured knowledge work
+    with flexible task and communication features.
+  session_id: 2629c233-b9f8-493f-8d49-b6e3ad84f9fa
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["collaboration", "knowledge
+    management", "task management", "UI design", "feedback"], "session_name": "Collaborative
+    Knowledge And Task Synthesis", "ends_timestamp": null, "moment_metadata": {"source":
+    "dreaming"}, "session_metadata": {"source": "dreaming", "uploads": [{"source":
+    "dreaming", "moment_id": "c13d631f-ddaa-50a5-9174-8b3bb443489d", "moment_name":
+    "Collaborative Knowledge And Task Synthesis", "moment_type": "dream"}], "moment_id":
+    "c13d631f-ddaa-50a5-9174-8b3bb443489d", "moment_name": "Collaborative Knowledge
+    And Task Synthesis", "moment_type": "dream"}, "session_description": "We discovered
+    a strong thematic connection between collaborative knowledge editing and task
+    management systems across multiple sessions. The uploaded platoon.txt outlines
+    a collaborative ontology and schema editing tool emphasizing human-friendly interaction,
+    while the todo.txt and design_ideas.txt uploads focus on UI improvements, feedback
+    loops, and shared task management features like dark mode, shared chat, invites,
+    and quotas. Together, these reveal a pattern of building integrated, user-ce",
+    "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 1d268f34-af26-57c0-84b1-5d66e696f5a1
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T17:34:08.940788+00:00'
+  name: reading-20260223T173408
+  moment_type: reading
+  summary: You have articles exploring technological and scientific advances, such
+    as Rust adoption in browsers, innovations in lidar, and discoveries about ancient
+    civilizations and space phenomena. There are also insights into societal trends
+    like undersea cable shutdowns, health-inspired café trends, and environmental
+    stories, alongside some lighter pieces on space games and unique creatures. Overall,
+    your feed offers a mix of cutting-edge science, tech developments, and cultural
+    shifts.
+  session_id: 5283c30f-bac8-422d-b031-56cbd18b3d95
+  image: data:image/jpeg;base64,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
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": ["hacker_news", "news",
+    "Fox News", "General", "food restaurants trends", "google_news", "health", "Science",
+    "flipboard", "world", "Space", "environment", "Space.com", "space.com", "Eater",
+    "eater", "Technology", "Trivia", "history", "weird", "Science News", "science_news",
+    "unusual"], "session_name": "reading-20260223T173408", "ends_timestamp": null,
+    "moment_metadata": {"items": [{"uri": "https://spectrum.ieee.org/age-verification",
+    "tags": ["hacker_news", "news"], "title": "The Age Verification Trap: Verifying
+    age undermines everyone''s data protection", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64968905&width=1200&height=600&coordinates=0%2C11%2C0%2C239",
+    "resource_id": "c3d13a75-0730-5e78-b5ae-94b3ea3a7f1d"}, {"uri": "https://ladybird.org/posts/adopting-rust/",
+    "tags": ["hacker_news", "news"], "title": "Ladybird Browser adopts Rust", "image_uri":
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "5964169a-87e2-5809-a8fc-881280ac7d9e"}, {"uri": "https://www.chrisbrunet.com/p/elsevier-shuts-down-its-finance-journal",
+    "tags": ["hacker_news", "news"], "title": "Elsevier shuts down its finance journal
+    citation cartel", "image_uri": "https://substackcdn.com/image/fetch/$s_!hYDV!,w_1200,h_675,c_fill,f_jpg,q_auto:good,fl_progressive:steep,g_auto/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Febf6f289-f7d1-4bea-8556-53dac0a159eb_512x512.jpeg",
+    "resource_id": "b6ef108b-26e5-581b-a52a-f002e706d263"}, {"uri": "https://spectrum.ieee.org/solid-state-lidar-microvision-adas",
+    "tags": ["hacker_news", "news"], "title": "Sub-$200 Lidar could reshuffle auto
+    sensor economics", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64423665&width=1200&height=600&coordinates=0%2C330%2C0%2C170",
+    "resource_id": "91599ce8-fcbb-509c-a66c-747deb66b3a3"}, {"uri": "https://magicalmushroom.com/index",
+    "tags": ["hacker_news", "news"], "title": "Magical Mushroom – Europe''s first
+    industrial-scale mycelium packaging producer", "image_uri": "https://a.storyblok.com/f/142449/2500x1667/4cab6ab4ac/lm0_9542_rt.jpg",
+    "resource_id": "fd2f462f-6fd5-5762-821a-888bded4616b"}, {"uri": "https://news.google.com/rss/articles/CBMisgFBVV95cUxQZEs5NWFnaExlQWZDTjBjSElTNlhHZG9rYzFENnY3MFlTZTdYdk5uUk9CSjF0ZDN1QVRQTG55d0pxeFZRWU9iXzhaOGtsRkNnenVNWUxFd2lWYXdvTGI4bTc3bVV0VlNaaFhtRG9LTDItVDR5UmhoaGdNdlY5N1J2TllDejM5UHhXdTdNU2VncEtPc01oWm5scXVQSnlGczVpTE13VnljbTFJOG5LaHgzUDlR0gG3AUFVX3lxTFB4S2YyT2FPcTc5cS1aLVFuNUFHZWo4THlhc2JCZjVUSG9kN3BldGNGdlc2S0FXeFRSMU1LdjNNWV9RcV9MVlhYNnN5TmRTUEMzOGlfR3UzVUVtS0pRN1JJLUUxOVFnSmJOUXNidVFTUFViOW5wa2xhbTVvX1lGV1N2ZWNHNXdjLTBsakNEa21TWE1FWkR3YXBaWElvSjR0VVhEblo3SzU4WFpOUDgwRk84NjBpS0pZRQ?oc=5",
+    "tags": ["Fox News", "General", "food restaurants trends", "google_news", "health",
+    "news"], "title": "Jet-black café trend sweeps America as experts share health
+    benefits behind the hype - Fox News", "image_uri": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "2ebb9793-9665-5ca0-8745-76ab68f8c4f6"}, {"uri": "https://www.popularmechanics.com/science/animals/a70463889/engineers-find-durable-cement-secret-stronger/?utm_source=flipboard&utm_content=topic%2Fscience",
+    "tags": ["General", "Science", "flipboard", "news", "world"], "title": "Engineers
+    Discovered the Spectacular Secret to Making 17x Stronger Cement", "image_uri":
+    "https://hips.hearstapps.com/hmg-prod/images/adding-lime-to-cement-royalty-free-image-1719333421.jpg?crop=1xw:0.74982xh;center,top&resize=1200:*",
+    "resource_id": "f1cc454c-c3b7-5c6f-b227-b1faeab5d27e"}, {"uri": "https://flipboard.com/@spacecom/survival-on-mars-scientists-explain-why-sci%E2%80%91fi-gets-it-so-wrong-g3dotl3fpju5fad0",
+    "tags": ["General", "Space", "environment", "flipboard", "news"], "title": "Survival
+    on Mars: Scientists Explain Why Sci‑Fi Gets It So Wrong", "image_uri": "https://ic-cdn.flipboard.com/flipboard.com/55f113beb55e81180e605b04795f631e90e8576f/_medium.jpeg",
+    "resource_id": "a0d362f9-cb24-5df0-8708-e99137c38d54"}, {"uri": "https://www.space.com/best-space-games",
+    "tags": ["General", "Space.com", "news", "space.com", "world"], "title": "Best
+    space games: 15 out-of-this-world adventures for space fans", "image_uri": "https://cdn.mos.cms.futurecdn.net/WUoTKEruV2Hxo5ibEiSAJc-1280-80.jpg",
+    "resource_id": "6e7c525b-1d2e-5f61-a328-b9387e336e9a"}, {"uri": "https://www.eater.com/awards-season/943773/michelin-guide-southwest-las-vegas-returns-2026",
+    "tags": ["Eater", "General", "eater", "news", "world"], "title": "Michelin’s Return
+    to Vegas Is Huge for the Southwest", "image_uri": "https://platform.eater.com/wp-content/uploads/sites/2/2026/02/gettyimages-539576950.jpg?quality=90&strip=all&crop=0%2C10.732984293194%2C100%2C78.534031413613&w=1200",
+    "resource_id": "5c4c7f16-0adb-5d73-a304-4543700c3ce7"}, {"uri": "https://www.wired.com/story/say-goodbye-to-the-undersea-cable-that-made-the-global-internet-possible/?utm_source=flipboard&utm_content=WIRED/magazine/Business",
+    "tags": ["Technology", "Trivia", "flipboard", "history", "news"], "title": "Say
+    Goodbye to the Undersea Cable That Made the Global Internet Possible", "image_uri":
+    "https://media.wired.com/photos/69950fe1c4d411f9d42d67bc/191:100/w_1280,c_limit/Sharks%20(1).jpg",
+    "resource_id": "d1be51de-eac5-5ceb-99de-cd1b86b148fe"}, {"uri": "https://www.discoverwildlife.com/flowers/welwitschia-mirabilis",
+    "tags": ["Space", "Trivia", "flipboard", "news", "weird"], "title": "It’s longer
+    than a blue whale, is thousands of years old and drinks fog – meet this weird
+    ‘living fossil’", "image_uri": "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=400&h=200&fit=crop",
+    "resource_id": "43827b4e-e94c-55c8-929e-d99d4323fa43"}, {"uri": "https://www.sciencenews.org/article/iron-age-mass-grave-women-children",
+    "tags": ["Science News", "Trivia", "news", "science_news", "unusual"], "title":
+    "Iron Age mass grave may hold unusual victims: mostly women and children", "image_uri":
+    "https://www.sciencenews.org/wp-content/uploads/sites/2/2026/02/022026_TM_Serbia_main.jpg?w=800",
+    "resource_id": "ae3f8230-cba1-5490-90f8-f78b72481efb"}], "source": "reading_pipeline",
+    "resource_count": 13}, "session_metadata": {"items": [{"uri": "https://spectrum.ieee.org/age-verification",
+    "tags": ["hacker_news", "news"], "title": "The Age Verification Trap: Verifying
+    age undermines everyone''s data protection", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64968905&width=1200&height=600&coordinates=0%2C11%2C0%2C239",
+    "resource_id": "c3d13a75-0730-5e78-b5ae-94b3ea3a7f1d"}, {"uri": "https://ladybird.org/posts/adopting-rust/",
+    "tags": ["hacker_news", "news"], "title": "Ladybird Browser adopts Rust", "image_uri":
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "5964169a-87e2-5809-a8fc-881280ac7d9e"}, {"uri": "https://www.chrisbrunet.com/p/elsevier-shuts-down-its-finance-journal",
+    "tags": ["hacker_news", "news"], "title": "Elsevier shuts down its finance journal
+    citation cartel", "image_uri": "https://substackcdn.com/image/fetch/$s_!hYDV!,w_1200,h_675,c_fill,f_jpg,q_auto:good,fl_progressive:steep,g_auto/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Febf6f289-f7d1-4bea-8556-53dac0a159eb_512x512.jpeg",
+    "resource_id": "b6ef108b-26e5-581b-a52a-f002e706d263"}, {"uri": "https://spectrum.ieee.org/solid-state-lidar-microvision-adas",
+    "tags": ["hacker_news", "news"], "title": "Sub-$200 Lidar could reshuffle auto
+    sensor economics", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64423665&width=1200&height=600&coordinates=0%2C330%2C0%2C170",
+    "resource_id": "91599ce8-fcbb-509c-a66c-747deb66b3a3"}, {"uri": "https://magicalmushroom.com/index",
+    "tags": ["hacker_news", "news"], "title": "Magical Mushroom – Europe''s first
+    industrial-scale mycelium packaging producer", "image_uri": "https://a.storyblok.com/f/142449/2500x1667/4cab6ab4ac/lm0_9542_rt.jpg",
+    "resource_id": "fd2f462f-6fd5-5762-821a-888bded4616b"}, {"uri": "https://news.google.com/rss/articles/CBMisgFBVV95cUxQZEs5NWFnaExlQWZDTjBjSElTNlhHZG9rYzFENnY3MFlTZTdYdk5uUk9CSjF0ZDN1QVRQTG55d0pxeFZRWU9iXzhaOGtsRkNnenVNWUxFd2lWYXdvTGI4bTc3bVV0VlNaaFhtRG9LTDItVDR5UmhoaGdNdlY5N1J2TllDejM5UHhXdTdNU2VncEtPc01oWm5scXVQSnlGczVpTE13VnljbTFJOG5LaHgzUDlR0gG3AUFVX3lxTFB4S2YyT2FPcTc5cS1aLVFuNUFHZWo4THlhc2JCZjVUSG9kN3BldGNGdlc2S0FXeFRSMU1LdjNNWV9RcV9MVlhYNnN5TmRTUEMzOGlfR3UzVUVtS0pRN1JJLUUxOVFnSmJOUXNidVFTUFViOW5wa2xhbTVvX1lGV1N2ZWNHNXdjLTBsakNEa21TWE1FWkR3YXBaWElvSjR0VVhEblo3SzU4WFpOUDgwRk84NjBpS0pZRQ?oc=5",
+    "tags": ["Fox News", "General", "food restaurants trends", "google_news", "health",
+    "news"], "title": "Jet-black café trend sweeps America as experts share health
+    benefits behind the hype - Fox News", "image_uri": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "2ebb9793-9665-5ca0-8745-76ab68f8c4f6"}, {"uri": "https://www.popularmechanics.com/science/animals/a70463889/engineers-find-durable-cement-secret-stronger/?utm_source=flipboard&utm_content=topic%2Fscience",
+    "tags": ["General", "Science", "flipboard", "news", "world"], "title": "Engineers
+    Discovered the Spectacular Secret to Making 17x Stronger Cement", "image_uri":
+    "https://hips.hearstapps.com/hmg-prod/images/adding-lime-to-cement-royalty-free-image-1719333421.jpg?crop=1xw:0.74982xh;center,top&resize=1200:*",
+    "resource_id": "f1cc454c-c3b7-5c6f-b227-b1faeab5d27e"}, {"uri": "https://flipboard.com/@spacecom/survival-on-mars-scientists-explain-why-sci%E2%80%91fi-gets-it-so-wrong-g3dotl3fpju5fad0",
+    "tags": ["General", "Space", "environment", "flipboard", "news"], "title": "Survival
+    on Mars: Scientists Explain Why Sci‑Fi Gets It So Wrong", "image_uri": "https://ic-cdn.flipboard.com/flipboard.com/55f113beb55e81180e605b04795f631e90e8576f/_medium.jpeg",
+    "resource_id": "a0d362f9-cb24-5df0-8708-e99137c38d54"}, {"uri": "https://www.space.com/best-space-games",
+    "tags": ["General", "Space.com", "news", "space.com", "world"], "title": "Best
+    space games: 15 out-of-this-world adventures for space fans", "image_uri": "https://cdn.mos.cms.futurecdn.net/WUoTKEruV2Hxo5ibEiSAJc-1280-80.jpg",
+    "resource_id": "6e7c525b-1d2e-5f61-a328-b9387e336e9a"}, {"uri": "https://www.eater.com/awards-season/943773/michelin-guide-southwest-las-vegas-returns-2026",
+    "tags": ["Eater", "General", "eater", "news", "world"], "title": "Michelin’s Return
+    to Vegas Is Huge for the Southwest", "image_uri": "https://platform.eater.com/wp-content/uploads/sites/2/2026/02/gettyimages-539576950.jpg?quality=90&strip=all&crop=0%2C10.732984293194%2C100%2C78.534031413613&w=1200",
+    "resource_id": "5c4c7f16-0adb-5d73-a304-4543700c3ce7"}, {"uri": "https://www.wired.com/story/say-goodbye-to-the-undersea-cable-that-made-the-global-internet-possible/?utm_source=flipboard&utm_content=WIRED/magazine/Business",
+    "tags": ["Technology", "Trivia", "flipboard", "history", "news"], "title": "Say
+    Goodbye to the Undersea Cable That Made the Global Internet Possible", "image_uri":
+    "https://media.wired.com/photos/69950fe1c4d411f9d42d67bc/191:100/w_1280,c_limit/Sharks%20(1).jpg",
+    "resource_id": "d1be51de-eac5-5ceb-99de-cd1b86b148fe"}, {"uri": "https://www.discoverwildlife.com/flowers/welwitschia-mirabilis",
+    "tags": ["Space", "Trivia", "flipboard", "news", "weird"], "title": "It’s longer
+    than a blue whale, is thousands of years old and drinks fog – meet this weird
+    ‘living fossil’", "image_uri": "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=400&h=200&fit=crop",
+    "resource_id": "43827b4e-e94c-55c8-929e-d99d4323fa43"}, {"uri": "https://www.sciencenews.org/article/iron-age-mass-grave-women-children",
+    "tags": ["Science News", "Trivia", "news", "science_news", "unusual"], "title":
+    "Iron Age mass grave may hold unusual victims: mostly women and children", "image_uri":
+    "https://www.sciencenews.org/wp-content/uploads/sites/2/2026/02/022026_TM_Serbia_main.jpg?w=800",
+    "resource_id": "ae3f8230-cba1-5490-90f8-f78b72481efb"}], "source": "reading_pipeline",
+    "uploads": [{"items": [{"uri": "https://spectrum.ieee.org/age-verification", "tags":
+    ["hacker_news", "news"], "title": "The Age Verification Trap: Verifying age undermines
+    everyone''s data protection", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64968905&width=1200&height=600&coordinates=0%2C11%2C0%2C239",
+    "resource_id": "c3d13a75-0730-5e78-b5ae-94b3ea3a7f1d"}, {"uri": "https://ladybird.org/posts/adopting-rust/",
+    "tags": ["hacker_news", "news"], "title": "Ladybird Browser adopts Rust", "image_uri":
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "5964169a-87e2-5809-a8fc-881280ac7d9e"}, {"uri": "https://www.chrisbrunet.com/p/elsevier-shuts-down-its-finance-journal",
+    "tags": ["hacker_news", "news"], "title": "Elsevier shuts down its finance journal
+    citation cartel", "image_uri": "https://substackcdn.com/image/fetch/$s_!hYDV!,w_1200,h_675,c_fill,f_jpg,q_auto:good,fl_progressive:steep,g_auto/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Febf6f289-f7d1-4bea-8556-53dac0a159eb_512x512.jpeg",
+    "resource_id": "b6ef108b-26e5-581b-a52a-f002e706d263"}, {"uri": "https://spectrum.ieee.org/solid-state-lidar-microvision-adas",
+    "tags": ["hacker_news", "news"], "title": "Sub-$200 Lidar could reshuffle auto
+    sensor economics", "image_uri": "https://spectrum.ieee.org/media-library/image.jpg?id=64423665&width=1200&height=600&coordinates=0%2C330%2C0%2C170",
+    "resource_id": "91599ce8-fcbb-509c-a66c-747deb66b3a3"}, {"uri": "https://magicalmushroom.com/index",
+    "tags": ["hacker_news", "news"], "title": "Magical Mushroom – Europe''s first
+    industrial-scale mycelium packaging producer", "image_uri": "https://a.storyblok.com/f/142449/2500x1667/4cab6ab4ac/lm0_9542_rt.jpg",
+    "resource_id": "fd2f462f-6fd5-5762-821a-888bded4616b"}, {"uri": "https://news.google.com/rss/articles/CBMisgFBVV95cUxQZEs5NWFnaExlQWZDTjBjSElTNlhHZG9rYzFENnY3MFlTZTdYdk5uUk9CSjF0ZDN1QVRQTG55d0pxeFZRWU9iXzhaOGtsRkNnenVNWUxFd2lWYXdvTGI4bTc3bVV0VlNaaFhtRG9LTDItVDR5UmhoaGdNdlY5N1J2TllDejM5UHhXdTdNU2VncEtPc01oWm5scXVQSnlGczVpTE13VnljbTFJOG5LaHgzUDlR0gG3AUFVX3lxTFB4S2YyT2FPcTc5cS1aLVFuNUFHZWo4THlhc2JCZjVUSG9kN3BldGNGdlc2S0FXeFRSMU1LdjNNWV9RcV9MVlhYNnN5TmRTUEMzOGlfR3UzVUVtS0pRN1JJLUUxOVFnSmJOUXNidVFTUFViOW5wa2xhbTVvX1lGV1N2ZWNHNXdjLTBsakNEa21TWE1FWkR3YXBaWElvSjR0VVhEblo3SzU4WFpOUDgwRk84NjBpS0pZRQ?oc=5",
+    "tags": ["Fox News", "General", "food restaurants trends", "google_news", "health",
+    "news"], "title": "Jet-black café trend sweeps America as experts share health
+    benefits behind the hype - Fox News", "image_uri": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
+    "resource_id": "2ebb9793-9665-5ca0-8745-76ab68f8c4f6"}, {"uri": "https://www.popularmechanics.com/science/animals/a70463889/engineers-find-durable-cement-secret-stronger/?utm_source=flipboard&utm_content=topic%2Fscience",
+    "tags": ["General", "Science", "flipboard", "news", "world"], "title": "Engineers
+    Discovered the Spectacular Secret to Making 17x Stronger Cement", "image_uri":
+    "https://hips.hearstapps.com/hmg-prod/images/adding-lime-to-cement-royalty-free-image-1719333421.jpg?crop=1xw:0.74982xh;center,top&resize=1200:*",
+    "resource_id": "f1cc454c-c3b7-5c6f-b227-b1faeab5d27e"}, {"uri": "https://flipboard.com/@spacecom/survival-on-mars-scientists-explain-why-sci%E2%80%91fi-gets-it-so-wrong-g3dotl3fpju5fad0",
+    "tags": ["General", "Space", "environment", "flipboard", "news"], "title": "Survival
+    on Mars: Scientists Explain Why Sci‑Fi Gets It So Wrong", "image_uri": "https://ic-cdn.flipboard.com/flipboard.com/55f113beb55e81180e605b04795f631e90e8576f/_medium.jpeg",
+    "resource_id": "a0d362f9-cb24-5df0-8708-e99137c38d54"}, {"uri": "https://www.space.com/best-space-games",
+    "tags": ["General", "Space.com", "news", "space.com", "world"], "title": "Best
+    space games: 15 out-of-this-world adventures for space fans", "image_uri": "https://cdn.mos.cms.futurecdn.net/WUoTKEruV2Hxo5ibEiSAJc-1280-80.jpg",
+    "resource_id": "6e7c525b-1d2e-5f61-a328-b9387e336e9a"}, {"uri": "https://www.eater.com/awards-season/943773/michelin-guide-southwest-las-vegas-returns-2026",
+    "tags": ["Eater", "General", "eater", "news", "world"], "title": "Michelin’s Return
+    to Vegas Is Huge for the Southwest", "image_uri": "https://platform.eater.com/wp-content/uploads/sites/2/2026/02/gettyimages-539576950.jpg?quality=90&strip=all&crop=0%2C10.732984293194%2C100%2C78.534031413613&w=1200",
+    "resource_id": "5c4c7f16-0adb-5d73-a304-4543700c3ce7"}, {"uri": "https://www.wired.com/story/say-goodbye-to-the-undersea-cable-that-made-the-global-internet-possible/?utm_source=flipboard&utm_content=WIRED/magazine/Business",
+    "tags": ["Technology", "Trivia", "flipboard", "history", "news"], "title": "Say
+    Goodbye to the Undersea Cable That Made the Global Internet Possible", "image_uri":
+    "https://media.wired.com/photos/69950fe1c4d411f9d42d67bc/191:100/w_1280,c_limit/Sharks%20(1).jpg",
+    "resource_id": "d1be51de-eac5-5ceb-99de-cd1b86b148fe"}, {"uri": "https://www.discoverwildlife.com/flowers/welwitschia-mirabilis",
+    "tags": ["Space", "Trivia", "flipboard", "news", "weird"], "title": "It’s longer
+    than a blue whale, is thousands of years old and drinks fog – meet this weird
+    ‘living fossil’", "image_uri": "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=400&h=200&fit=crop",
+    "resource_id": "43827b4e-e94c-55c8-929e-d99d4323fa43"}, {"uri": "https://www.sciencenews.org/article/iron-age-mass-grave-women-children",
+    "tags": ["Science News", "Trivia", "news", "science_news", "unusual"], "title":
+    "Iron Age mass grave may hold unusual victims: mostly women and children", "image_uri":
+    "https://www.sciencenews.org/wp-content/uploads/sites/2/2026/02/022026_TM_Serbia_main.jpg?w=800",
+    "resource_id": "ae3f8230-cba1-5490-90f8-f78b72481efb"}], "source": "reading_pipeline",
+    "moment_id": "1d268f34-af26-57c0-84b1-5d66e696f5a1", "moment_name": "reading-20260223T173408",
+    "moment_type": "reading", "resource_count": 13}], "moment_id": "1d268f34-af26-57c0-84b1-5d66e696f5a1",
+    "moment_name": "reading-20260223T173408", "moment_type": "reading", "resource_count":
+    13}, "session_description": "You have articles exploring technological and scientific
+    advances, such as Rust adoption in browsers, innovations in lidar, and discoveries
+    about ancient civilizations and space phenomena. There are also insights into
+    societal trends like undersea cable shutdowns, health-inspired café trends, and
+    environmental stories, alongside some lighter pieces on space games and unique
+    creatures. Overall, your feed offers a mix of cutting-edge science, tech developments,
+    and cultural shifts.", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 26111c3f-7644-5d19-9f4e-b8574089a9a3
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T09:32:57.364357+00:00'
+  name: upload-tweaks
+  moment_type: content_upload
+  summary: F68UlzYZcygqkU6DbqYXDno+yToMN5vgpW01fi2EozF4RLtTfDoAMv6U/RsEJAKvU3KYJa3Gy570v+beDVQE3FfTFrZvavHoDYOcelDrOAXKju37q4HZzSFIZIpf9JLgNxt57XE/0c+btDPrznu+mNAYradBPVfp/J0AXvtji6vH5KUJ12jDIznfaqgJK6cr/5Wf+tSc86Ftjw0=
+  session_id: b4c23f6a-cd23-4d1b-91f5-aebbc8b5f87e
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-tweaks", "ends_timestamp": null, "moment_metadata": {"source": "upload",
+    "file_id": "03ed600c-5bbb-5f5c-8533-d111a69be6b9", "file_name": "tweaks.txt",
+    "chunk_count": 1, "resource_keys": ["tweaks-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "03ed600c-5bbb-5f5c-8533-d111a69be6b9", "uploads":
+    [{"source": "upload", "file_id": "03ed600c-5bbb-5f5c-8533-d111a69be6b9", "file_name":
+    "tweaks.txt", "moment_id": "26111c3f-7644-5d19-9f4e-b8574089a9a3", "chunk_count":
+    1, "moment_name": "upload-tweaks", "moment_type": "content_upload", "resource_keys":
+    ["tweaks-chunk-0000"]}], "file_name": "tweaks.txt", "moment_id": "26111c3f-7644-5d19-9f4e-b8574089a9a3",
+    "chunk_count": 1, "moment_name": "upload-tweaks", "moment_type": "content_upload",
+    "resource_keys": ["tweaks-chunk-0000"]}, "session_description": "Uploaded tweaks.txt
+    (1 chunks, 47 chars).\nResources: tweaks-chunk-0000\nPreview: tweaks\n\nshould
+    title case text note moment card", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: b878dd02-94b9-5ce9-bc1c-0d581fbf026c
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T09:32:04.912678+00:00'
+  name: upload-conversational_getting_to_know
+  moment_type: content_upload
+  summary: TlqeBMoG5SGqyJvtbTlDCJ1v5RhwR7jyRpckOqsUOfElq26KNCbG9r9/OuwTTiiXVVsZucj9qT11ycDiVUEG/Av96Mncy6Hys6uxydkAGZUTW9UaPmVyiYlE42RIyOw8OmKBLT+WhdHwCAwdYIUcu8aBP2ZL/ueQnt/adkfCbbP8lTc7B6gEezoULGhCx1MmpOw+ICJNDgSfRbPB9XVSQk1nEA7uJmqnvbySLmNkaRh9hienK/YOjjXR6pkrz3c06LwOQvK/xSctL4TZOSc/JtxLlVORgO+ttU0tUMhkRhxdmJcxm77dyapVBEIWpWmrCGxEDM1MSSKdaBg9hLEjgnLE2cVP4sptiEBDIg0ecZOik0m2xMuoEPZcuX9G1bbVlwTZgI91FisBM85lu7xfXTUZSQrdwwF460uhENtL+6o7NOaHT1gIPrfTG91XzQq5l/VV3sTnYhKTbEOKRT8qJjt5fQ5ZJDzL
+  session_id: a02e4c40-14ab-4b32-88f9-08d2769f637c
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-conversational_getting_to_know", "ends_timestamp": null, "moment_metadata":
+    {"source": "upload", "file_id": "13fdc6fc-8bf4-563a-a0fb-57c5a759989c", "file_name":
+    "conversational_getting_to_know.txt", "chunk_count": 1, "resource_keys": ["conversational_getting_to_know-chunk-0000"]},
+    "session_metadata": {"source": "upload", "file_id": "13fdc6fc-8bf4-563a-a0fb-57c5a759989c",
+    "uploads": [{"source": "upload", "file_id": "13fdc6fc-8bf4-563a-a0fb-57c5a759989c",
+    "file_name": "conversational_getting_to_know.txt", "moment_id": "b878dd02-94b9-5ce9-bc1c-0d581fbf026c",
+    "chunk_count": 1, "moment_name": "upload-conversational_getting_to_know", "moment_type":
+    "content_upload", "resource_keys": ["conversational_getting_to_know-chunk-0000"]}],
+    "file_name": "conversational_getting_to_know.txt", "moment_id": "b878dd02-94b9-5ce9-bc1c-0d581fbf026c",
+    "chunk_count": 1, "moment_name": "upload-conversational_getting_to_know", "moment_type":
+    "content_upload", "resource_keys": ["conversational_getting_to_know-chunk-0000"]},
+    "session_description": "Uploaded conversational_getting_to_know.txt (1 chunks,
+    226 chars).\nResources: conversational_getting_to_know-chunk-0000\nPreview: conversational
+    getting to know\n\nnormally be direct but when the user is just vague or wanting
+    to chat look up their profile, and ask questions that can help us learn about
+    them.   their name, interest…", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 4814c72c-5e87-5f35-8ec4-5d74a8fbca34
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T09:17:19.611306+00:00'
+  name: upload-voice_1771838233541
+  moment_type: content_upload
+  summary: B+6dG5YaZFlH8Z+1HCrVUtJyWOidZNoKgFD208FdYbDAZy9PAcSTr7yvInpmgepeYsVE4VyEcGq+HWYozvVq24TXZ8p3McIk9IO8R0sCzbT7caWmaIowAEA3X0Elt1rnWIpHQ88uaSrzR/CHOB5HucEpZllZwbGsuqQmhW4sXIN1FtgAFqCgbRaUYU+SGDwqvvGxh20gx/2z0AkIlB4R
+  session_id: c2e50db8-e058-4045-bdde-e29fb27893b1
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-voice_1771838233541", "ends_timestamp": null, "moment_metadata": {"source":
+    "upload", "file_id": "a33784c1-4679-5b11-84f3-f59ddc50f8a5", "file_name": "voice_1771838233541.m4a",
+    "chunk_count": 1, "resource_keys": ["voice_1771838233541-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "a33784c1-4679-5b11-84f3-f59ddc50f8a5", "uploads":
+    [{"source": "upload", "file_id": "a33784c1-4679-5b11-84f3-f59ddc50f8a5", "file_name":
+    "voice_1771838233541.m4a", "moment_id": "4814c72c-5e87-5f35-8ec4-5d74a8fbca34",
+    "chunk_count": 1, "moment_name": "upload-voice_1771838233541", "moment_type":
+    "content_upload", "resource_keys": ["voice_1771838233541-chunk-0000"]}], "file_name":
+    "voice_1771838233541.m4a", "moment_id": "4814c72c-5e87-5f35-8ec4-5d74a8fbca34",
+    "chunk_count": 1, "moment_name": "upload-voice_1771838233541", "moment_type":
+    "content_upload", "resource_keys": ["voice_1771838233541-chunk-0000"]}, "session_description":
+    "Uploaded voice_1771838233541.m4a (1 chunks, 25 chars).\nResources: voice_1771838233541-chunk-0000\nPreview:
+    I think I''m in. on audio.", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: a84fd33d-d7c0-5927-9e9f-aac992581f4d
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T08:57:18.557488+00:00'
+  name: upload-design_ideas
+  moment_type: content_upload
+  summary: JKgMjlO8Gcw7noW8xtrHvEYty7D7jXyn5kNIxxEd3GVzdFbAC7N8nYAqtVMSyS5MTJwbHJk4mY6wNpNMIU35xEeVZMiC1pq34EYEO7uXaqzUqPTsFUC/VMzCORlB4AS7Npg5dED0caCMoFqof6ArbhPo6voYK0J2YDp7w4AnVw5uqKP3+9/zU9WLU+i5lOzsHsl2AgW2Xce5jDIKzn/Y/K1arOc737uhzJ4jTztM3wJp4TSqKf87FF681Nf3cqR6AkWrgWrauUWaLu9G+XB8uXxJlqTQIuaa6KbrGxmdV20MwcY0sul4ysN6lr/qMaKo61Ik5+fgxDmkpYyoHvED1mRFAl/iebF/Kc74WjDEKMGjKeyf3whH2EA+z9zsBawmRuVcF8Syhw==
+  session_id: 901763be-34c2-4596-8947-e02197a9e241
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-design_ideas", "ends_timestamp": null, "moment_metadata": {"source": "upload",
+    "file_id": "48681d38-2565-5a9f-9042-88c2c821c98d", "file_name": "design_ideas.txt",
+    "chunk_count": 1, "resource_keys": ["design_ideas-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "48681d38-2565-5a9f-9042-88c2c821c98d", "uploads":
+    [{"source": "upload", "file_id": "48681d38-2565-5a9f-9042-88c2c821c98d", "file_name":
+    "design_ideas.txt", "moment_id": "a84fd33d-d7c0-5927-9e9f-aac992581f4d", "chunk_count":
+    1, "moment_name": "upload-design_ideas", "moment_type": "content_upload", "resource_keys":
+    ["design_ideas-chunk-0000"]}], "file_name": "design_ideas.txt", "moment_id": "a84fd33d-d7c0-5927-9e9f-aac992581f4d",
+    "chunk_count": 1, "moment_name": "upload-design_ideas", "moment_type": "content_upload",
+    "resource_keys": ["design_ideas-chunk-0000"]}, "session_description": "Uploaded
+    design_ideas.txt (1 chunks, 174 chars).\nResources: design_ideas-chunk-0000\nPreview:
+    design ideas\n\nshow thinking events as notification cards like uploads\nmaybe
+    add other cards like help videos on feed or online in chats (collapsible?)\nfeedback
+    implementation", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: c3a1af08-c917-59d3-b2cc-78e2431611b7
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T08:51:07.303292+00:00'
+  name: upload-more_todos
+  moment_type: content_upload
+  summary: Ol0SGNPTjERLmxWUcZ06fIwsCCQrDAu8FuFZUiuCfeYqkfUtWGLkJEpeM0NfoAYT5B7BFIXtdHsHrZuhTeZc5OQYYe5cJW7OEJMZRAsS51wA18/1nRvPnQa6ZjMTDA45tYEhd+CCtPUF2tHTJl+uei9hQHaPXcVyKQdTUcKYT5Xb6p+M7xxk3jEvPN+ZScNLRE2CPjXGC+VQ6j+F7g5sPe/zHRbXQyzqlcaY01pnu+xzHv8AKqvoe8mV7DwHRr2Op+Zs/7a7bXJPkQo=
+  session_id: 1bd294fe-1c8b-4dad-a25e-9ac92c5a53c4
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-more_todos", "ends_timestamp": null, "moment_metadata": {"source": "upload",
+    "file_id": "7cf47893-9327-557d-b432-41c5a47cb6f8", "file_name": "more_todos.txt",
+    "chunk_count": 1, "resource_keys": ["more_todos-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "7cf47893-9327-557d-b432-41c5a47cb6f8", "uploads":
+    [{"source": "upload", "file_id": "7cf47893-9327-557d-b432-41c5a47cb6f8", "file_name":
+    "more_todos.txt", "moment_id": "c3a1af08-c917-59d3-b2cc-78e2431611b7", "chunk_count":
+    1, "moment_name": "upload-more_todos", "moment_type": "content_upload", "resource_keys":
+    ["more_todos-chunk-0000"]}], "file_name": "more_todos.txt", "moment_id": "c3a1af08-c917-59d3-b2cc-78e2431611b7",
+    "chunk_count": 1, "moment_name": "upload-more_todos", "moment_type": "content_upload",
+    "resource_keys": ["more_todos-chunk-0000"]}, "session_description": "Uploaded
+    more_todos.txt (1 chunks, 87 chars).\nResources: more_todos-chunk-0000\nPreview:
+    more todos\n\nset reminder ack\ncheck if appears in moments\ndark mode\nmore generous
+    quotas", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: 304a4251-43a0-5899-8b45-0d4a52e4640e
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T03:19:36.013421+00:00'
+  name: upload-platoon
+  moment_type: content_upload
+  summary: 'Uploaded platoon.txt (1 chunks, 116 chars).
+
+    Resources: platoon-chunk-0000
+
+    Preview: platoon
+
+
+    ontology editor/wiki ed
+
+    chat and edit (collab)
+
+    file upload samples (invoice)
+
+    to schema tool
+
+
+    human friendly'
+  session_id: ae592dc6-5704-4261-ace2-f123077721f4
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-platoon", "ends_timestamp": null, "moment_metadata": {"source": "upload",
+    "file_id": "5d30af74-202e-521d-99a8-e1438b1186b6", "file_name": "platoon.txt",
+    "chunk_count": 1, "resource_keys": ["platoon-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "5d30af74-202e-521d-99a8-e1438b1186b6", "uploads":
+    [{"source": "upload", "file_id": "5d30af74-202e-521d-99a8-e1438b1186b6", "file_name":
+    "platoon.txt", "moment_id": "304a4251-43a0-5899-8b45-0d4a52e4640e", "chunk_count":
+    1, "moment_name": "upload-platoon", "moment_type": "content_upload", "resource_keys":
+    ["platoon-chunk-0000"]}], "file_name": "platoon.txt", "moment_id": "304a4251-43a0-5899-8b45-0d4a52e4640e",
+    "chunk_count": 1, "moment_name": "upload-platoon", "moment_type": "content_upload",
+    "resource_keys": ["platoon-chunk-0000"]}, "session_description": "Uploaded platoon.txt
+    (1 chunks, 116 chars).\nResources: platoon-chunk-0000\nPreview: platoon\n\nontology
+    editor/wiki ed\nchat and edit (collab)\nfile upload samples (invoice)\nto schema
+    tool\n\nhuman friendly", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: a2fb22f6-200c-5cdf-9128-8c6522735706
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T03:08:02.191044+00:00'
+  name: upload-todo
+  moment_type: content_upload
+  summary: "Uploaded todo.txt (1 chunks, 152 chars).\nResources: todo-chunk-0000\n\
+    Preview: todo\n\ndark mode\nconsultant network\nmin wage assistance training \n\
+    feedback in app\nquotas etc cli UI\nshared chat\ninvites\nvideos e.g Claude desktop\
+    \ chatgpt"
+  session_id: 0cbf381e-5820-4566-959b-fb03a9ad8d45
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-todo", "ends_timestamp": null, "moment_metadata": {"source": "upload",
+    "file_id": "e10570ee-9687-556e-a3cd-a7a35d879860", "file_name": "todo.txt", "chunk_count":
+    1, "resource_keys": ["todo-chunk-0000"]}, "session_metadata": {"source": "upload",
+    "file_id": "e10570ee-9687-556e-a3cd-a7a35d879860", "uploads": [{"source": "upload",
+    "file_id": "e10570ee-9687-556e-a3cd-a7a35d879860", "file_name": "todo.txt", "moment_id":
+    "a2fb22f6-200c-5cdf-9128-8c6522735706", "chunk_count": 1, "moment_name": "upload-todo",
+    "moment_type": "content_upload", "resource_keys": ["todo-chunk-0000"]}], "file_name":
+    "todo.txt", "moment_id": "a2fb22f6-200c-5cdf-9128-8c6522735706", "chunk_count":
+    1, "moment_name": "upload-todo", "moment_type": "content_upload", "resource_keys":
+    ["todo-chunk-0000"]}, "session_description": "Uploaded todo.txt (1 chunks, 152
+    chars).\nResources: todo-chunk-0000\nPreview: todo\n\ndark mode\nconsultant network\nmin
+    wage assistance training \nfeedback in app\nquotas etc cli UI\nshared chat\ninvites\nvideos
+    e.g Claude desktop chatgpt", "previous_moment_keys": []}'
+- event_type: moment
+  event_id: d8969c39-b2e2-5894-858b-911cb82383eb
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T01:38:04.201426+00:00'
+  name: upload-tram_building
+  moment_type: content_upload
+  summary: 'Uploaded tram_building.txt (1 chunks, 113 chars).
+
+    Resources: tram_building-chunk-0000
+
+    Preview: tram building
+
+
+    I think this is everything... a group of people with good track record working
+    together on a thing'
+  session_id: a871b9fa-e32f-4fed-8d2e-2b7ec21d7e0e
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-tram_building", "ends_timestamp": null, "moment_metadata": {"source":
+    "upload", "file_id": "b9a3cd70-a88b-5fe7-b818-8e43fc5637b6", "file_name": "tram_building.txt",
+    "chunk_count": 1, "resource_keys": ["tram_building-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "b9a3cd70-a88b-5fe7-b818-8e43fc5637b6", "uploads":
+    [{"source": "upload", "file_id": "b9a3cd70-a88b-5fe7-b818-8e43fc5637b6", "file_name":
+    "tram_building.txt", "moment_id": "d8969c39-b2e2-5894-858b-911cb82383eb", "chunk_count":
+    1, "moment_name": "upload-tram_building", "moment_type": "content_upload", "resource_keys":
+    ["tram_building-chunk-0000"]}], "file_name": "tram_building.txt", "moment_id":
+    "d8969c39-b2e2-5894-858b-911cb82383eb", "chunk_count": 1, "moment_name": "upload-tram_building",
+    "moment_type": "content_upload", "resource_keys": ["tram_building-chunk-0000"]},
+    "session_description": "Uploaded tram_building.txt (1 chunks, 113 chars).\nResources:
+    tram_building-chunk-0000\nPreview: tram building\n\nI think this is everything...
+    a group of people with good track record working together on a thing", "previous_moment_keys":
+    []}'
+- event_type: moment
+  event_id: dc1d002f-91e6-5ca3-ad81-8c3ca0b4f7ca
+  event_date: '2026-02-23'
+  event_timestamp: '2026-02-23T01:26:24.366075+00:00'
+  name: upload-voice_1771809981328
+  moment_type: content_upload
+  summary: E44g+pIPEx2TwQlTAAxnNJBLKlqlyCuE9pqhl10NgtGCErWdK28Nt+/cjaOVVOM1ESFvC6dHu2fXjnOTuTF74qHJTamYgrFo4ucKq8gWlDXrve0+ckUuAOy6c2BR0WFEnfX0b9lvQbQzwNKqKcenCHsmZKM3moqkqwh8I0eTRmwo47jZ2dxYHbnASwU9vNzT58P4NAzvhdgyx8KBJFoQMzvz32TxlDI=
+  session_id: c470f5c9-759d-40d1-8541-327c2961bf86
+  image: null
+  encryption_level: platform
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    "upload-voice_1771809981328", "ends_timestamp": null, "moment_metadata": {"source":
+    "upload", "file_id": "33fb2a09-169e-5f6a-a1c4-3c657ecb3fa9", "file_name": "voice_1771809981328.m4a",
+    "chunk_count": 1, "resource_keys": ["voice_1771809981328-chunk-0000"]}, "session_metadata":
+    {"source": "upload", "file_id": "33fb2a09-169e-5f6a-a1c4-3c657ecb3fa9", "uploads":
+    [{"source": "upload", "file_id": "33fb2a09-169e-5f6a-a1c4-3c657ecb3fa9", "file_name":
+    "voice_1771809981328.m4a", "moment_id": "dc1d002f-91e6-5ca3-ad81-8c3ca0b4f7ca",
+    "chunk_count": 1, "moment_name": "upload-voice_1771809981328", "moment_type":
+    "content_upload", "resource_keys": ["voice_1771809981328-chunk-0000"]}], "file_name":
+    "voice_1771809981328.m4a", "moment_id": "dc1d002f-91e6-5ca3-ad81-8c3ca0b4f7ca",
+    "chunk_count": 1, "moment_name": "upload-voice_1771809981328", "moment_type":
+    "content_upload", "resource_keys": ["voice_1771809981328-chunk-0000"]}, "session_description":
+    "Uploaded voice_1771809981328.m4a (1 chunks, 33 chars).\nResources: voice_1771809981328-chunk-0000\nPreview:
+    I like sewing and making buttons.", "previous_moment_keys": []}'
+- event_type: daily_summary
+  event_id: abffd4e0-a27d-5c78-9aff-81693185bd87
+  event_date: '2026-02-22'
+  event_timestamp: '2026-02-22T23:59:59+00:00'
+  name: daily-2026-02-22
+  moment_type: daily_summary
+  summary: 'Feb 22: 0 messages across 0 session(s), 0 tokens. 1 moment(s).'
+  session_id: abffd4e0-a27d-5c78-9aff-81693185bd87
+  image: null
+  encryption_level: null
+  metadata: '{"sessions": [], "moment_count": 1, "total_tokens": 0, "message_count":
+    0, "session_count": 0, "reminder_count": 0, "resource_counts": {"news": 14}}'
+- event_type: moment
+  event_id: baac21f3-82e3-543f-98b6-8923e78442e4
+  event_date: '2026-02-22'
+  event_timestamp: '2026-02-22T21:39:25.798111+00:00'
+  name: feed-digest-default-2026-02-22
+  moment_type: digest
+  summary: Processed 16 resources from 8 sources for profile 'default'
+  session_id: null
+  image: null
+  encryption_level: none
+  metadata: '{"category": null, "entities": [], "topic_tags": [], "session_name":
+    null, "ends_timestamp": null, "moment_metadata": {"date": "2026-02-22", "profile":
+    "default", "total_items": 16, "source_counts": {"Eater": 2, "Wired AI": 1, "Space.com":
+    1, "BBC Science": 1, "Google News": 7, "Hacker News": 2, "Ars Technica": 1, "The
+    Verge AI": 1}, "category_counts": {"AI": 5, "Trivia": 3, "General": 5, "Uncategorised":
+    3}}, "session_metadata": null, "session_description": null, "previous_moment_keys":
+    []}'

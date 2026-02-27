@@ -458,7 +458,13 @@ class AuthService:
         sub = user_info["sub"]
         existing = await self.find_user_by_provider("google", sub)
         if existing:
-            return existing
+            user, tenant_id = existing
+            # Update picture on every login (Google URLs rotate)
+            picture = user_info.get("picture")
+            if picture and (user.metadata or {}).get("picture") != picture:
+                user.metadata = {**(user.metadata or {}), "picture": picture}
+                [user] = await self.users.upsert(user)
+            return user, tenant_id
 
         # New user — create personal tenant
         name = user_info.get("name", user_info.get("email", "Google User"))

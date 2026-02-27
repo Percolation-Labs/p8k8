@@ -49,6 +49,8 @@ from p8.services.memory import MemoryService, format_moment_context
 from p8.services.repository import Repository
 
 
+log = logging.getLogger(__name__)
+
 DEFAULT_AGENT_NAME = "general"
 
 # Registry of code-defined agents as dicts, ready for Schema(**d).
@@ -772,6 +774,85 @@ class AgentAdapter:
             user_id=user_id,
             tool_calls={"name": tool_name, "id": tool_call_id, "arguments": arguments},
         )
+
+    async def execute_chained_tool(
+        self,
+        structured_output: dict,
+        *,
+        session_id: UUID | None = None,
+        user_id: UUID | None = None,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        """Auto-invoke a chained tool with the agent's structured output.
+
+        Called after an agent run when the schema has both ``structured_output``
+        and ``chained_tool`` set. Looks up the tool by name from the tool
+        registry, calls it with the structured output, and persists both a
+        tool_call and tool_response message pair to the session.
+
+        Returns the tool result dict, or None if chaining is not applicable.
+        Never propagates exceptions — the agent's structured output is still valid.
+        """
+        tool_name = self.agent_schema.chained_tool
+        if not tool_name or not self.agent_schema.structured_output:
+            return None
+
+        from p8.api.tools import get_tool_fn
+
+        tool_fn = get_tool_fn(tool_name)
+        if tool_fn is None:
+            log.warning("Chained tool '%s' not found in registry", tool_name)
+            return None
+
+        import copy
+        import json
+        from uuid import uuid4
+
+        call_id = str(uuid4())
+        tool_result: dict | str
+
+        # Deep-copy: tools may mutate their input (e.g. save_moments pops
+        # affinity_fragments). The original dict is persisted as arguments.
+        tool_input = copy.deepcopy(structured_output)
+
+        try:
+            tool_result = await tool_fn(**tool_input)
+        except TypeError:
+            # Tool doesn't accept **kwargs — try passing as positional
+            try:
+                tool_result = await tool_fn(tool_input)
+            except Exception as e:
+                log.error("Chained tool '%s' failed: %s", tool_name, e)
+                tool_result = {"status": "error", "error": str(e)}
+        except Exception as e:
+            log.error("Chained tool '%s' failed: %s", tool_name, e)
+            tool_result = {"status": "error", "error": str(e)}
+
+        # Persist tool_call + tool_response to session
+        if session_id is not None:
+            result_str = json.dumps(tool_result, default=str) if isinstance(tool_result, dict) else str(tool_result)
+            await self.memory.persist_message(
+                session_id, "tool_call", None,
+                user_id=user_id, tenant_id=tenant_id,
+                token_count=0,
+                agent_name=self.agent_schema.name,
+                tool_calls={
+                    "name": tool_name,
+                    "id": call_id,
+                    "arguments": structured_output,
+                },
+            )
+            await self.memory.persist_message(
+                session_id, "tool_response", result_str,
+                user_id=user_id, tenant_id=tenant_id,
+                agent_name=self.agent_schema.name,
+                tool_calls={
+                    "name": tool_name,
+                    "id": call_id,
+                },
+            )
+
+        return tool_result if isinstance(tool_result, dict) else {"result": tool_result}
 
     async def persist_observation(
         self,

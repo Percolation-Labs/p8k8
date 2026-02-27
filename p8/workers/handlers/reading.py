@@ -29,12 +29,14 @@ from p8.utils.parsing import ensure_parsed
 log = logging.getLogger(__name__)
 
 SUMMARY_PROMPT = """\
-You are summarizing a user's reading feed. They have these articles:
+You are summarizing a user's reading feed. Here are today's articles:
 
 {items_text}
 
-Write a 2-3 sentence summary of what's available to read. Focus on themes and \
-what's interesting, not just listing titles. Write in second person ("You have articles about...")."""
+Write a 2-3 sentence summary weaving in the article links as markdown. \
+The reader should be able to click through to anything that catches their eye. \
+Focus on themes and what's interesting. Write in second person ("You have..."). \
+Keep every markdown link from the input intact in your output."""
 
 
 class ReadingSummaryHandler:
@@ -131,10 +133,15 @@ class ReadingSummaryHandler:
             })
 
         unique_tags = list(dict.fromkeys(all_tags))
+        links = [
+            {"title": i["title"], "url": i["uri"], "resource_id": i["resource_id"]}
+            for i in items if i.get("uri")
+        ]
         meta = {
             "source": "reading_pipeline",
             "resource_count": len(items),
             "items": items,
+            "links": links,
         }
 
         # ── 5. Generate mosaic thumbnail ──────────────────────────
@@ -198,9 +205,14 @@ class ReadingSummaryHandler:
             lines = []
             for item in items:
                 title = item.get("title", "Untitled")
+                uri = item.get("uri", "")
                 tags = item.get("tags", [])
                 tag_str = f" [{', '.join(tags)}]" if tags else ""
-                lines.append(f"- {title}{tag_str}")
+                # Include URL as markdown link so the model can weave it into prose
+                if uri:
+                    lines.append(f"- [{title}]({uri}){tag_str}")
+                else:
+                    lines.append(f"- {title}{tag_str}")
             items_text = "\n".join(lines)
 
             agent = Agent(

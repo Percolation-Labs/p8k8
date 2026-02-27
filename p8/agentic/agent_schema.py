@@ -218,6 +218,7 @@ class AgentSchema(BaseModel):
 
     # --- Runtime config ---
     structured_output: bool = False
+    chained_tool: str | None = None  # Tool to auto-invoke with structured output
     tools: list[MCPToolReference] = Field(default_factory=list)
     model: str | None = None
     temperature: float | None = None

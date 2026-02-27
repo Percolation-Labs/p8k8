@@ -10,7 +10,7 @@
     },
     "p8-http": {
       "type": "http",
-      "url": "http://localhost:8000/mcp/"
+      "url": "https://api.percolationlabs.ai/mcp/"
     }
   }
 }
