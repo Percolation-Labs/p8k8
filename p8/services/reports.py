@@ -1,4 +1,8 @@
-"""System health reports — HTML email with queue status + CSV attachment."""
+"""System health reports — HTML email with queue status, usage, CSV attachment.
+
+Data queries live in QueueService and usage.py; this module handles
+rendering (HTML/CSV) and sending via EmailService.
+"""
 
 from __future__ import annotations
 
@@ -8,56 +12,62 @@ import logging
 from base64 import b64encode
 from datetime import datetime, timezone
 
+from p8.ontology.types import User
 from p8.services.database import Database
 from p8.services.email import EmailService
+from p8.services.encryption import EncryptionService
+from p8.services.queue import QueueService
+from p8.services.usage import REPORT_COLUMNS, get_limits, get_tenant_plans, get_usage_by_tenant
 from p8.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Queries
-# ---------------------------------------------------------------------------
-
-_SUMMARY_SQL = """
-SELECT tq.task_type,
-       COUNT(*) AS cnt,
-       COUNT(DISTINCT tq.tenant_id) AS tenant_count,
-       STRING_AGG(DISTINCT COALESCE(t.name, '(system)'), ', ' ORDER BY COALESCE(t.name, '(system)')) AS tenants,
-       MIN(tq.scheduled_at) AS earliest,
-       MAX(tq.scheduled_at) AS latest,
-       MAX(tq.error) AS last_error
-  FROM task_queue tq
-  LEFT JOIN tenants t ON tq.tenant_id = t.id::text
- WHERE tq.status = $1
- GROUP BY tq.task_type
- ORDER BY cnt DESC
-"""
-
-_ALL_TASKS_SQL = """
-SELECT tq.id, tq.task_type, tq.tier,
-       COALESCE(t.name, '(system)') AS tenant_name,
-       tq.user_id, tq.status, tq.priority,
-       tq.scheduled_at, tq.claimed_at, tq.claimed_by,
-       tq.started_at, tq.completed_at,
-       tq.error, tq.retry_count, tq.max_retries, tq.created_at
-  FROM task_queue tq
-  LEFT JOIN tenants t ON tq.tenant_id = t.id::text
- ORDER BY tq.created_at DESC
-"""
-
-_STATS_SQL = """
-SELECT status, COUNT(*) AS cnt FROM task_queue GROUP BY status ORDER BY status
-"""
-
 
 # ---------------------------------------------------------------------------
-# HTML rendering
+# Email lookup (decrypt once, reuse everywhere)
+# ---------------------------------------------------------------------------
+
+async def build_email_lookup(
+    db: Database, encryption: EncryptionService,
+) -> dict[str, str]:
+    """Build tenant_id -> decrypted email mapping for all active tenants."""
+    rows = await db.fetch(
+        "SELECT DISTINCT ON (u.tenant_id) u.id, u.tenant_id, u.email "
+        "  FROM users u "
+        " WHERE u.tenant_id IS NOT NULL AND u.email IS NOT NULL AND u.deleted_at IS NULL "
+        " ORDER BY u.tenant_id, u.created_at ASC"
+    )
+    for r in rows:
+        if r["tenant_id"]:
+            await encryption.get_dek(r["tenant_id"])
+
+    lookup: dict[str, str] = {}
+    for r in rows:
+        tid = r["tenant_id"]
+        if not tid or not r["email"]:
+            continue
+        try:
+            data = {"id": r["id"], "email": r["email"]}
+            decrypted = encryption.decrypt_fields(User, data, tid)
+            email = decrypted["email"]
+            # If decryption failed silently (sealed mode), email is still ciphertext
+            if "@" in email and len(email) < 100:
+                lookup[tid] = email
+            else:
+                lookup[tid] = str(tid)[:8]
+        except Exception:
+            lookup[tid] = str(tid)[:8]
+    return lookup
+
+
+# ---------------------------------------------------------------------------
+# HTML helpers
 # ---------------------------------------------------------------------------
 
 _CSS = """
 <style>
   body { font-family: -apple-system, Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 20px; background: #f5f5f5; }
-  .container { max-width: 800px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 24px; }
+  .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 24px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 16px; margin: 24px 0 8px; color: #333; border-bottom: 1px solid #e0e0e0; padding-bottom: 4px; }
   .subtitle { color: #666; font-size: 13px; margin: 0 0 20px; }
@@ -73,16 +83,18 @@ _CSS = """
   th { background: #f0f0f0; text-align: left; padding: 8px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
   td { padding: 8px; border-bottom: 1px solid #eee; }
   tr:hover td { background: #fafafa; }
+  .right { text-align: right; }
   .error-cell { color: #c0392b; font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tenant { font-family: monospace; font-size: 12px; }
   .empty { color: #999; font-style: italic; padding: 16px; text-align: center; }
   .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee; color: #999; font-size: 11px; }
+  .over { color: #e74c3c; font-weight: 700; }
+  .ok { color: #27ae60; }
+  .dim { color: #999; }
 </style>
 """
 
 
 def _fmt_dt(dt: object) -> str:
-    """Format a datetime for display, or '-' if None."""
     if dt is None:
         return "-"
     if hasattr(dt, "strftime"):
@@ -90,50 +102,177 @@ def _fmt_dt(dt: object) -> str:
     return str(dt)
 
 
-def _fmt_tenant(tenant_id) -> str:
-    if not tenant_id:
-        return "<em>none</em>"
-    s = str(tenant_id)
-    return f"{s[:8]}..." if len(s) > 12 else s
+def _fmt_short(dt: object) -> str:
+    if dt is None:
+        return "-"
+    if hasattr(dt, "strftime"):
+        return str(dt.strftime("%b %d %H:%M"))
+    return str(dt)
 
 
-def _render_summary_table(rows: list[dict], label: str) -> str:
+def _fmt_num(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def _fmt_bytes(n: int) -> str:
+    if n >= 1024 ** 3:
+        return f"{n / 1024 ** 3:.1f}G"
+    if n >= 1024 ** 2:
+        return f"{n / 1024 ** 2:.0f}M"
+    if n >= 1024:
+        return f"{n / 1024:.0f}K"
+    return str(n)
+
+
+def _tenant_email(emails: dict[str, str], tid: str | None) -> str:
+    if not tid:
+        return "(system)"
+    return emails.get(tid, tid[:8])
+
+
+# ---------------------------------------------------------------------------
+# Section renderers
+# ---------------------------------------------------------------------------
+
+def _render_stats_bar(stats: dict[str, int]) -> str:
+    html = ""
+    for status, css in [("pending", "pending"), ("processing", "processing"),
+                        ("failed", "failed"), ("completed", "completed")]:
+        count = stats.get(status, 0)
+        html += (f'<div class="stat {css}">'
+                 f'<div class="num">{count}</div>'
+                 f'<div class="label">{status}</div></div>')
+    return html
+
+
+def _render_schedule(
+    rows: list[dict],
+    emails: dict[str, str],
+    task_schedules: dict[str, str],
+) -> str:
+    if not rows:
+        return '<p class="empty">No recurring task history</p>'
+    html = '<table><tr><th>User</th><th>Task</th><th>Last Run</th><th>Next Run</th></tr>'
+    for r in rows:
+        email = _tenant_email(emails, r.get("tenant_id"))
+        last = _fmt_short(r.get("last_completed"))
+        if r.get("next_pending"):
+            nxt = _fmt_short(r["next_pending"])
+            nxt_cls = ""
+        else:
+            # Show cron schedule when no pending task exists
+            sched = task_schedules.get(r["task_type"])
+            nxt = f"<code>{sched}</code>" if sched else "-"
+            nxt_cls = ""
+        html += (f"<tr><td>{email}</td><td>{r['task_type']}</td>"
+                 f"<td>{last}</td><td{nxt_cls}>{nxt}</td></tr>")
+    html += "</table>"
+    return html
+
+
+def _render_cron_jobs(cron_data: dict, emails: dict[str, str]) -> str:
+    system = cron_data.get("system", [])
+    user_jobs = cron_data.get("user_jobs", [])
+    if not system and not user_jobs:
+        return '<p class="empty">No active cron jobs</p>'
+    html = '<table><tr><th>Job</th><th>Schedule</th><th>Description</th></tr>'
+    for r in system:
+        html += (f"<tr><td>{r['name']}</td>"
+                 f"<td><code>{r['schedule']}</code></td>"
+                 f"<td>{r['description']}</td></tr>")
+    if user_jobs:
+        total = sum(j["count"] for j in user_jobs)
+        users = len(user_jobs)
+        html += (f"<tr><td>reminders</td>"
+                 f"<td>-</td>"
+                 f"<td>{total} scheduled across {users} user(s)</td></tr>")
+    html += "</table>"
+    return html
+
+
+def _render_queue_table(rows: list[dict], label: str, emails: dict[str, str]) -> str:
     if not rows:
         return f'<p class="empty">No {label.lower()} tasks</p>'
-
-    html = "<table><tr><th>Tenant</th><th>Task Type</th><th>Count</th><th>Earliest</th><th>Latest</th>"
-    if label == "Failed":
+    is_failed = label == "Failed"
+    html = "<table><tr><th>Task Type</th><th>Count</th><th>Users</th><th>Earliest</th><th>Latest</th>"
+    if is_failed:
         html += "<th>Last Error</th>"
     html += "</tr>"
-
     for r in rows:
-        html += "<tr>"
-        html += f'<td class="tenant">{_fmt_tenant(r["tenant_id"])}</td>'
-        html += f'<td>{r["task_type"]}</td>'
-        html += f'<td><strong>{r["cnt"]}</strong></td>'
-        html += f'<td>{_fmt_dt(r["earliest"])}</td>'
-        html += f'<td>{_fmt_dt(r["latest"])}</td>'
-        if label == "Failed":
+        tenant_ids = r.get("tenant_ids") or []
+        users = ", ".join(_tenant_email(emails, tid) for tid in tenant_ids) or "(system)"
+        html += (f"<tr><td>{r['task_type']}</td>"
+                 f'<td class="right"><strong>{r["cnt"]}</strong></td>'
+                 f"<td>{users}</td>"
+                 f"<td>{_fmt_dt(r['earliest'])}</td>"
+                 f"<td>{_fmt_dt(r['latest'])}</td>")
+        if is_failed:
             err = (r.get("last_error") or "")[:120]
             html += f'<td class="error-cell" title="{err}">{err or "-"}</td>'
+        html += "</tr>"
+    html += "</table>"
+    return html
+
+
+def _render_usage_pivot(
+    tenant_usage: dict[str, dict[str, int]],
+    tenant_plans: dict[str, str],
+    emails: dict[str, str],
+) -> str:
+    if not tenant_usage:
+        return '<p class="empty">No usage data this period</p>'
+
+    html = '<table><tr><th>User</th><th>Plan</th>'
+    for _, label, period in REPORT_COLUMNS:
+        html += f"<th>{label}<br><small>/{period}</small></th>"
+    html += "</tr>"
+
+    for tid in sorted(tenant_usage, key=lambda t: _tenant_email(emails, t)):
+        email = _tenant_email(emails, tid)
+        plan_id = tenant_plans.get(tid, "free")
+        limits = get_limits(plan_id)
+        usage = tenant_usage[tid]
+
+        html += f"<tr><td>{email}</td><td>{plan_id}</td>"
+        for res_type, _, period in REPORT_COLUMNS:
+            used = usage.get(res_type, 0)
+            limit = getattr(limits, res_type, 0)
+            is_bytes = res_type == "worker_bytes_processed"
+            fmt = _fmt_bytes if is_bytes else _fmt_num
+            if limit:
+                css = "over" if used > limit else "ok"
+                html += f'<td class="right"><span class="{css}">{fmt(used)}</span> / {fmt(limit)}</td>'
+            elif used:
+                html += f'<td class="right">{fmt(used)}</td>'
+            else:
+                html += '<td class="right dim">-</td>'
         html += "</tr>"
 
     html += "</table>"
     return html
 
 
-def _render_html(
+# ---------------------------------------------------------------------------
+# Full HTML assembly
+# ---------------------------------------------------------------------------
+
+def render_health_html(
     stats: dict[str, int],
-    pending_rows: list[dict],
+    schedule_rows: list[dict],
+    cron_data: dict,
+    queued_rows: list[dict],
     failed_rows: list[dict],
+    tenant_usage: dict[str, dict[str, int]],
+    tenant_plans: dict[str, str],
     total_tasks: int,
+    emails: dict[str, str],
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    stats_html = ""
-    for status, css in [("pending", "pending"), ("processing", "processing"), ("failed", "failed"), ("completed", "completed")]:
-        count = stats.get(status, 0)
-        stats_html += f'<div class="stat {css}"><div class="num">{count}</div><div class="label">{status}</div></div>'
+    task_schedules = cron_data.get("task_schedules", {})
 
     return f"""<!DOCTYPE html>
 <html>
@@ -143,13 +282,22 @@ def _render_html(
   <h1>p8 System Health Report</h1>
   <p class="subtitle">{now} &middot; {total_tasks} total tasks in queue</p>
 
-  <div class="stats">{stats_html}</div>
+  <div class="stats">{_render_stats_bar(stats)}</div>
+
+  <h2>Scheduled Jobs (pg_cron)</h2>
+  {_render_cron_jobs(cron_data, emails)}
+
+  <h2>Task Schedule</h2>
+  {_render_schedule(schedule_rows, emails, task_schedules)}
 
   <h2>Queued Tasks (Pending + Processing)</h2>
-  {_render_summary_table(pending_rows, "Queued")}
+  {_render_queue_table(queued_rows, "Queued", emails)}
 
   <h2>Failed Tasks</h2>
-  {_render_summary_table(failed_rows, "Failed")}
+  {_render_queue_table(failed_rows, "Failed", emails)}
+
+  <h2>Usage This Period</h2>
+  {_render_usage_pivot(tenant_usage, tenant_plans, emails)}
 
   <div class="footer">
     Attached: task_queue_export.csv with full task details.<br>
@@ -161,17 +309,17 @@ def _render_html(
 
 
 # ---------------------------------------------------------------------------
-# CSV generation
+# CSV
 # ---------------------------------------------------------------------------
 
 _CSV_COLUMNS = [
-    "id", "task_type", "tier", "tenant_id", "user_id", "status", "priority",
+    "id", "task_type", "tier", "user_email", "user_id", "status", "priority",
     "scheduled_at", "claimed_at", "claimed_by", "started_at", "completed_at",
     "error", "retry_count", "max_retries", "created_at",
 ]
 
 
-def _build_csv(rows: list[dict]) -> str:
+def build_csv(rows: list[dict]) -> str:
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -187,36 +335,42 @@ def _build_csv(rows: list[dict]) -> str:
 async def send_health_report(
     db: Database,
     settings: Settings,
+    encryption: EncryptionService,
     *,
     to: str | None = None,
 ) -> dict:
-    """Build and send the system health HTML email with CSV attachment.
-
-    Args:
-        db: Database instance.
-        settings: App settings.
-        to: Recipient email. Defaults to settings.email_from (send to self).
-    """
+    """Build and send the system health HTML email with CSV attachment."""
     recipient = to or settings.email_from
+    queue = QueueService(db)
 
-    # Run queries
-    pending_rows = [dict(r) for r in await db.fetch(_SUMMARY_SQL, "pending")]
-    processing_rows = [dict(r) for r in await db.fetch(_SUMMARY_SQL, "processing")]
-    failed_rows = [dict(r) for r in await db.fetch(_SUMMARY_SQL, "failed")]
-    stats_rows = [dict(r) for r in await db.fetch(_STATS_SQL)]
-    all_tasks = [dict(r) for r in await db.fetch(_ALL_TASKS_SQL)]
+    # 1. Tenant emails (shared lookup)
+    emails = await build_email_lookup(db, encryption)
 
-    # Merge pending + processing for the "queued" table
+    # 2. Queue data (from QueueService)
+    stats = await queue.status_counts()
+    pending_rows = await queue.summary_by_type("pending")
+    processing_rows = await queue.summary_by_type("processing")
+    failed_rows = await queue.summary_by_type("failed")
+    schedule_rows = await queue.task_schedule()
+    cron_data = await queue.cron_jobs()
+    all_tasks = await queue.all_tasks()
+
+    for task in all_tasks:
+        task["user_email"] = _tenant_email(emails, task.get("tenant_id"))
+
+    # 3. Usage data (from usage.py)
+    tenant_usage = await get_usage_by_tenant(db)
+    tenant_plans = await get_tenant_plans(db)
+
+    # 4. Render
     queued_rows = pending_rows + processing_rows
-
-    stats = {r["status"]: r["cnt"] for r in stats_rows}
-
-    # Render
-    html = _render_html(stats, queued_rows, failed_rows, len(all_tasks))
-    csv_data = _build_csv(all_tasks)
+    html = render_health_html(
+        stats, schedule_rows, cron_data, queued_rows, failed_rows,
+        tenant_usage, tenant_plans, len(all_tasks), emails,
+    )
+    csv_data = build_csv(all_tasks)
     csv_b64 = b64encode(csv_data.encode("utf-8")).decode("ascii")
 
-    # Plain-text fallback
     plain = (
         f"p8 System Health Report\n"
         f"Pending: {stats.get('pending', 0)} | "
@@ -227,22 +381,14 @@ async def send_health_report(
         f"See attached CSV for full details."
     )
 
-    # Send via EmailService
     email_svc = EmailService(settings)
-
     if settings.email_provider == "microsoft_graph":
-        # Graph API supports attachments natively
         return await _send_graph_with_attachment(
             email_svc, recipient, html, plain, csv_b64, settings,
         )
-    else:
-        # For other providers, send HTML only (no attachment support)
-        return await email_svc.send(
-            to=recipient,
-            subject="p8 System Health Report",
-            body=plain,
-            html=html,
-        )
+    return await email_svc.send(
+        to=recipient, subject="p8 System Health Report", body=plain, html=html,
+    )
 
 
 async def _send_graph_with_attachment(
@@ -258,38 +404,30 @@ async def _send_graph_with_attachment(
 
     token = await email_svc._get_graph_token()
     sender = settings.email_from
-
     url = f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
-
     payload = {
         "message": {
             "subject": "p8 System Health Report",
             "body": {"contentType": "HTML", "content": html},
             "toRecipients": [{"emailAddress": {"address": to}}],
-            "attachments": [
-                {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": "task_queue_export.csv",
-                    "contentType": "text/csv",
-                    "contentBytes": csv_b64,
-                }
-            ],
+            "attachments": [{
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": "task_queue_export.csv",
+                "contentType": "text/csv",
+                "contentBytes": csv_b64,
+            }],
         },
         "saveToSentItems": True,
     }
-
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=payload,
         )
         if resp.status_code == 202:
             logger.info("Health report sent to %s", to)
-            return {"status": "sent", "to": to, "tasks_exported": len(plain)}
+            return {"status": "sent", "to": to}
         logger.error("Graph send failed (%d): %s", resp.status_code, resp.text)
         resp.raise_for_status()
         return {"status": "error"}

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from p8.api.deps import get_db
+from p8.api.deps import get_db, get_encryption
 from p8.services.database import Database
+from p8.services.encryption import EncryptionService
 
 router = APIRouter()
 
@@ -131,3 +132,16 @@ async def task_queue_stats(db: Database = Depends(get_db)):
         " ORDER BY tier, status"
     )
     return {f"{r['tier']}/{r['status']}": r["count"] for r in rows}
+
+
+@router.post("/report")
+async def send_report(
+    request: Request,
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Send the system health report email."""
+    from p8.services.reports import send_health_report
+
+    settings = request.app.state.settings
+    return await send_health_report(db, settings, encryption)

@@ -513,3 +513,20 @@ SELECT cron.schedule('qms-news-enqueue', '0 6 * * *', 'SELECT enqueue_news_tasks
 
 -- Drive sync: hourly at :30, enqueue sync for users with auto_sync enabled
 SELECT cron.schedule('qms-drive-sync-enqueue', '30 * * * *', 'SELECT enqueue_drive_sync_tasks()');
+
+-- Daily system health report: 7am UTC via pg_net → /admin/report
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
+        PERFORM cron.schedule('qms-daily-report', '0 7 * * *',
+            'SELECT net.http_post(
+                url := current_setting(''p8.internal_api_url'', true) || ''/admin/report'',
+                headers := jsonb_build_object(
+                    ''Authorization'', ''Bearer '' || current_setting(''p8.api_key'', true),
+                    ''Content-Type'', ''application/json''
+                ),
+                body := ''{}''::jsonb
+            )');
+    ELSE
+        RAISE NOTICE 'pg_net not loaded — skipping daily-report cron job';
+    END IF;
+END $$;

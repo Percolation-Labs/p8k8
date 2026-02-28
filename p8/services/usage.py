@@ -18,8 +18,9 @@ Periodic resources (chat_tokens, dreaming_minutes, worker_bytes_processed, …)
 ------------------------------------------------------------------------------
 - **Where stored:** The ``usage_tracking`` table, partitioned by
   ``(user_id, resource_type, period_start)`` where ``period_start`` is the
-  first day of the current month (or current day for daily resources like
-  ``web_searches_daily``). Each row tracks ``used`` (accumulated counter)
+  start of the current week (Monday, via ``date_trunc('week', …)``) for
+  weekly resources, or the current day for daily resources like
+  ``web_searches_daily``. Each row tracks ``used`` (accumulated counter)
   and ``granted_extra`` (add-on credits that extend the base limit).
 - **Checked:** Before the action that consumes the resource. For chat tokens
   this is a pre-flight check in ``POST /chat/{chat_id}`` — if
@@ -57,27 +58,27 @@ MB = 1024 ** 2
 
 @dataclass(frozen=True)
 class PlanLimits:
-    chat_tokens: int            # per month
+    chat_tokens: int            # per day
     storage_bytes: int          # total
-    dreaming_minutes: int       # per month
+    dreaming_minutes: int       # per week
     cloud_folders: int
     dreaming_interval_hours: int
     max_file_size_bytes: int    # per-file upload limit
-    worker_bytes_processed: int # monthly file processing budget
-    dreaming_io_tokens: int     # monthly dreaming token budget
+    worker_bytes_processed: int # weekly file processing budget
+    dreaming_io_tokens: int     # per day
     web_searches_daily: int     # per day (Tavily API)
     news_searches_daily: int    # per day (platoon feed digest)
 
 
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "free":       PlanLimits(100_000,    40 * GB, 120,  4,  12, 40 * MB,  400 * MB,  40_000,     40, 4),
-    "pro":        PlanLimits(200_000,   100 * GB, 240, 10,  12, 200 * MB,   2 * GB, 100_000,   100, 4),
-    "team":       PlanLimits(200_000,   200 * GB, 360, 20,  12,   1 * GB,  10 * GB, 200_000,   200, 10),
-    "enterprise": PlanLimits(500_000,   1 * TB, 720, 999,  6,   2 * GB, 100 * GB, 1_000_000, 1000, 20),
+    "free":       PlanLimits( 50_000,    40 * GB,  30,  4,  12,  40 * MB, 100 * MB,  20_000,     40, 4),
+    "pro":        PlanLimits(100_000,   100 * GB,  60, 10,  12, 200 * MB, 500 * MB,  40_000,    100, 4),
+    "team":       PlanLimits(100_000,   200 * GB,  90, 20,  12,   1 * GB,   2 * GB,  40_000,    200, 10),
+    "enterprise": PlanLimits(200_000,     1 * TB, 180, 999,  6,   2 * GB,  25 * GB,  80_000,   1000, 20),
 }
 
-# Resources tracked with daily periods instead of monthly.
-_DAILY_RESOURCES = {"web_searches_daily", "news_searches_daily"}
+# Resources tracked with daily periods.
+_DAILY_RESOURCES = {"chat_tokens", "dreaming_io_tokens", "web_searches_daily", "news_searches_daily"}
 
 
 @dataclass
@@ -144,7 +145,7 @@ async def check_quota(
 
     # Periodic resource — check usage_tracking
     limit_value = getattr(limits, resource_type, 0)
-    trunc = "day" if resource_type in _DAILY_RESOURCES else "month"
+    trunc = "day" if resource_type in _DAILY_RESOURCES else "week"
     row = await db.fetchrow(
         "SELECT used, granted_extra FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = $2 "
@@ -171,7 +172,7 @@ async def increment_usage(
     limits = get_limits(plan_id)
     limit_value = getattr(limits, resource_type, 0)
 
-    trunc = "day" if resource_type in _DAILY_RESOURCES else "month"
+    trunc = "day" if resource_type in _DAILY_RESOURCES else "week"
     row = await db.fetchrow(
         "SELECT * FROM usage_increment($1, $2, $3, $4, "
         f"date_trunc('{trunc}', CURRENT_DATE)::date)",
@@ -213,3 +214,64 @@ async def get_all_usage(
         "dreaming_interval_hours": limits.dreaming_interval_hours,
         "cloud_folders": limits.cloud_folders,
     }
+
+
+# ── Multi-tenant usage overview (for reports) ───────────────────────────
+
+# Resource columns shown in the report pivot table.
+REPORT_COLUMNS: list[tuple[str, str, str]] = [
+    # (resource_type, short_label, period)
+    ("chat_tokens", "Chat Tokens", "day"),
+    ("dreaming_io_tokens", "Dream IO", "day"),
+    ("web_searches_daily", "Web Search", "day"),
+    ("news_searches_daily", "News", "day"),
+    ("worker_bytes_processed", "Files", "wk"),
+    ("dreaming_minutes", "Dream Min", "wk"),
+]
+
+
+async def get_tenant_plans(db: Database) -> dict[str, str]:
+    """Return {tenant_id: plan_id} for all active subscriptions."""
+    rows = await db.fetch(
+        "SELECT tenant_id, plan_id FROM stripe_customers "
+        "WHERE deleted_at IS NULL AND tenant_id IS NOT NULL"
+    )
+    return {r["tenant_id"]: r["plan_id"] for r in rows}
+
+
+async def get_all_tenant_ids(db: Database) -> list[str]:
+    """Return all active tenant_ids from the users table."""
+    rows = await db.fetch(
+        "SELECT DISTINCT tenant_id FROM users "
+        "WHERE tenant_id IS NOT NULL AND deleted_at IS NULL"
+    )
+    return [r["tenant_id"] for r in rows]
+
+
+async def get_usage_by_tenant(db: Database) -> dict[str, dict[str, int]]:
+    """Return {tenant_id: {resource_type: used}} for the current period.
+
+    Includes ALL active tenants (even those with zero usage).
+    Uses the latest period_start per (user, resource) within the current month
+    to handle the monthly→weekly transition gracefully.
+    """
+    # Get all active tenants so everyone appears in the report
+    all_tenants = await get_all_tenant_ids(db)
+
+    rows = await db.fetch(
+        "SELECT DISTINCT ON (ut.user_id, ut.resource_type) "
+        "       u.tenant_id, ut.resource_type, ut.used "
+        "  FROM usage_tracking ut "
+        "  LEFT JOIN users u ON ut.user_id = u.id "
+        " WHERE ut.period_start >= date_trunc('month', CURRENT_DATE)::date "
+        " ORDER BY ut.user_id, ut.resource_type, ut.period_start DESC"
+    )
+    from collections import defaultdict
+    result: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # Seed all tenants so they appear even with zero usage
+    for tid in all_tenants:
+        result[tid]  # triggers defaultdict creation
+    for r in rows:
+        tid = r["tenant_id"] or ""
+        result[tid][r["resource_type"]] += r["used"]
+    return dict(result)

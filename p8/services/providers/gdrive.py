@@ -351,7 +351,9 @@ class GoogleDriveService:
                             create_moment=False,
                         )
 
-                    # Stamp provider origin on the File entity
+                    # Stamp provider origin on the File entity.
+                    # Pass dict directly — the custom JSONB codec handles
+                    # serialization (json.dumps is the registered encoder).
                     provider_meta = {
                         "provider": "google-drive",
                         "provider_file_id": df.id,
@@ -360,8 +362,8 @@ class GoogleDriveService:
                         "synced_at": datetime.now(timezone.utc).isoformat(),
                     }
                     await self.db.execute(
-                        "UPDATE files SET metadata = metadata || $1::jsonb WHERE id = $2",
-                        json.dumps(provider_meta),
+                        "UPDATE files SET metadata = $1::jsonb WHERE id = $2",
+                        provider_meta,
                         ingest_result.file.id,
                     )
 

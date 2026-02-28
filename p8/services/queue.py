@@ -179,6 +179,111 @@ class QueueService:
         )
         return {f"{r['tier']}/{r['status']}": r["count"] for r in rows}
 
+    async def status_counts(self) -> dict[str, int]:
+        """Return {status: count} across all tiers."""
+        rows = await self.db.fetch(
+            "SELECT status, COUNT(*) AS cnt FROM task_queue GROUP BY status ORDER BY status"
+        )
+        return {r["status"]: r["cnt"] for r in rows}
+
+    async def summary_by_type(self, status: str) -> list[dict]:
+        """Return queue summary grouped by task_type for a given status.
+
+        Each row: task_type, cnt, tenant_ids[], earliest, latest, last_error.
+        """
+        return [dict(r) for r in await self.db.fetch(
+            "SELECT tq.task_type, COUNT(*) AS cnt, "
+            "       ARRAY_AGG(DISTINCT tq.tenant_id) "
+            "           FILTER (WHERE tq.tenant_id IS NOT NULL) AS tenant_ids, "
+            "       MIN(tq.scheduled_at) AS earliest, "
+            "       MAX(tq.scheduled_at) AS latest, "
+            "       MAX(tq.error) AS last_error "
+            "  FROM task_queue tq "
+            " WHERE tq.status = $1 "
+            " GROUP BY tq.task_type "
+            " ORDER BY cnt DESC",
+            status,
+        )]
+
+    async def all_tasks(self) -> list[dict]:
+        """Return all tasks ordered by created_at DESC (for CSV export)."""
+        return [dict(r) for r in await self.db.fetch(
+            "SELECT id, task_type, tier, tenant_id, user_id, status, priority, "
+            "       scheduled_at, claimed_at, claimed_by, started_at, completed_at, "
+            "       error, retry_count, max_retries, created_at "
+            "  FROM task_queue ORDER BY created_at DESC"
+        )]
+
+    async def task_schedule(self) -> list[dict]:
+        """Return last completed + next pending per (task_type, tenant_id).
+
+        Cross-joins all active tenants with recurring task types so every
+        user appears even if they have no task history yet.
+        """
+        rows = await self.db.fetch(
+            "SELECT t.task_type, u.tenant_id, "
+            "       MAX(tq.completed_at) FILTER (WHERE tq.status = 'completed') AS last_completed, "
+            "       MIN(tq.scheduled_at) FILTER (WHERE tq.status = 'pending') AS next_pending "
+            "  FROM (VALUES ('dreaming'), ('news'), ('drive_sync')) AS t(task_type) "
+            " CROSS JOIN (SELECT DISTINCT tenant_id FROM users "
+            "             WHERE tenant_id IS NOT NULL AND deleted_at IS NULL) u "
+            "  LEFT JOIN task_queue tq "
+            "    ON tq.task_type = t.task_type AND tq.tenant_id = u.tenant_id "
+            " GROUP BY t.task_type, u.tenant_id "
+            " ORDER BY u.tenant_id, t.task_type"
+        )
+        return [dict(r) for r in rows]
+
+    async def cron_jobs(self) -> dict:
+        """Return active pg_cron jobs, classified into system + user summary.
+
+        Returns dict with:
+          system: list of {name, schedule, description} for system-wide jobs
+          user_jobs: list of {user, count} for per-user jobs (reminders etc.)
+          task_schedules: {task_type: schedule} mapping for recurring task types
+        """
+        try:
+            rows = await self.db.fetch(
+                "SELECT jobid, jobname, schedule, command, active FROM cron.job "
+                "WHERE active = true ORDER BY jobid"
+            )
+        except Exception:
+            return {"system": [], "user_jobs": [], "task_schedules": {}}
+
+        import re
+        from collections import defaultdict
+
+        system = []
+        user_counts: dict[str, int] = defaultdict(int)
+        task_schedules: dict[str, str] = {}
+
+        for r in rows:
+            cmd = r["command"] or ""
+            name = r["jobname"] or ""
+
+            if "enqueue_news_tasks" in cmd:
+                task_schedules["news"] = r["schedule"]
+                system.append({"name": name, "schedule": r["schedule"],
+                               "description": "Enqueue news digests for all users"})
+            elif "enqueue_dreaming_tasks" in cmd:
+                task_schedules["dreaming"] = r["schedule"]
+                system.append({"name": name, "schedule": r["schedule"],
+                               "description": "Enqueue dreaming for all users"})
+            elif "recover_stale_tasks" in cmd:
+                system.append({"name": name, "schedule": r["schedule"],
+                               "description": "Recover stale/stuck tasks"})
+            elif "reminder-" in name or "/notifications/send" in cmd:
+                # Extract user identifier from the command URL
+                m = re.search(r'/users/([0-9a-f-]{8,36})/', cmd)
+                user_key = m.group(1)[:8] if m else "unknown"
+                user_counts[user_key] += 1
+            else:
+                system.append({"name": name, "schedule": r["schedule"],
+                               "description": cmd[:60]})
+
+        user_jobs = [{"user": u, "count": c} for u, c in sorted(user_counts.items())]
+        return {"system": system, "user_jobs": user_jobs, "task_schedules": task_schedules}
+
 
 def _json_dumps(obj: dict | None) -> str | None:
     """Serialize dict to JSON string for PostgreSQL JSONB parameters."""
