@@ -140,6 +140,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             method: str = "auto",
             season_length: int = 7,
             holdout: int = 30,
+            transform: dict | None = None,
         ) -> dict[str, Any]:
             """Run demand forecasting on a CSV time series.
 
@@ -153,11 +154,13 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 method: auto, moving_average, exponential_smoothing, croston, arima, ets, theta.
                 season_length: Seasonal period in days (default 7).
                 holdout: Days to hold out for accuracy eval (default 30).
+                transform: Optional transformation spec, e.g. {"column_map": {"Product ID": "product_id"}}.
             """
             resolved = await resolve_data_path(data_path)
             return platoon_ctl.forecast(  # type: ignore[no-any-return]
                 resolved, product_id=product_id, horizon=horizon,
                 method=method, season_length=season_length, holdout=holdout,
+                transform=transform,
             )
 
         @mcp.tool(name="platoon_optimize")
@@ -167,6 +170,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             orders_path: str | None = None,
             inventory_path: str | None = None,
             service_level: float = 0.95,
+            transform: dict | None = None,
         ) -> dict[str, Any]:
             """Run inventory optimization on product data.
 
@@ -182,6 +186,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 inventory_path: Optional inventory CSV for current stock levels.
                     Can be a local file path or an uploaded file ID (UUID).
                 service_level: Target service level (0-1 exclusive, default 0.95).
+                transform: Optional transformation spec, e.g. {"column_map": {"Product ID": "product_id"}}.
             """
             resolved = await resolve_data_path(data_path)
             resolved_orders = await resolve_data_path(orders_path) if orders_path else None
@@ -189,6 +194,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             return platoon_ctl.optimize(  # type: ignore[no-any-return]
                 resolved, product_id=product_id, orders_path=resolved_orders,
                 inventory_path=resolved_inventory, service_level=service_level,
+                transform=transform,
             )
 
         @mcp.tool(name="platoon_detect_anomalies")
@@ -198,6 +204,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             method: str = "zscore",
             window: int = 30,
             threshold: float = 2.5,
+            transform: dict | None = None,
         ) -> dict[str, Any]:  # type: ignore[no-any-return]
             """Detect spikes and drops in demand time series using rolling-window statistics.
 
@@ -208,11 +215,12 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 method: Detection method — "zscore" or "iqr".
                 window: Rolling window size in days (default 30).
                 threshold: Z-score threshold (default 2.5, zscore method only).
+                transform: Optional transformation spec, e.g. {"column_map": {"Product ID": "product_id"}}.
             """
             resolved = await resolve_data_path(data_path)
             return platoon_ctl.detect_anomalies(  # type: ignore[no-any-return]
                 resolved, product_id=product_id, method=method,
-                window=window, threshold=threshold,
+                window=window, threshold=threshold, transform=transform,
             )
 
         @mcp.tool(name="platoon_basket_analysis")
@@ -221,6 +229,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             min_support: float = 0.01,
             min_confidence: float = 0.3,
             max_rules: int = 50,
+            transform: dict | None = None,
         ) -> dict[str, Any]:  # type: ignore[no-any-return]
             """Find frequently-bought-together association rules from order data.
 
@@ -230,11 +239,13 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 min_support: Minimum support threshold (default 0.01).
                 min_confidence: Minimum confidence threshold (default 0.3).
                 max_rules: Maximum rules to return (default 50).
+                transform: Optional transformation spec, e.g. {"column_map": {"Order ID": "order_id"}}.
             """
             resolved = await resolve_data_path(orders_path)
             return platoon_ctl.basket_analysis(  # type: ignore[no-any-return]
                 resolved, min_support=min_support,
                 min_confidence=min_confidence, max_rules=max_rules,
+                transform=transform,
             )
 
         @mcp.tool(name="platoon_cashflow")
@@ -244,6 +255,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             inventory_path: str | None = None,
             horizon: int = 30,
             product_id: str | None = None,
+            transform: dict | None = None,
         ) -> dict[str, Any]:  # type: ignore[no-any-return]
             """Project daily revenue, COGS, and reorder costs over a horizon.
 
@@ -256,6 +268,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                     Can be a local file path or an uploaded file ID (UUID).
                 horizon: Days to project forward (default 30).
                 product_id: Analyze a single product. If omitted, analyzes all.
+                transform: Optional transformation spec, e.g. {"column_map": {"Product ID": "product_id"}}.
             """
             resolved_data = await resolve_data_path(data_path)
             resolved_demand = await resolve_data_path(demand_path)
@@ -263,7 +276,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             return platoon_ctl.cashflow(  # type: ignore[no-any-return]
                 resolved_data, resolved_demand,
                 inventory_path=resolved_inv, horizon=horizon,
-                product_id=product_id,
+                product_id=product_id, transform=transform,
             )
 
         @mcp.tool(name="platoon_schedule")
@@ -274,6 +287,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
             min_coverage: float = 1.0,
             horizon_days: int = 7,
             product_id: str | None = None,
+            transform: dict | None = None,
         ) -> dict[str, Any]:  # type: ignore[no-any-return]
             """Assign staff to shifts based on demand signal and availability.
 
@@ -286,6 +300,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 min_coverage: Minimum coverage fraction per slot (default 1.0).
                 horizon_days: Days to schedule (default 7).
                 product_id: Filter demand to a single product if specified.
+                transform: Optional transformation spec, e.g. {"column_map": {"Staff Name": "name"}}.
             """
             resolved_demand = await resolve_data_path(demand_path)
             resolved_staff = await resolve_data_path(staff_path)
@@ -293,6 +308,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 resolved_demand, resolved_staff,
                 shift_hours=shift_hours, min_coverage=min_coverage,
                 horizon_days=horizon_days, product_id=product_id,
+                transform=transform,
             )
 
         log.info(

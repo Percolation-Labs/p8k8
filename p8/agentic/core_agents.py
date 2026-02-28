@@ -117,6 +117,11 @@ Example: `search("SEARCH \\"bird survey data\\" FROM resources LIMIT 3")`
 - LOOKUP is exact key match (fast). SEARCH is semantic similarity (broader).
 - FUZZY is trigram text match across all tables — good fallback when SEARCH returns nothing.
 - If one table returns nothing, try another or use FUZZY.
+- For **recent activity**, **"what's new"**, or **date-based queries**, use SQL mode: \
+`search("SQL SELECT name, moment_type, summary, created_at FROM moments WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 10")`. \
+This is the best way to find recent uploads, sessions, and activity. \
+Use `WHERE moment_type = 'content_upload'` for recent file uploads, \
+or `WHERE moment_type = 'session_chunk'` for recent conversations.
 
 ## Formatting
 When the response benefits from it, use rich markdown — the app renders it natively:
@@ -214,7 +219,7 @@ To delegate: `ask_agent(agent_name="researcher", input_text="<user's request>")`
         "tools": [
             {
                 "name": "search",
-                "description": "Query knowledge base using REM dialect (LOOKUP, SEARCH, FUZZY, TRAVERSE, SQL). Tables: resources, moments, ontologies, files, sessions, users",
+                "description": "Query knowledge base using REM dialect (LOOKUP, SEARCH, FUZZY, TRAVERSE, SQL). Tables: resources, moments, ontologies. Use SQL mode for recent activity: SQL SELECT name, moment_type, summary, created_at FROM moments WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 10",
             },
             {
                 "name": "action",
@@ -235,10 +240,6 @@ To delegate: `ask_agent(agent_name="researcher", input_text="<user's request>")`
             {
                 "name": "update_user_metadata",
                 "description": "Save observed facts about the user: relations (family, pets), interests, feeds (URLs to watch), preferences, facts. Partial updates — only send changed keys",
-            },
-            {
-                "name": "save_plot",
-                "description": "Save a mermaid/chart diagram to the user's daily plot collection. Args: source (diagram code), plot_type (mermaid|chartjs|vega), title (short label). Returns moment_link.",
             },
         ],
     }}

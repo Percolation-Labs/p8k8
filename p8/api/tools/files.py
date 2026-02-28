@@ -42,6 +42,9 @@ async def resolve_data_path(data_path: str) -> str:
     If ``data_path`` is a UUID, downloads the file from S3 to a temp file
     and returns that path.  Otherwise returns the path unchanged.  This lets
     platoon tools accept either local paths or uploaded file IDs seamlessly.
+
+    Column remapping (when CSVs have non-standard names) is handled
+    downstream by platoon's ``_load_csv`` via the ``transform`` parameter.
     """
     if not _is_uuid(data_path):
         return data_path

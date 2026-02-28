@@ -79,8 +79,17 @@ async def search(
     - SEARCH <text> FROM <table>: Semantic vector search
     - FUZZY <text>: Fuzzy text matching across all entities
     - TRAVERSE <key> DEPTH <n>: Graph traversal from entity
+    - SQL <query>: Direct SQL query against core tables
 
-    Tables: resources, moments, ontologies, files, sessions, users
+    Core Tables:
+    - **moments** — User activity: session summaries, uploads, dreams, reminders, web searches.
+      Each has moment_type, summary, topic_tags, category, metadata (JSONB), created_at.
+    - **resources** — Uploaded files, documents, bookmarked URLs, RSS articles.
+      Each has name, summary, tags, metadata, created_at.
+    - **ontologies** — Knowledge base: concepts, documentation, system info.
+
+    All core tables have `created_at`, `updated_at`, and `deleted_at` columns.
+    Filter active records with `WHERE deleted_at IS NULL`.
 
     Examples:
     - LOOKUP my-project-plan
@@ -88,12 +97,15 @@ async def search(
     - SEARCH "API gateway architecture" FROM resources LIMIT 3
     - FUZZY project alpha
     - TRAVERSE my-project-plan DEPTH 2
+    - SQL SELECT name, moment_type, summary, created_at FROM moments WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 10
+    - SQL SELECT name, moment_type, summary, metadata FROM moments WHERE moment_type = 'content_upload' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 5
+    - SQL SELECT name, summary, tags FROM resources WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 10
 
     IMPORTANT: Always use one of the query modes above.
-    Do NOT send raw questions or SQL — use SEARCH with keywords instead.
+    Do NOT send raw questions — use SEARCH with keywords or SQL for date-based queries.
 
     Args:
-        query: REM dialect query string (must start with LOOKUP, SEARCH, FUZZY, or TRAVERSE)
+        query: REM dialect query string (must start with LOOKUP, SEARCH, FUZZY, TRAVERSE, or SQL)
         limit: Maximum results (default 20)
 
     Returns:
@@ -106,7 +118,7 @@ async def search(
         return {
             "status": "error",
             "error": (
-                "Invalid query — must start with LOOKUP, SEARCH, FUZZY, or TRAVERSE. "
+                "Invalid query — must start with LOOKUP, SEARCH, FUZZY, TRAVERSE, or SQL. "
                 'Example: SEARCH "your keywords" FROM moments LIMIT 5'
             ),
             "query": query,
