@@ -2063,7 +2063,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.28.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.28.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.28.0" },
-    { name = "p8-platoon", marker = "extra == 'platoon'", specifier = ">=0.5.6" },
+    { name = "p8-platoon", marker = "extra == 'platoon'", specifier = ">=0.5.9" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-ai", extras = ["ag-ui"], specifier = ">=0.1" },
@@ -2091,7 +2091,7 @@ dev = [
 
 [[package]]
 name = "p8-platoon"
-version = "0.5.6"
+version = "0.5.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
@@ -2106,9 +2106,9 @@ dependencies = [
     { name = "stockpyl" },
     { name = "tavily-python" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/8c/ac84874851281d85d715f47d6e230c3208295599d659faad5607ce808b16/p8_platoon-0.5.6.tar.gz", hash = "sha256:54e2817650216445a14dda5ae2ef09660b2d0a1de92cf1670442183707e85f6c", size = 140546, upload-time = "2026-02-28T16:24:09.836Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/80/e194a5e87eebaeb1b3f3a995033ddba78742c99dd3b161f0f9db5d68cd9c/p8_platoon-0.5.9.tar.gz", hash = "sha256:43c11a3b77d858ab1d753977a2d2f360a0b566bbb026b166ccf764939df7ccb5", size = 140643, upload-time = "2026-02-28T16:53:18.128Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/c3/545a7c595c17ea091b17521bfee6e920d5301a264fd6614e428bb5b43239/p8_platoon-0.5.6-py3-none-any.whl", hash = "sha256:b4cc6ebc64369d5138e7e9fd93743f2ff3f5bc76826896c61731e47da55c57ce", size = 129450, upload-time = "2026-02-28T16:24:08.511Z" },
+    { url = "https://files.pythonhosted.org/packages/53/59/0a8520b327779a46cf6173e1ac9fdc7bb69b6f7385997825d9e9953ce168/p8_platoon-0.5.9-py3-none-any.whl", hash = "sha256:02236926c06dcb437c5e3edb5aae969deb71952231d5a4ec96021fbd05c8b683", size = 129544, upload-time = "2026-02-28T16:53:16.815Z" },
 ]
 
 [[package]]

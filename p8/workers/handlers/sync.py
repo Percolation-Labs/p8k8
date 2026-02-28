@@ -118,6 +118,7 @@ class DriveSyncHandler:
                     "error_count": result.errors,
                     "files": result.files,
                     "file_ids": result.file_ids,
+                    "file_map": dict(zip(result.files, result.file_ids)),
                     "provider": "google-drive",
                 },
             )

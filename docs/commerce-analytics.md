@@ -81,6 +81,8 @@ assistant> On Feb 14, SEED-01 dropped to 14 units vs expected 26.4 (z-score -2.7
 
 You can also provide file IDs explicitly if you prefer — all `data_path` parameters accept either a file UUID or a local file path.
 
+You can also sync files from drives - these create moments with file collections that can be used in the same way. So for example if we synced in daily sales reports we could run analysis on them.
+
 ## Getting Data In
 
 Upload CSV or spreadsheet files to Percolate, then reference them by file ID. The tools accept either a **local file path** (MCP/stdio mode) or an **uploaded file UUID** (CLI/API mode) — the server resolves both transparently.
