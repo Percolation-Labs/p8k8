@@ -833,50 +833,15 @@ class AuthService:
 
     async def send_magic_link(self, email: str) -> None:
         """Generate a magic link token and send it via the configured email provider."""
+        from p8.services.email import EmailService
+
         token = await self.create_magic_link_token(email)
         base_url = self.settings.magic_link_base_url or self.settings.api_base_url
         link = f"{base_url}/auth/verify?token={token}"
 
-        provider = self.settings.email_provider
-        if provider == "console":
-            logger.info("Magic link for %s: %s", email, link)
-            print(f"\n🔗 Magic link for {email}:\n   {link}\n")  # noqa: T201
-        elif provider == "smtp":
-            await self._send_smtp(email, link)
-        elif provider == "resend":
-            await self._send_resend(email, link)
-
-    async def _send_smtp(self, to: str, link: str) -> None:
-        """Send magic link via SMTP."""
-        import smtplib
-        from email.message import EmailMessage
-
-        s = self.settings
-        msg = EmailMessage()
-        msg["Subject"] = "Sign in to p8"
-        msg["From"] = s.email_from
-        msg["To"] = to
-        msg.set_content(f"Click to sign in:\n\n{link}\n\nThis link expires in 10 minutes.")
-
-        with smtplib.SMTP(s.smtp_host, s.smtp_port) as server:
-            server.starttls()
-            if s.smtp_username:
-                server.login(s.smtp_username, s.smtp_password)
-            server.send_message(msg)
-
-    async def _send_resend(self, to: str, link: str) -> None:
-        """Send magic link via Resend API."""
-        import httpx
-
-        s = self.settings
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {s.resend_api_key}"},
-                json={
-                    "from": s.email_from,
-                    "to": [to],
-                    "subject": "Sign in to p8",
-                    "text": f"Click to sign in:\n\n{link}\n\nThis link expires in 10 minutes.",
-                },
-            )
+        svc = EmailService(self.settings)
+        await svc.send(
+            to=email,
+            subject="Sign in to p8",
+            body=f"Click to sign in:\n\n{link}\n\nThis link expires in 10 minutes.",
+        )

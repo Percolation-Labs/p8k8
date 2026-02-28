@@ -452,6 +452,52 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+-- enqueue_drive_sync_tasks — called by pg_cron hourly at :30.
+-- Creates one drive_sync task per user who has an active Google Drive grant
+-- with auto_sync=true and a folder selected, and hasn't been synced recently.
+CREATE OR REPLACE FUNCTION enqueue_drive_sync_tasks() RETURNS INT AS $$
+DECLARE
+    v_count INT := 0;
+    v_grant RECORD;
+BEGIN
+    FOR v_grant IN
+        SELECT sg.user_id_ref AS user_id, sg.tenant_id, sg.provider_folder_id
+        FROM storage_grants sg
+        WHERE sg.provider = 'google-drive'
+          AND sg.status = 'active'
+          AND sg.auto_sync = true
+          AND sg.provider_folder_id IS NOT NULL
+          -- Skip users with pending/processing tasks or completed within last hour
+          AND NOT EXISTS (
+              SELECT 1 FROM task_queue tq
+              WHERE tq.task_type = 'drive_sync'
+                AND tq.user_id = sg.user_id_ref
+                AND (
+                    tq.status IN ('pending', 'processing')
+                    OR (tq.status = 'completed' AND tq.completed_at > CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                )
+          )
+    LOOP
+        INSERT INTO task_queue (task_type, tier, user_id, tenant_id, payload)
+        VALUES (
+            'drive_sync',
+            'small',
+            v_grant.user_id,
+            v_grant.tenant_id,
+            jsonb_build_object(
+                'trigger', 'scheduled',
+                'folder_id', v_grant.provider_folder_id,
+                'enqueued_at', CURRENT_TIMESTAMP
+            )
+        );
+        v_count := v_count + 1;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+
 -- ---------------------------------------------------------------------------
 -- pg_cron Jobs
 -- ---------------------------------------------------------------------------
@@ -464,3 +510,6 @@ SELECT cron.schedule('qms-dreaming-enqueue', '0 6,18 * * *', 'SELECT enqueue_dre
 
 -- News feed: daily at 6am UTC, enqueue news digest for users with interests
 SELECT cron.schedule('qms-news-enqueue', '0 6 * * *', 'SELECT enqueue_news_tasks()');
+
+-- Drive sync: hourly at :30, enqueue sync for users with auto_sync enabled
+SELECT cron.schedule('qms-drive-sync-enqueue', '30 * * * *', 'SELECT enqueue_drive_sync_tasks()');

@@ -245,6 +245,131 @@ async def list_reminders(
     return {"reminders": reminders, "count": len(reminders)}
 
 
+@router.get("/plots")
+async def get_plots(
+    date: str | None = Query(None, description="ISO date (e.g. 2026-02-27). Defaults to today."),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Fetch today's (or specified date's) plot collection."""
+    from datetime import date as date_type, datetime, timezone
+
+    user_id = user.user_id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    day = date_type.fromisoformat(date) if date else datetime.now(timezone.utc).date()
+    collection_key = f"plots-{user_id.hex[:8]}-{day.isoformat()}"
+
+    row = await db.fetchrow(
+        "SELECT * FROM moments "
+        "WHERE name = $1 AND moment_type = 'plot_collection' AND deleted_at IS NULL",
+        collection_key,
+    )
+    if not row:
+        return {"date": day.isoformat(), "plots": [], "plot_count": 0}
+
+    repo = Repository(Moment, db, encryption)
+    await repo._ensure_deks([row])
+    entity = repo._decrypt_row(row)
+    result = entity.model_dump(mode="json")
+    return result
+
+
+@router.get("/plots/recent")
+async def get_recent_plots(
+    days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Fetch plot collections from the last N days."""
+    user_id = user.user_id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    name_prefix = f"plots-{user_id.hex[:8]}-"
+    rows = await db.fetch(
+        "SELECT * FROM moments "
+        "WHERE name LIKE $1 || '%' AND moment_type = 'plot_collection' AND deleted_at IS NULL "
+        "  AND ($2::uuid IS NULL OR user_id = $2) "
+        "ORDER BY created_at DESC LIMIT $3",
+        name_prefix, user_id, days,
+    )
+
+    repo = Repository(Moment, db, encryption)
+    if rows:
+        await repo._ensure_deks(rows)
+    collections = []
+    for row in rows:
+        entity = repo._decrypt_row(row)
+        collections.append(entity.model_dump(mode="json"))
+    return {"collections": collections, "count": len(collections)}
+
+
+@router.delete("/plots/{plot_id}")
+async def delete_plot(
+    plot_id: str,
+    date: str | None = Query(None, description="ISO date of the collection. Defaults to today."),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Remove a single plot from a collection by plot_id."""
+    import json
+    from datetime import date as date_type, datetime, timezone
+
+    user_id = user.user_id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    day = date_type.fromisoformat(date) if date else datetime.now(timezone.utc).date()
+    collection_key = f"plots-{user_id.hex[:8]}-{day.isoformat()}"
+
+    row = await db.fetchrow(
+        "SELECT id, metadata FROM moments "
+        "WHERE name = $1 AND moment_type = 'plot_collection' AND deleted_at IS NULL",
+        collection_key,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No plot collection found for {day.isoformat()}")
+
+    meta = row["metadata"] or {}
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    plots = meta.get("plots", [])
+
+    removed = None
+    new_plots = []
+    for p in plots:
+        if p.get("plot_id") == plot_id:
+            removed = p
+        else:
+            new_plots.append(p)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Plot '{plot_id}' not found in collection")
+
+    meta["plots"] = new_plots
+    meta["plot_count"] = len(new_plots)
+
+    titles = [p.get("title", "Untitled") for p in new_plots]
+    summary = f"Plot collection ({len(new_plots)}): {', '.join(titles)}" if new_plots else "Empty plot collection"
+    tags: set[str] = set()
+    for p in new_plots:
+        for t in p.get("topic_tags", []):
+            tags.add(t)
+
+    await db.execute(
+        "UPDATE moments SET metadata = $1, summary = $2, topic_tags = $3, updated_at = NOW() "
+        "WHERE id = $4",
+        json.dumps(meta), summary, sorted(tags), row["id"],
+    )
+
+    return {"deleted": True, "plot_id": plot_id, "removed_title": removed.get("title"), "remaining_count": len(new_plots)}
+
+
 @router.get("/search")
 async def search_moments(
     q: str = Query(..., min_length=1, description="Search text"),

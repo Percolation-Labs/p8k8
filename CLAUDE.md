@@ -127,6 +127,18 @@ Two deployment recipes exist for the p8 stack:
 
 Restoration ecologist from the Pacific Northwest. Interests: forest ecology, birdwatching, mushroom foraging, trail running, woodworking, field recording, wildlife photography, permaculture. Has a border collie named Cedar. Subscribed to Audubon News, Treehugger, iNaturalist, and US Forest Service feeds. Seeded in `sql/02_install.sql`.
 
+## User ID from Email
+
+User IDs are deterministic UUID5 hashes of the email: `deterministic_id("users", email)` from `p8/ontology/base.py`. To find a user without relying on email decryption:
+
+```python
+from p8.ontology.base import deterministic_id
+user_id = deterministic_id("users", "someone@example.com")
+# Then: p8 admin quota --user <user_id> --reset
+```
+
+This avoids encryption/Vault issues with `--email` lookups in admin commands.
+
 ## Git Commits
 
 - NEVER add `Co-Authored-By` or any AI attribution lines to commit messages

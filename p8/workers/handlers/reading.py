@@ -28,6 +28,58 @@ from p8.utils.parsing import ensure_parsed
 
 log = logging.getLogger(__name__)
 
+
+def _build_user_sources(user_metadata: UserMetadata) -> dict | None:
+    """Build custom platoon sources config from user metadata feeds/categories.
+
+    Returns ``{"sources": {...}}`` for passing as ``config`` to
+    ``resolve_for_user()``, or *None* to use platoon defaults.
+    """
+    # Direct sources override on UserMetadata takes full precedence
+    if user_metadata.sources:
+        return {"sources": user_metadata.sources}
+
+    has_feeds = bool(user_metadata.feeds)
+    has_categories = bool(user_metadata.categories)
+
+    if not has_feeds and not has_categories:
+        return None
+
+    from platoon.config import DEFAULT_SOURCES
+
+    # Shallow-copy each source dict so we don't mutate the library default
+    sources = {k: ({**v} if isinstance(v, dict) else v) for k, v in DEFAULT_SOURCES.items()}
+
+    # Replace default RSS with user's custom feeds
+    if has_feeds:
+        rss_feeds = []
+        for feed in user_metadata.feeds or []:
+            url = feed.get("url")
+            if not url:
+                continue
+            rss_feeds.append({"url": url, "label": feed.get("name") or url})
+        if rss_feeds:
+            sources["rss_feeds"] = {
+                "enabled": True,
+                "feeds": rss_feeds,
+                "max_items_per_feed": 3,
+            }
+
+    # Personalize google_news queries from category names
+    if has_categories:
+        queries = [f"{name} news" for name in (user_metadata.categories or {})]
+        sources["google_news"] = {
+            "enabled": True,
+            "queries": queries,
+            "max_items_per_query": 4,
+        }
+        # Disable tech-centric defaults when categories are custom
+        sources["hacker_news"] = {"enabled": False}
+        sources["reddit"] = {"enabled": False}
+
+    return {"sources": sources}
+
+
 SUMMARY_PROMPT = """\
 You are summarizing a user's reading feed. Here are today's articles:
 
@@ -75,13 +127,14 @@ class ReadingSummaryHandler:
             or ""
         )
 
-        pipeline_config = resolve_for_user(user_metadata)
+        user_sources = _build_user_sources(user_metadata)
+        pipeline_config = resolve_for_user(user_metadata, config=user_sources)
         provider = FeedProvider(tavily_key=tavily_key or None)
         result = provider.run(pipeline_config, user_id=user_id)
 
         log.info(
-            "Platoon returned %d resources for user %s",
-            len(result.resources), user_id,
+            "Platoon returned %d resources for user %s (custom_sources=%s)",
+            len(result.resources), user_id, user_sources is not None,
         )
 
         if not result.resources:

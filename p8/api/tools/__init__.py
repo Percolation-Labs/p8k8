@@ -92,6 +92,7 @@ def _ensure_registry() -> None:
     from p8.api.tools.web_search import web_search
     from p8.api.tools.update_user_metadata import update_user_metadata
     from p8.api.tools.remind_me import remind_me
+    from p8.api.tools.plots import save_plot
 
     TOOL_REGISTRY.update({
         "search": search,
@@ -102,6 +103,7 @@ def _ensure_registry() -> None:
         "web_search": web_search,
         "update_user_metadata": update_user_metadata,
         "remind_me": remind_me,
+        "save_plot": save_plot,
     })
 
 

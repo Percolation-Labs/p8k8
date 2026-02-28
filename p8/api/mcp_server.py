@@ -32,6 +32,7 @@ from p8.api.tools.get_moments import get_moments
 from p8.api.tools.search import search
 from p8.api.tools.update_user_metadata import update_user_metadata
 from p8.api.tools.web_search import web_search
+from p8.api.tools.plots import save_plot
 from p8.ontology.types import User
 from p8.services.repository import Repository
 from p8.settings import Settings, get_settings
@@ -110,7 +111,7 @@ def create_mcp_server() -> FastMCP:
     mcp.tool(name="get_moments")(get_moments)
     mcp.tool(name="web_search")(web_search)
     mcp.tool(name="update_user_metadata")(update_user_metadata)
-
+    mcp.tool(name="save_plot")(save_plot)
     # Also register user_profile as a tool — the Claude.ai MCP connector
     # only supports tools (not resources), so this ensures it works remotely.
     mcp.tool(name="get_user_profile")(user_profile)

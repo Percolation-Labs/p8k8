@@ -8,6 +8,7 @@ so we can filter by origin and avoid re-syncing.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -66,9 +67,11 @@ class SyncResult:
     """Summary of a sync operation."""
 
     synced: int = 0
+    updated: int = 0
     skipped: int = 0
     errors: int = 0
     files: list[str] = field(default_factory=list)
+    file_ids: list[str] = field(default_factory=list)
 
 
 class GoogleDriveService:
@@ -253,6 +256,20 @@ class GoogleDriveService:
         )
         return row is not None
 
+    async def _synced_file_info(
+        self, user_id: UUID, provider_file_id: str,
+    ) -> dict | None:
+        """Return existing synced file info, or None if not yet synced."""
+        row = await self.db.fetchrow(
+            "SELECT id, metadata->>'provider_modified_time' AS provider_modified_time"
+            " FROM files"
+            " WHERE user_id = $1 AND metadata->>'provider_file_id' = $2"
+            " AND deleted_at IS NULL",
+            user_id,
+            provider_file_id,
+        )
+        return dict(row) if row else None
+
     async def sync_folder(
         self,
         user_id: UUID,
@@ -284,36 +301,79 @@ class GoogleDriveService:
                     result.skipped += 1
                     continue
 
-                # Skip already-synced files
-                if not force and await self._already_synced(user_id, df.id):
-                    result.skipped += 1
-                    continue
+                # Check if already synced and whether it's been modified
+                existing = await self._synced_file_info(user_id, df.id)
+                if existing and not force:
+                    # Compare modification times to detect updates
+                    stored_mtime = existing.get("provider_modified_time") or ""
+                    drive_mtime = df.modified_time or ""
+                    if stored_mtime >= drive_mtime:
+                        result.skipped += 1
+                        continue
+                    # File was modified since last sync — re-sync it
+                    logger.info(
+                        "File modified since last sync: %s (stored=%s, drive=%s)",
+                        df.name, stored_mtime, drive_mtime,
+                    )
+                    is_update = True
+                    existing_file_id = existing["id"]
+                else:
+                    is_update = bool(existing)  # force re-sync of existing
+                    existing_file_id = existing["id"] if existing else None
 
                 try:
                     data, filename, mime = await self.download_file(user_id, df.id)
 
-                    ingest_result = await self.content_service.ingest(
-                        data,
-                        filename,
-                        mime_type=mime,
-                        tenant_id=tenant_id,
-                        user_id=user_id,
-                        tags=["google-drive-sync"],
-                    )
+                    if is_update and existing_file_id:
+                        # Update existing file: re-ingest content and update metadata
+                        ingest_result = await self.content_service.ingest(
+                            data,
+                            filename,
+                            mime_type=mime,
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            tags=["google-drive-sync"],
+                            create_moment=False,
+                        )
+                        # Delete the old file entity
+                        await self.db.execute(
+                            "UPDATE files SET deleted_at = NOW() WHERE id = $1",
+                            existing_file_id,
+                        )
+                    else:
+                        ingest_result = await self.content_service.ingest(
+                            data,
+                            filename,
+                            mime_type=mime,
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            tags=["google-drive-sync"],
+                            create_moment=False,
+                        )
 
                     # Stamp provider origin on the File entity
+                    provider_meta = {
+                        "provider": "google-drive",
+                        "provider_file_id": df.id,
+                        "provider_file_name": df.name,
+                        "provider_modified_time": df.modified_time or "",
+                        "synced_at": datetime.now(timezone.utc).isoformat(),
+                    }
                     await self.db.execute(
                         "UPDATE files SET metadata = metadata || $1::jsonb WHERE id = $2",
-                        f'{{"provider": "google-drive", "provider_file_id": "{df.id}",'
-                        f' "provider_file_name": "{df.name}",'
-                        f' "provider_modified_time": "{df.modified_time or ""}",'
-                        f' "synced_at": "{datetime.now(timezone.utc).isoformat()}"}}',
+                        json.dumps(provider_meta),
                         ingest_result.file.id,
                     )
 
-                    result.synced += 1
-                    result.files.append(df.name)
-                    logger.info("Synced %s (id=%s)", df.name, df.id)
+                    if is_update:
+                        result.updated += 1
+                        result.files.append(f"{df.name} (updated)")
+                        logger.info("Updated %s (id=%s)", df.name, df.id)
+                    else:
+                        result.synced += 1
+                        result.files.append(df.name)
+                        logger.info("Synced %s (id=%s)", df.name, df.id)
+                    result.file_ids.append(str(ingest_result.file.id))
 
                 except Exception:
                     result.errors += 1

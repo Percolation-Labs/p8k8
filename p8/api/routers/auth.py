@@ -715,7 +715,7 @@ async def mobile_google_drive_sync(request: Request):
     if existing:
         return {"status": "already_queued", "task_id": str(existing["id"])}
 
-    queue = request.app.state.queue
+    queue = request.app.state.queue_service
     task_id = await queue.enqueue(
         "drive_sync",
         {"trigger": "manual", "folder_id": grant["provider_folder_id"]},

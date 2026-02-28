@@ -63,13 +63,16 @@ class NewsHandler:
             or ""
         )
 
-        pipeline_config = resolve_for_user(user_metadata)
+        from p8.workers.handlers.reading import _build_user_sources
+
+        user_sources = _build_user_sources(user_metadata)
+        pipeline_config = resolve_for_user(user_metadata, config=user_sources)
         provider = FeedProvider(tavily_key=tavily_key or None)
         result = provider.run(pipeline_config, user_id=user_id)
 
         log.info(
-            "Platoon returned %d resources, %d moments for user %s",
-            len(result.resources), len(result.moments), user_id,
+            "Platoon returned %d resources, %d moments for user %s (custom_sources=%s)",
+            len(result.resources), len(result.moments), user_id, user_sources is not None,
         )
 
         if not result.resources:

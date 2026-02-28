@@ -110,6 +110,7 @@ class ContentService:
         tags: list[str] | None = None,
         max_chars: int | None = None,
         overlap: int | None = None,
+        create_moment: bool = True,
     ) -> IngestResult:
         """Ingest raw bytes: upload to S3, extract text, chunk, persist."""
         mime_type = mime_type or FileService.mime_type_from_path(filename)
@@ -143,53 +144,57 @@ class ContentService:
             category=category, tenant_id=tenant_id, user_id=user_id, tags=tag_list,
         )
 
-        # Build moment + companion session via unified create_moment_session
-        resource_keys = [r.name for r in resource_entities]
-        file_id_str = str(file_entity.id)
-        is_image = mime_type and mime_type.startswith("image/")
+        result_session_id: UUID | None = None
 
-        # Build summary — user-facing content only, no metadata
-        char_count = len(full_text) if full_text else 0
-        if full_text:
-            summary = (full_text[:300] + "…") if len(full_text) > 300 else full_text
-        else:
-            summary = f"Uploaded {filename}"
+        if create_moment:
+            # Build moment + companion session via unified create_moment_session
+            resource_keys = [r.name for r in resource_entities]
+            file_id_str = str(file_entity.id)
+            is_image = mime_type and mime_type.startswith("image/")
 
-        # Build image_uri for thumbnails
-        image_uri = None
-        if is_image and thumb_data:
-            import base64
-            b64 = base64.b64encode(thumb_data).decode()
-            image_uri = f"data:image/jpeg;base64,{b64}"
+            # Build summary — user-facing content only, no metadata
+            char_count = len(full_text) if full_text else 0
+            if full_text:
+                summary = (full_text[:300] + "…") if len(full_text) > 300 else full_text
+            else:
+                summary = f"Uploaded {filename}"
 
-        moment_metadata = {
-            "file_id": file_id_str,
-            "file_name": filename,
-            "resource_keys": resource_keys,
-            "source": "upload",
-            "chunk_count": len(resource_entities),
-            "char_count": char_count,
-            **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
-        }
+            # Build image_uri for thumbnails
+            image_uri = None
+            if is_image and thumb_data:
+                import base64
+                b64 = base64.b64encode(thumb_data).decode()
+                image_uri = f"data:image/jpeg;base64,{b64}"
 
-        memory = MemoryService(self.db, self.encryption)
-        moment, session = await memory.create_moment_session(
-            name=f"upload-{stem}",
-            moment_type="content_upload",
-            summary=summary,
-            metadata=moment_metadata,
-            image_uri=image_uri,
-            session_id=UUID(session_id) if session_id else None,
-            tenant_id=tenant_id,
-            user_id=user_id,
-        )
+            moment_metadata = {
+                "file_id": file_id_str,
+                "file_name": filename,
+                "resource_keys": resource_keys,
+                "source": "upload",
+                "chunk_count": len(resource_entities),
+                "char_count": char_count,
+                **({"image_url": f"/content/files/{file_id_str}?thumbnail=true"} if is_image else {}),
+            }
+
+            memory = MemoryService(self.db, self.encryption)
+            moment, session = await memory.create_moment_session(
+                name=f"upload-{stem}",
+                moment_type="content_upload",
+                summary=summary,
+                metadata=moment_metadata,
+                image_uri=image_uri,
+                session_id=UUID(session_id) if session_id else None,
+                tenant_id=tenant_id,
+                user_id=user_id,
+            )
+            result_session_id = session.id
 
         return IngestResult(
             file=file_entity,
             resources=resource_entities,
             chunk_count=len(chunk_texts),
             total_chars=len(full_text) if full_text else 0,
-            session_id=session.id,
+            session_id=result_session_id,
         )
 
     # ── Ingest sub-steps ─────────────────────────────────────────────────

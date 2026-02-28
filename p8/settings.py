@@ -140,10 +140,15 @@ class Settings(BaseSettings):
     fcm_project_id: str = ""  # enables FCM when set
     fcm_service_account_file: str = ""  # path to Google service account JSON
 
-    # Magic link email
+    # Email
     magic_link_base_url: str = ""              # defaults to api_base_url
-    email_provider: str = "console"            # console | smtp | resend
-    email_from: str = "noreply@p8.dev"
+    email_provider: str = "console"            # console | smtp | resend | microsoft_graph
+    email_from: str = "saoirse@percolationlabs.ai"
+    # Microsoft Graph API (OAuth2 client credentials — works with 2FA)
+    ms_graph_tenant_id: str = ""
+    ms_graph_client_id: str = ""
+    ms_graph_client_secret: str = ""
+    # SMTP (fallback — may not work with M365 if basic auth disabled)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""

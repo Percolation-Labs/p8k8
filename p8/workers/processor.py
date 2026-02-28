@@ -80,6 +80,9 @@ def _register_default_handlers() -> None:
         register_handler("reading_summary", _reading)  # type: ignore[arg-type]
     if "scheduled" not in _HANDLER_REGISTRY:
         register_handler("scheduled", ScheduledHandler())  # type: ignore[arg-type]
+    from p8.workers.handlers.sync import DriveSyncHandler
+    if "drive_sync" not in _HANDLER_REGISTRY:
+        register_handler("drive_sync", DriveSyncHandler())  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

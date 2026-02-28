@@ -140,6 +140,8 @@ class QueueService:
             quota_key = "dreaming_minutes"
         elif task_type == "news":
             quota_key = "news_searches_daily"
+        elif task_type == "drive_sync":
+            quota_key = "drive_syncs_daily"
 
         if quota_key:
             from p8.services.usage import check_quota, get_user_plan

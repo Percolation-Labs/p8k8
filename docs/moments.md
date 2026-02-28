@@ -25,6 +25,11 @@ Moments are the core content units in the feed. Each moment has a `moment_type` 
 | `reading` | News CronJob → `ReadingSummaryHandler` | Visible | Daily feed digest with LLM summary and mosaic thumbnail |
 | `reminder` | `remind_me` MCP tool | **Hidden** | Future-dated reminder (see [Reminders](#reminders)) |
 
+
+### Special moments
+- research: A research moment is triggered by adding artifacts to sessions e.g. plots. The moment groups these artifacts e.g. a daily brainstorm. Users can continue to chat with the moment (session). remember by adding it to session metadata its available at the beginning of the chat. A Research Agent can also start a chat to create these artifacts and these will exist in the session as they save via a tool and also in the chat, if relevant
+-  Drive sync: When we sync new or modified files from a folder, a moment of the file collection is created. Drilling down we see cards for the files and we can chat about these files
+
 ## Grain and Consolidation
 
 Moments are designed around a **time grain** — a date-based window (default last 24 hours, configurable via `lookback_days`) within which all user activity is collected and then consolidated into N moments (typically 1–3 per day).
