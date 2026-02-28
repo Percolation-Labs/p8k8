@@ -18,7 +18,7 @@ This can be useful just to test the tools and not the agent.
 
 ## Option 2: p8 CLI Agent (`p8 chat`)
 
-The `commerce-analyst` agent wraps the same tools behind a conversational interface. The CLI agent connects to your local Percolate instance, so upload data files there first, then reference them by file ID. You could also upload to the remote instance and use the chat endpoint - same idea. Locally do the following...
+The `commerce-analyst` agent wraps the same tools behind a conversational interface. Upload your data to Percolate, then just ask questions — the agent finds your files automatically.
 
 **1. Start the server** (if not already running):
 
@@ -28,37 +28,58 @@ p8 serve
 
 **2. Upload your data files:**
 
+Upload via the API, the Percolate mobile app, or Google Drive sync. For local testing, the CLI defaults to the Sage Whitfield test user — use the same user ID for uploads so the agent can find them:
+
 ```bash
-curl -X POST http://localhost:8000/content/ \
-  -H "x-user-id: $USER_ID" \
-  -F "file=@demand.csv" -F "category=commerce"
-# → {"file": {"id": "72a09785-826d-500e-9105-173a4e1b442b", ...}}
+# Test user ID (matches p8 chat default)
+export USER_ID="7d31eddf-7ff7-542a-982f-7522e7a3ec67"
 
 curl -X POST http://localhost:8000/content/ \
-  -H "x-user-id: $USER_ID" \
-  -F "file=@products.csv" -F "category=commerce"
-# → {"file": {"id": "439af134-368a-5371-96fb-c2b8c88bbc6f", ...}}
+  -H "x-user-id: $USER_ID" -F "file=@products.csv"
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" -F "file=@demand.csv"
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" -F "file=@orders.csv"
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" -F "file=@inventory.csv"
 ```
 
-**3. Chat with the agent:**
+**3. Just ask — no file IDs needed:**
+
+The agent has access to `get_moments` and `search`, so it discovers your uploaded files from the `content_upload` moments that Percolate creates automatically on upload. You don't need to copy-paste file IDs.
 
 ```bash
 p8 chat --agent commerce-analyst
 ```
 
 ```
-you> I uploaded demand data (file ID: 72a09785-826d-500e-9105-173a4e1b442b).
-     Can you forecast demand for product SEED-01 for the next 14 days?
+you> I uploaded some commerce data recently. What products should I reorder first?
 
-assistant> SEED-01 is projected to sell ~356 units over 14 days (~25.5/day).
-           Stable trend, weekly seasonality detected. 95% CI: 15–36 units/day.
-           With only 30 units in stock, you have ~1.2 days of coverage.
-           Stock at least 360 units to cover expected demand.
+assistant> You should prioritize reordering the following products immediately:
+           | Priority | Product (SKU)              | Stock | Days Left | Daily Revenue |
+           |----------|---------------------------|-------|-----------|--------------|
+           | URGENT   | Binoculars (BIN-PRO-8X42)  | 8     | 2.0       | $759.96      |
+           | URGENT   | Trail Camera (CAM-TRAIL-HD) | 5     | 1.7       | $449.97      |
+           | URGENT   | Bird Seed (SD-SONGBIRD-5LB) | 30    | 1.2       | $324.75      |
+           Focus on A-class products first — they drive the most revenue.
+
+you> What does our cash situation look like for March?
+
+assistant> Total projected revenue: $101,719. Restocking costs: $55,488.
+           Net cash after all expenses: $7,233. You can cover all planned
+           restocking, but cash dips on major reorder days. Consider staggering
+           large reorders to smooth out cash flow.
+
+you> Were there any unusual demand spikes around Valentine's Day?
+
+assistant> On Feb 14, SEED-01 dropped to 14 units vs expected 26.4 (z-score -2.71).
+           A statistically significant dip — possible Valentine's Day effect where
+           customers shifted to gift items instead.
 ```
 
-The agent selects the right tool (`platoon_forecast`), passes the file ID, and interprets the results. You never call tools directly — just describe what you want to know.
+**How it works:** Each file upload creates a `content_upload` moment with the file ID in its metadata. The agent calls `get_moments(moment_type="content_upload")` to find recent uploads, extracts the file IDs, and passes them to the right analytics tool. Even if the agent grabs a moment ID instead of a file ID, Percolate's file resolver follows through to the actual file automatically.
 
-**Why file IDs?** The Platoon tools run server-side via MCP and resolve file IDs through Percolate's content store. Uploading makes your data available to the agent, the Percolate mobile/web app, and any connected MCP client. Files can also be uploaded via the Percolate app or Google Drive sync.
+You can also provide file IDs explicitly if you prefer — all `data_path` parameters accept either a file UUID or a local file path.
 
 ## Getting Data In
 

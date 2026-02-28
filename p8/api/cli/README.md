@@ -130,36 +130,33 @@ p8 chat --user-id user-123           # with user context
 
 #### Commerce analytics via `commerce-analyst`
 
-Upload data files to Percolate, then ask questions in natural language. The agent selects the right Platoon tool and interprets results.
+Upload data files to Percolate, then ask questions in natural language. The agent discovers your files automatically and selects the right Platoon tool.
 
 ```bash
-# Upload data
+# Upload data (use the test user ID that p8 chat defaults to)
+export USER_ID="7d31eddf-7ff7-542a-982f-7522e7a3ec67"
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" -F "file=@products.csv"
 curl -X POST http://localhost:8000/content/ \
   -H "x-user-id: $USER_ID" -F "file=@demand.csv"
-# → file ID: 72a09785-826d-500e-9105-173a4e1b442b
 
-# Start the agent
+# Chat — no file IDs needed, the agent finds them
 p8 chat --agent commerce-analyst
 ```
 
 ```
-you> I uploaded demand data (file ID: 72a09785-...). Forecast SEED-01 for 14 days.
-assistant> SEED-01: ~356 units over 14 days (~25.5/day). Stable trend, weekly
-           seasonality. 95% CI: 15–36 units/day.
+you> I uploaded some commerce data. What products should I reorder first?
+assistant> Binoculars (A-class, 2 days of stock, $760/day revenue) and
+           Trail Camera (A-class, 1.7 days) are most urgent. 6 of 8 products
+           at elevated stockout risk.
 
-you> Which products need reordering? Products: 439af134-..., orders: d86f8a30-...,
-     inventory: 85594c11-...
-assistant> 6 of 8 products at elevated stockout risk. Binoculars (A-class, 2 days
-           of stock) and Trail Camera (A-class, 1.7 days) are most urgent.
+you> What does our cash situation look like for March?
+assistant> Revenue: $101K. Restocking: $55K. Net cash: $7.2K. You can cover
+           all reorders but cash dips on major reorder days.
 
-you> Any unusual demand spikes for JOURNAL-01? Demand file: 72a09785-...
-assistant> One spike on Feb 12 — 19 units vs expected 10.9 (z-score 2.9).
-           Valentine's Day gift bump. Low severity, not a data quality issue.
-
-you> Project cashflow for 30 days. Products: 439af134-..., demand: 72a09785-...,
-     inventory: 85594c11-...
-assistant> 30-day outlook: $98K revenue, $38K COGS, $55K reorder costs.
-           Net cash: $5K. Large restock outlay on day 1, cash-positive after.
+you> Any unusual demand patterns around Valentine's Day?
+assistant> SEED-01 dropped to 14 units on Feb 14 vs expected 26.4 (z-score -2.71).
+           Customers likely shifted to gift items.
 ```
 
 See [docs/commerce-analytics.md](../../../docs/commerce-analytics.md) for the full tool reference, data formats, and end-to-end case study.
