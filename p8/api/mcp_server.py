@@ -191,9 +191,114 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
                 inventory_path=resolved_inventory, service_level=service_level,
             )
 
+        @mcp.tool(name="platoon_detect_anomalies")
+        async def _platoon_detect_anomalies(
+            data_path: str,
+            product_id: str | None = None,
+            method: str = "zscore",
+            window: int = 30,
+            threshold: float = 2.5,
+        ) -> dict[str, Any]:  # type: ignore[no-any-return]
+            """Detect spikes and drops in demand time series using rolling-window statistics.
+
+            Args:
+                data_path: Path to daily demand CSV file.
+                    Can be a local file path or an uploaded file ID (UUID).
+                product_id: Which product to analyze. Picks highest-volume if omitted.
+                method: Detection method — "zscore" or "iqr".
+                window: Rolling window size in days (default 30).
+                threshold: Z-score threshold (default 2.5, zscore method only).
+            """
+            resolved = await resolve_data_path(data_path)
+            return platoon_ctl.detect_anomalies(  # type: ignore[no-any-return]
+                resolved, product_id=product_id, method=method,
+                window=window, threshold=threshold,
+            )
+
+        @mcp.tool(name="platoon_basket_analysis")
+        async def _platoon_basket_analysis(
+            orders_path: str,
+            min_support: float = 0.01,
+            min_confidence: float = 0.3,
+            max_rules: int = 50,
+        ) -> dict[str, Any]:  # type: ignore[no-any-return]
+            """Find frequently-bought-together association rules from order data.
+
+            Args:
+                orders_path: Path to orders CSV (order_id, product_id columns required).
+                    Can be a local file path or an uploaded file ID (UUID).
+                min_support: Minimum support threshold (default 0.01).
+                min_confidence: Minimum confidence threshold (default 0.3).
+                max_rules: Maximum rules to return (default 50).
+            """
+            resolved = await resolve_data_path(orders_path)
+            return platoon_ctl.basket_analysis(  # type: ignore[no-any-return]
+                resolved, min_support=min_support,
+                min_confidence=min_confidence, max_rules=max_rules,
+            )
+
+        @mcp.tool(name="platoon_cashflow")
+        async def _platoon_cashflow(
+            data_path: str,
+            demand_path: str,
+            inventory_path: str | None = None,
+            horizon: int = 30,
+            product_id: str | None = None,
+        ) -> dict[str, Any]:  # type: ignore[no-any-return]
+            """Project daily revenue, COGS, and reorder costs over a horizon.
+
+            Args:
+                data_path: Path to products CSV.
+                    Can be a local file path or an uploaded file ID (UUID).
+                demand_path: Path to daily demand CSV.
+                    Can be a local file path or an uploaded file ID (UUID).
+                inventory_path: Optional inventory CSV for reorder simulation.
+                    Can be a local file path or an uploaded file ID (UUID).
+                horizon: Days to project forward (default 30).
+                product_id: Analyze a single product. If omitted, analyzes all.
+            """
+            resolved_data = await resolve_data_path(data_path)
+            resolved_demand = await resolve_data_path(demand_path)
+            resolved_inv = await resolve_data_path(inventory_path) if inventory_path else None
+            return platoon_ctl.cashflow(  # type: ignore[no-any-return]
+                resolved_data, resolved_demand,
+                inventory_path=resolved_inv, horizon=horizon,
+                product_id=product_id,
+            )
+
+        @mcp.tool(name="platoon_schedule")
+        async def _platoon_schedule(
+            demand_path: str,
+            staff_path: str,
+            shift_hours: float = 8.0,
+            min_coverage: float = 1.0,
+            horizon_days: int = 7,
+            product_id: str | None = None,
+        ) -> dict[str, Any]:  # type: ignore[no-any-return]
+            """Assign staff to shifts based on demand signal and availability.
+
+            Args:
+                demand_path: Path to daily demand CSV.
+                    Can be a local file path or an uploaded file ID (UUID).
+                staff_path: Path to staff CSV (name, hourly_rate, max_hours, available_days).
+                    Can be a local file path or an uploaded file ID (UUID).
+                shift_hours: Hours per shift (default 8).
+                min_coverage: Minimum coverage fraction per slot (default 1.0).
+                horizon_days: Days to schedule (default 7).
+                product_id: Filter demand to a single product if specified.
+            """
+            resolved_demand = await resolve_data_path(demand_path)
+            resolved_staff = await resolve_data_path(staff_path)
+            return platoon_ctl.schedule(  # type: ignore[no-any-return]
+                resolved_demand, resolved_staff,
+                shift_hours=shift_hours, min_coverage=min_coverage,
+                horizon_days=horizon_days, product_id=product_id,
+            )
+
         log.info(
-            "Registered Platoon tools (platoon_forecast, platoon_optimize%s)",
-            ", platoon_read_file" if stdio else "",
+            "Registered Platoon tools (forecast, optimize, detect_anomalies, "
+            "basket_analysis, cashflow, schedule%s)",
+            ", read_file" if stdio else "",
         )
     except ImportError:
         log.info("Platoon not installed — commerce tools skipped")

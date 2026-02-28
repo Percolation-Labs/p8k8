@@ -37,7 +37,7 @@ dependencies = [
 p8 = "p8.api.cli:app"
 
 [project.optional-dependencies]
-platoon = ["p8-platoon[learning]>=0.3.2"]
+platoon = ["p8-platoon[learning]>=0.5.0"]
 
 [dependency-groups]
 dev = [
