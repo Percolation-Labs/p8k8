@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID
 
 from p8.api.tools import get_db, get_encryption, get_user_id
-from p8.ontology.types import File as FileEntity
+from p8.ontology.types import File as FileEntity, Moment
 from p8.services.files import FileService
 from p8.services.repository import Repository
 from p8.settings import get_settings
@@ -51,6 +51,15 @@ async def resolve_data_path(data_path: str) -> str:
     encryption = get_encryption()
     repo = Repository(FileEntity, db, encryption)
     entity = await repo.get(UUID(file_id))
+    if not entity:
+        # Agent may have passed a moment ID instead of the file_id from metadata.
+        # Check if it's a content_upload moment and follow through.
+        moment_repo = Repository(Moment, db, encryption)
+        moment = await moment_repo.get(UUID(file_id))
+        if moment and moment.metadata and moment.metadata.get("file_id"):
+            real_file_id = moment.metadata["file_id"]
+            log.info("Resolved moment %s → file %s", file_id, real_file_id)
+            entity = await repo.get(UUID(real_file_id))
     if not entity:
         raise FileNotFoundError(f"Uploaded file not found: {file_id}")
     if not entity.uri:
@@ -91,6 +100,14 @@ async def get_file(file_id: str, head: int = 0) -> dict[str, Any]:
 
     repo = Repository(FileEntity, db, encryption)
     entity = await repo.get(fid)
+    if not entity:
+        # Agent may have passed a moment ID — resolve via metadata.file_id
+        moment_repo = Repository(Moment, db, encryption)
+        moment = await moment_repo.get(fid)
+        if moment and moment.metadata and moment.metadata.get("file_id"):
+            real_file_id = moment.metadata["file_id"]
+            log.info("get_file: resolved moment %s → file %s", file_id, real_file_id)
+            entity = await repo.get(UUID(real_file_id))
     if not entity:
         return {"status": "error", "error": f"File not found: {file_id}"}
 

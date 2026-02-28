@@ -1,10 +1,68 @@
 # Commerce Analytics (Platoon)
 
-Percolate includes an integrated commerce analytics suite powered by [Platoon](https://github.com/Percolate-AI/p8-platoon). It gives agents the ability to run demand forecasting, inventory optimization, anomaly detection, basket analysis, cash flow projection, and staff scheduling — all from natural language questions.
+Percolate includes an integrated commerce analytics suite powered by [Platoon](https://pypi.org/project/p8-platoon/). It gives agents the ability to run demand forecasting, inventory optimization, anomaly detection, basket analysis, cash flow projection, and staff scheduling — all from natural language questions.
+
+There are two ways to use these tools: **directly via MCP** (for agents like Claude Code that connect to the Percolate MCP server) or **through the p8 CLI** (the `commerce-analyst` agent picks the right tool for you).
+
+## Option 1: MCP Tools (Claude Code, Cursor, etc.)
+
+When an MCP client connects to the Percolate server, it gets direct access to all Platoon tools (`platoon_forecast`, `platoon_optimize`, etc.). The agent decides which tool to call based on your question.
+
+For data access, use `platoon_read_file` to load CSVs from the local filesystem:
+
+```
+platoon_read_file(path="data/case_study/demand.csv", head=5)
+```
+
+This can be useful just to test the tools and not the agent.
+
+## Option 2: p8 CLI Agent (`p8 chat`)
+
+The `commerce-analyst` agent wraps the same tools behind a conversational interface. The CLI agent connects to your local Percolate instance, so upload data files there first, then reference them by file ID. You could also upload to the remote instance and use the chat endpoint - same idea. Locally do the following...
+
+**1. Start the server** (if not already running):
+
+```bash
+p8 serve
+```
+
+**2. Upload your data files:**
+
+```bash
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@demand.csv" -F "category=commerce"
+# → {"file": {"id": "72a09785-826d-500e-9105-173a4e1b442b", ...}}
+
+curl -X POST http://localhost:8000/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@products.csv" -F "category=commerce"
+# → {"file": {"id": "439af134-368a-5371-96fb-c2b8c88bbc6f", ...}}
+```
+
+**3. Chat with the agent:**
+
+```bash
+p8 chat --agent commerce-analyst
+```
+
+```
+you> I uploaded demand data (file ID: 72a09785-826d-500e-9105-173a4e1b442b).
+     Can you forecast demand for product SEED-01 for the next 14 days?
+
+assistant> SEED-01 is projected to sell ~356 units over 14 days (~25.5/day).
+           Stable trend, weekly seasonality detected. 95% CI: 15–36 units/day.
+           With only 30 units in stock, you have ~1.2 days of coverage.
+           Stock at least 360 units to cover expected demand.
+```
+
+The agent selects the right tool (`platoon_forecast`), passes the file ID, and interprets the results. You never call tools directly — just describe what you want to know.
+
+**Why file IDs?** The Platoon tools run server-side via MCP and resolve file IDs through Percolate's content store. Uploading makes your data available to the agent, the Percolate mobile/web app, and any connected MCP client. Files can also be uploaded via the Percolate app or Google Drive sync.
 
 ## Getting Data In
 
-Upload CSV or spreadsheet files to Percolate, then reference them by file ID. The tools accept either a **local file path** or an **uploaded file UUID** — the server resolves both transparently.
+Upload CSV or spreadsheet files to Percolate, then reference them by file ID. The tools accept either a **local file path** (MCP/stdio mode) or an **uploaded file UUID** (CLI/API mode) — the server resolves both transparently.
 
 **Upload methods:**
 - Percolate mobile app
@@ -37,19 +95,19 @@ A fictional outdoor/nature shop with 8 products — binoculars, bird feeders, fi
 Upload four CSV files via the content API:
 
 ```bash
-curl -X POST https://api.percolationlabs.ai/content/ \
+curl -X POST http://localhost:8000/content/ \
   -H "x-user-id: $USER_ID" \
   -F "file=@products.csv" -F "category=commerce"
 
-curl -X POST https://api.percolationlabs.ai/content/ \
+curl -X POST http://localhost:8000/content/ \
   -H "x-user-id: $USER_ID" \
   -F "file=@demand.csv" -F "category=commerce"
 
-curl -X POST https://api.percolationlabs.ai/content/ \
+curl -X POST http://localhost:8000/content/ \
   -H "x-user-id: $USER_ID" \
   -F "file=@orders.csv" -F "category=commerce"
 
-curl -X POST https://api.percolationlabs.ai/content/ \
+curl -X POST http://localhost:8000/content/ \
   -H "x-user-id: $USER_ID" \
   -F "file=@inventory.csv" -F "category=commerce"
 ```
@@ -587,10 +645,7 @@ Each slot specifies hours of coverage needed and which skills qualify a staff me
 Platoon is included in the p8k8 Docker image. For local development:
 
 ```bash
-uv pip install "p8-platoon[learning]"
+uv sync --extra platoon
 ```
 
-Optional extras:
-- `[optimization]` — LP/MIP via OR-Tools
-- `[search]` — web search enrichment via Tavily
-- `[learning,optimization,search]` — everything
+This installs `p8-platoon` with all analytics dependencies (statsforecast, OR-Tools, scikit-learn, polars, Tavily).

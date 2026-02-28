@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
 
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-from p8.agentic.agent_schema import AgentSchema
+from p8.agentic.agent_schema import AgentSchema, MCPToolReference
 from p8.agentic.core_agents import (
     BUILTIN_AGENT_DEFINITIONS,
     DREAMING_AGENT,
@@ -64,6 +64,11 @@ BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
 try:
     from platoon.mcp.agent import CommerceAnalystAgent
     _commerce_schema = AgentSchema.from_model_class(CommerceAnalystAgent)
+    # Augment with Percolate tools so the agent can discover uploaded files
+    _commerce_schema.tools.extend([
+        MCPToolReference(name="search", description="Query knowledge base — find uploaded files, moments, resources."),
+        MCPToolReference(name="get_moments", description="List recent moments — find content_upload events with file IDs."),
+    ])
     BUILTIN_AGENTS["commerce-analyst"] = _commerce_schema.to_schema_dict()
 except ImportError:
     pass
