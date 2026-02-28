@@ -62,8 +62,9 @@ BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
 
 # Extension agents from optional packages
 try:
-    from platoon.mcp.agent import COMMERCE_ANALYST
-    BUILTIN_AGENTS["commerce-analyst"] = COMMERCE_ANALYST
+    from platoon.mcp.agent import CommerceAnalystAgent
+    _commerce_schema = AgentSchema.from_model_class(CommerceAnalystAgent)
+    BUILTIN_AGENTS["commerce-analyst"] = _commerce_schema.to_schema_dict()
 except ImportError:
     pass
 
