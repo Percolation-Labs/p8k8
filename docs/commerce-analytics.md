@@ -22,7 +22,7 @@ Upload CSV or spreadsheet files to Percolate, then reference them by file ID. Th
 | `platoon_detect_anomalies` | Spike/drop detection (z-score, IQR) |
 | `platoon_basket_analysis` | Frequently-bought-together association rules |
 | `platoon_cashflow` | Daily revenue/COGS/reorder cash projection |
-| `platoon_schedule` | Demand-based staff shift assignment |
+| `platoon_schedule` | Demand-based or skill-based staff shift assignment |
 
 All `data_path` parameters accept either a local file path or an uploaded file UUID.
 
@@ -351,6 +351,88 @@ Using alerts from Step 5, rank by daily revenue impact and allocate greedily:
 | "Any demand anomalies?" | `detect_anomalies` | Clusters by season, distinguishes noise from signal |
 | "Cross-sell opportunities?" | `basket_analysis` | Resolves IDs to names, suggests bundles |
 | "Cash flow outlook?" | `cashflow` | Identifies reorder spikes, sizes credit line |
+| "How do I staff the week?" | `schedule` | Assigns shifts by demand, minimizes cost |
+| "Schedule tutors by subject?" | `schedule` (skill-based) | Matches staff skills to slot requirements |
+
+## Case Study: Tutor Scheduling with Skills
+
+A tutoring center needs to schedule 6 tutors across 15 weekly subject slots. Each slot requires specific subject expertise — a math slot needs a tutor who knows math or AP calculus, a science slot needs physics, chemistry, or biology, etc.
+
+### Data Setup
+
+**staff.csv** — 6 tutors with subject skills:
+
+```csv
+staff_id,name,hourly_rate,max_hours_per_week,available_days,skills
+T-1,Alice Chen,28.00,30,"Monday,Tuesday,Wednesday,Thursday","math,AP_calc,physics"
+T-2,Bob Rivera,25.00,25,"Monday,Wednesday,Friday","english,history,economics"
+T-3,Carol Kim,30.00,20,"Tuesday,Thursday","math,chemistry,biology"
+T-4,Dan Okafor,22.00,35,"Monday,Tuesday,Wednesday,Thursday,Friday","computer_science,math,physics"
+T-5,Eve Santos,26.00,25,"Monday,Wednesday,Friday","spanish,french,english"
+T-6,Fay Liu,24.00,30,"Tuesday,Thursday,Friday","biology,chemistry,AP_physics"
+```
+
+**tutor_slots.csv** — 15 weekly slots with skill requirements:
+
+```csv
+slot_label,hours_needed,required_skills
+Monday_math,4.0,"math,AP_calc"
+Monday_english,3.0,english
+Monday_CS,3.0,computer_science
+Wednesday_math,4.0,"math,AP_calc"
+Wednesday_history,3.0,"history,economics"
+Wednesday_languages,3.0,"spanish,french"
+Tuesday_science,4.0,"physics,chemistry,biology"
+Tuesday_math,3.0,"math,AP_calc"
+Thursday_science,4.0,"physics,chemistry,biology"
+Thursday_math,3.0,"math,AP_calc"
+Thursday_english,3.0,english
+Friday_CS,4.0,computer_science
+Friday_languages,3.0,"spanish,french"
+Friday_science,3.0,"physics,chemistry,biology"
+Friday_english,3.0,english
+```
+
+### Running the Schedule
+
+```
+platoon_schedule(
+  demand_path = "demand.csv",
+  staff_path  = "staff.csv",
+  slots_path  = "tutor_slots.csv",
+  shift_hours = 4
+)
+```
+
+The tool returns a schedule grid showing which tutor covers each slot, total cost, total hours, and any **coverage gaps** where no available tutor has the required skills.
+
+### What the Agent Reports
+
+> **Weekly schedule built** — 15 slots, 6 tutors, skill-based mode.
+>
+> | Slot | Tutor | Hours | Skills Match |
+> |------|-------|------:|-------------|
+> | Monday_math | Alice Chen | 4.0 | math, AP_calc |
+> | Monday_english | Bob Rivera | 3.0 | english |
+> | Monday_CS | Dan Okafor | 3.0 | computer_science |
+> | Tuesday_science | Carol Kim | 4.0 | chemistry, biology |
+> | Tuesday_math | Dan Okafor | 3.0 | math |
+> | Wednesday_math | Alice Chen | 4.0 | math, AP_calc |
+> | Wednesday_history | Bob Rivera | 3.0 | history |
+> | Wednesday_languages | Eve Santos | 3.0 | spanish, french |
+> | Thursday_science | Fay Liu | 4.0 | biology, chemistry |
+> | Thursday_math | Carol Kim | 3.0 | math |
+> | Thursday_english | ⚠️ Gap | 3.0 | No available tutor |
+> | Friday_CS | Dan Okafor | 4.0 | computer_science |
+> | Friday_languages | Eve Santos | 3.0 | spanish, french |
+> | Friday_science | Fay Liu | 3.0 | biology, chemistry |
+> | Friday_english | Bob Rivera | 3.0 | english |
+>
+> **Coverage gap:** Thursday_english — no English-skilled tutor is available on Thursday. Consider adding Thursday to Bob or Eve's available days.
+>
+> **Total cost:** ~$1,230/week across 50 tutor-hours.
+
+---
 
 ## Tool Reference
 
@@ -429,16 +511,30 @@ platoon_cashflow(
 
 ### platoon_schedule
 
+Two modes: **demand-based** (aggregate demand into day-of-week slots) and **skill-based** (explicit slots with skill requirements).
+
 ```
+# Mode 1: Demand-based (default)
 platoon_schedule(
-  demand_path  = "<file_id or path>",
-  staff_path   = "<file_id or path>",
+  demand_path  = "<file_id or path>",   # demand CSV
+  staff_path   = "<file_id or path>",   # staff CSV
   shift_hours  = 8,
   min_coverage = 1.0,
   horizon_days = 7
 )
-→ {status, total_cost, total_hours, demand_by_slot, coverage_gaps, schedule_grid}
+
+# Mode 2: Skill-based (provide slots_path)
+platoon_schedule(
+  demand_path  = "<file_id or path>",   # demand CSV (used for context)
+  staff_path   = "<file_id or path>",   # staff CSV with skills column
+  slots_path   = "<file_id or path>",   # slots CSV with required_skills
+  shift_hours  = 8,
+  min_coverage = 1.0
+)
+→ {status, mode, total_cost, total_hours, demand_by_slot, coverage_gaps, schedule_grid}
 ```
+
+When `slots_path` is provided, the tool switches to skill-based mode — slots define explicit hours and skill requirements, and only staff with at least one matching skill are assigned. Match is OR-based and case-insensitive.
 
 ## Data Format
 
@@ -468,9 +564,23 @@ BINOC-01,8
 
 ### Staff CSV (for scheduling)
 ```csv
-name,hourly_rate,max_hours,available_days
-Alice,18.50,40,"Monday,Tuesday,Wednesday,Thursday,Friday"
+staff_id,name,hourly_rate,max_hours_per_week,available_days,skills
+T-1,Alice,25.00,40,"Monday,Tuesday,Wednesday,Thursday,Friday","math,AP_calc,physics"
+T-2,Bob,22.00,32,"Monday,Wednesday,Friday","english,history"
 ```
+
+The `skills` column is optional. When present and used with a slots file, only staff with matching skills are assigned to skill-required slots.
+
+### Slots CSV (for skill-based scheduling)
+```csv
+slot_label,hours_needed,required_skills
+Monday_math,4.0,"math,AP_calc"
+Monday_english,3.0,english
+Tuesday_science,4.0,"physics,chemistry,biology"
+Wednesday_math,4.0,"math,AP_calc"
+```
+
+Each slot specifies hours of coverage needed and which skills qualify a staff member. Empty `required_skills` means any staff qualifies.
 
 ## Installation
 

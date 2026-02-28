@@ -2844,7 +2844,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.28.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.28.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.28.0" },
-    { name = "p8-platoon", extras = ["learning"], marker = "extra == 'platoon'", specifier = ">=0.3.0" },
+    { name = "p8-platoon", extras = ["learning"], marker = "extra == 'platoon'", specifier = ">=0.5.0" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-ai", extras = ["ag-ui"], specifier = ">=0.1" },
@@ -2872,17 +2872,18 @@ dev = [
 
 [[package]]
 name = "p8-platoon"
-version = "0.3.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "fastmcp" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/43/36ddba8fffc37adbfdfb54de9f8e4295cbd648b887aa11aa67541be21786/p8_platoon-0.3.0.tar.gz", hash = "sha256:b77b363a90ead176ba8886b4f43c9fb07098f1d8d1a388d1a29604d4db601a46", size = 110953, upload-time = "2026-02-28T12:54:12.984Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/7e/c6ef7026b315b2fdfb188ad57091b4ace3d4101151ff5b524bd49640964b/p8_platoon-0.5.0.tar.gz", hash = "sha256:bb7a08594d0045ae4a9d82c780f54b94e821a2fb85b3012a9a23755329e887a4", size = 140335, upload-time = "2026-02-28T14:35:11.859Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/7e/428c7fb967f820e21c0e79303b8a0c9d39c761033b25fa37af20b428fc26/p8_platoon-0.3.0-py3-none-any.whl", hash = "sha256:1aa0c25390dafb50ec93a3178630cfb373b467078a8e2613df0b96d0fd26b079", size = 102067, upload-time = "2026-02-28T12:54:11.783Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/c5/d675e074c68a48925b26b41d7af1eed46a5803061e8496e54d207ebc0915/p8_platoon-0.5.0-py3-none-any.whl", hash = "sha256:1b8db4288282cef57a5f9ab7c3fd1e2eb1b38071f536258d1d17ee44db176e85", size = 129232, upload-time = "2026-02-28T14:35:10.584Z" },
 ]
 
 [package.optional-dependencies]
