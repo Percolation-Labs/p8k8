@@ -286,19 +286,20 @@ def test_chat_429_when_quota_exceeded(client):
     _sql_seed(
         client,
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        f"VALUES ('{uid}', 'chat_tokens', date_trunc('month', CURRENT_DATE)::date, 101000)",
+        f"VALUES ('{uid}', 'chat_tokens', date_trunc('day', CURRENT_DATE)::date, 51000)",
     )
     _plan_cache.clear()
 
+    msg_id = str(uuid4())
     resp = client.post(
         f"/chat/{uuid4()}",
-        json={"messages": [{"role": "user", "content": "hello"}]},
+        json={"messages": [{"role": "user", "content": "hello", "id": msg_id}]},
         headers={"x-user-id": str(uid)},
     )
     assert resp.status_code == 429
     detail = resp.json()["detail"]
     assert detail["error"] == "chat_token_quota_exceeded"
-    assert detail["used"] == 101000
+    assert detail["used"] == 51000
     assert detail["limit"] == 50_000
 
 
