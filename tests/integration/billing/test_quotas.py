@@ -170,7 +170,7 @@ async def test_check_quota_no_usage(db):
     """No usage row → QuotaStatus(used=0, limit=free chat_tokens, exceeded=False)."""
     uid = uuid4()
     status = await check_quota(db, uid, "chat_tokens", "free")
-    assert status == QuotaStatus(used=0, limit=100_000, exceeded=False)
+    assert status == QuotaStatus(used=0, limit=50_000, exceeded=False)
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_check_quota_after_increment(db):
     await increment_usage(db, uid, "chat_tokens", 5000, "free")
     status = await check_quota(db, uid, "chat_tokens", "free")
     assert status.used == 5000
-    assert status.limit == 100_000
+    assert status.limit == 50_000
     assert status.exceeded is False
 
 
@@ -299,7 +299,7 @@ def test_chat_429_when_quota_exceeded(client):
     detail = resp.json()["detail"]
     assert detail["error"] == "chat_token_quota_exceeded"
     assert detail["used"] == 101000
-    assert detail["limit"] == 100_000
+    assert detail["limit"] == 50_000
 
 
 # ── 8. API: content upload returns 429 on storage exceeded ────────────────
@@ -333,16 +333,16 @@ async def test_plan_upgrade_raises_limits(db):
     uid = uuid4()
     # Free plan
     status_free = await check_quota(db, uid, "chat_tokens", "free")
-    assert status_free.limit == 100_000
+    assert status_free.limit == 50_000
 
     # Pro plan
     status_pro = await check_quota(db, uid, "chat_tokens", "pro")
     assert status_pro.limit == 200_000
 
     # Verify via get_limits too
-    assert get_limits("free").chat_tokens == 100_000
+    assert get_limits("free").chat_tokens == 50_000
     assert get_limits("pro").chat_tokens == 200_000
-    assert get_limits("unknown_plan").chat_tokens == 100_000  # defaults to free
+    assert get_limits("unknown_plan").chat_tokens == 50_000  # defaults to free
 
 
 # ── 10. Dreaming quota tests ──────────────────────────────────────────────
