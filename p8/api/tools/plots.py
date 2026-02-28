@@ -258,9 +258,9 @@ async def remove_plot(
 
     collection_key = _collection_name(user_id.hex, day)
 
-    # Find the pointer moment to get the session
+    # Find the pointer moment to get the session (and fallback plots)
     row = await db.fetchrow(
-        "SELECT id, source_session_id FROM moments "
+        "SELECT id, source_session_id, metadata FROM moments "
         "WHERE name = $1 AND moment_type = 'plot_collection' AND deleted_at IS NULL",
         collection_key,
     )
@@ -268,19 +268,27 @@ async def remove_plot(
         return {"status": "error", "error": f"No plot collection found for {day.isoformat()}"}
 
     session_id = row["source_session_id"]
-    if not session_id:
-        return {"status": "error", "error": "No session linked to this collection"}
 
-    # Load plots from session metadata
-    from p8.ontology.types import Session
-    from p8.services.repository import Repository
+    # Load plots from session metadata (preferred) or moment metadata (fallback)
+    plots: list[dict] = []
+    use_session = False
+    if session_id:
+        from p8.ontology.types import Session
+        from p8.services.repository import Repository
 
-    session_repo = Repository(Session, db, encryption)
-    session = await session_repo.get(session_id)
-    if not session:
-        return {"status": "error", "error": "Session not found"}
+        session_repo = Repository(Session, db, encryption)
+        session = await session_repo.get(session_id)
+        if session:
+            plots = (session.metadata or {}).get("plots", [])
+            use_session = True
 
-    plots = (session.metadata or {}).get("plots", [])
+    if not plots:
+        # Fallback: plots stored directly in moment metadata
+        moment_meta = row.get("metadata")
+        if moment_meta:
+            if isinstance(moment_meta, str):
+                moment_meta = json.loads(moment_meta)
+            plots = moment_meta.get("plots", [])
 
     # Find and remove the plot
     removed = None
@@ -294,20 +302,24 @@ async def remove_plot(
     if not removed:
         return {"status": "error", "error": f"Plot '{plot_id}' not found in collection for {day.isoformat()}"}
 
-    # Update session metadata
-    await session_repo.merge_metadata(session_id, {
-        "plots": new_plots,
-        "plot_count": len(new_plots),
-    })
+    # Update session metadata if that's where plots live
+    if use_session:
+        await session_repo.merge_metadata(session_id, {
+            "plots": new_plots,
+            "plot_count": len(new_plots),
+        })
 
-    # Update pointer moment
+    # Update moment
     summary = _build_summary(new_plots) if new_plots else "Empty research collection"
     all_tags = _collect_tags(new_plots)
+    moment_update_meta = {"plot_count": len(new_plots), "date": day.isoformat()}
+    if not use_session:
+        moment_update_meta["plots"] = new_plots
     await db.execute(
         "UPDATE moments SET summary = $1, topic_tags = $2, "
-        "metadata = jsonb_set(metadata, '{plot_count}', $3::jsonb), "
+        "metadata = $3::jsonb, "
         "updated_at = NOW() WHERE id = $4",
-        summary, all_tags, json.dumps(len(new_plots)), row["id"],
+        summary, all_tags, json.dumps(moment_update_meta), row["id"],
     )
 
     return {
