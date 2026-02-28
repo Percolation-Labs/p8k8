@@ -85,7 +85,7 @@ async def test_usage_increment_exceed_limit(db):
 async def test_usage_increment_granted_extra_extends_limit(db):
     """granted_extra extends the effective limit beyond the base plan limit."""
     uid = uuid4()
-    # Pre-seed a row with granted_extra
+    # Pre-seed a row with granted_extra (must match SQL function default period)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used, granted_extra) "
         "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 0, 10000)",
@@ -338,11 +338,11 @@ async def test_plan_upgrade_raises_limits(db):
 
     # Pro plan
     status_pro = await check_quota(db, uid, "chat_tokens", "pro")
-    assert status_pro.limit == 200_000
+    assert status_pro.limit == 100_000
 
     # Verify via get_limits too
     assert get_limits("free").chat_tokens == 50_000
-    assert get_limits("pro").chat_tokens == 200_000
+    assert get_limits("pro").chat_tokens == 100_000
     assert get_limits("unknown_plan").chat_tokens == 50_000  # defaults to free
 
 
@@ -350,46 +350,46 @@ async def test_plan_upgrade_raises_limits(db):
 
 @pytest.mark.asyncio
 async def test_dreaming_io_tokens_quota(db):
-    """dreaming_io_tokens quota: free plan limit=40000, tracks usage correctly."""
+    """dreaming_io_tokens quota: free plan limit=20000, tracks usage correctly."""
     uid = uuid4()
 
     # Fresh — no usage
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.limit == 40_000
+    assert status.limit == 20_000
     assert status.used == 0
     assert status.exceeded is False
 
     # Increment below limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 20_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 10_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 20_000
+    assert status.used == 10_000
     assert status.exceeded is False
 
     # Increment past limit
-    await increment_usage(db, uid, "dreaming_io_tokens", 21_000, "free")
+    await increment_usage(db, uid, "dreaming_io_tokens", 11_000, "free")
     status = await check_quota(db, uid, "dreaming_io_tokens", "free")
-    assert status.used == 41_000
+    assert status.used == 21_000
     assert status.exceeded is True
 
 
 @pytest.mark.asyncio
 async def test_dreaming_minutes_quota(db):
-    """dreaming_minutes quota: free plan limit=120, tracks usage correctly."""
+    """dreaming_minutes quota: free plan limit=30, tracks usage correctly."""
     uid = uuid4()
 
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.limit == 120
+    assert status.limit == 30
     assert status.used == 0
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 60, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 15, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 60
+    assert status.used == 15
     assert status.exceeded is False
 
-    await increment_usage(db, uid, "dreaming_minutes", 65, "free")
+    await increment_usage(db, uid, "dreaming_minutes", 20, "free")
     status = await check_quota(db, uid, "dreaming_minutes", "free")
-    assert status.used == 125
+    assert status.used == 35
     assert status.exceeded is True
 
 
@@ -399,10 +399,10 @@ async def test_dreaming_pre_flight_blocks_over_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage past the free-plan dreaming_minutes limit (120)
+    # Seed usage past the free-plan dreaming_minutes limit (30)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 125)",
+        "VALUES ($1, $2, date_trunc('week', CURRENT_DATE)::date, 35)",
         uid, "dreaming_minutes",
     )
 
@@ -420,10 +420,10 @@ async def test_dreaming_pre_flight_allows_under_quota(db):
     from p8.services.queue import QueueService
 
     uid = uuid4()
-    # Seed usage under the free-plan dreaming_minutes limit (120)
+    # Seed usage under the free-plan dreaming_minutes limit (30)
     await db.execute(
         "INSERT INTO usage_tracking (user_id, resource_type, period_start, used) "
-        "VALUES ($1, $2, date_trunc('month', CURRENT_DATE)::date, 20)",
+        "VALUES ($1, $2, date_trunc('week', CURRENT_DATE)::date, 20)",
         uid, "dreaming_minutes",
     )
 
@@ -467,7 +467,7 @@ async def test_dreaming_handler_increments_tokens(db):
     row = await db.fetchrow(
         "SELECT used FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens' "
-        "AND period_start = date_trunc('month', CURRENT_DATE)::date",
+        "AND period_start = CURRENT_DATE",
         uid,
     )
     assert row is not None, "usage_tracking row should exist"
@@ -506,7 +506,7 @@ async def test_dreaming_handler_no_increment_on_skip(db):
     row = await db.fetchrow(
         "SELECT used FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens' "
-        "AND period_start = date_trunc('month', CURRENT_DATE)::date",
+        "AND period_start = CURRENT_DATE",
         uid,
     )
     assert row is None, "No usage_tracking row when tokens are 0"
@@ -569,7 +569,7 @@ async def test_dreaming_handler_increments_usage(db, encryption):
     row = await db.fetchrow(
         "SELECT used FROM usage_tracking "
         "WHERE user_id = $1 AND resource_type = 'dreaming_io_tokens' "
-        "AND period_start = date_trunc('month', CURRENT_DATE)::date",
+        "AND period_start = CURRENT_DATE",
         TEST_USER_ID,
     )
     assert row is not None, "usage_tracking row for dreaming_io_tokens should exist"
