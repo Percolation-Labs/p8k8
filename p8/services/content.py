@@ -55,6 +55,91 @@ class BulkUpsertResult:
 
 _LINK_SKIP_PREFIXES = ("http://", "https://", "mailto:", "#", "data:")
 
+# Whisper API limit is 25 MB; we stay at 24 MB for safety.
+_WHISPER_MAX_BYTES = 24 * 1024 * 1024
+
+
+def chunk_audio_for_whisper(
+    audio: "AudioSegment",  # type: ignore[name-defined]  # noqa: F821
+    *,
+    silence_thresh: int = -40,
+    min_silence_len: int = 700,
+    target_chunk_ms: int = 60_000,
+) -> list[BytesIO]:
+    """Prepare audio buffers for the Whisper API.
+
+    Strategy:
+      1. Export the full audio as WAV.  If it fits under the 24 MB Whisper
+         limit, return it as a single buffer — no splitting needed.
+      2. Otherwise, split at silence boundaries and merge adjacent segments
+         until each chunk is close to ``target_chunk_ms`` (~60 s).  This
+         keeps the number of API calls low while landing on natural pauses.
+
+    Silence detection uses a **dynamic threshold**: whichever is lower of
+    the configured ``silence_thresh`` or ``audio.dBFS - 16``.  A fixed
+    threshold (e.g. -40 dBFS) can misclassify quiet speech as silence in
+    phone recordings where the average level is below -40.
+
+    Args:
+        audio: A pydub AudioSegment.
+        silence_thresh: Absolute dBFS floor for silence detection.
+        min_silence_len: Minimum ms of silence to trigger a split point.
+        target_chunk_ms: Target duration per chunk when splitting is needed.
+
+    Returns:
+        List of BytesIO buffers, each containing WAV data ready for Whisper.
+    """
+    from pydub.silence import split_on_silence
+    from pydub.utils import make_chunks
+
+    # Try sending the whole file in one shot.
+    full_buf = BytesIO()
+    audio.export(full_buf, format="wav")
+    if full_buf.tell() <= _WHISPER_MAX_BYTES:
+        full_buf.seek(0)
+        return [full_buf]
+
+    # File too large — split at silence boundaries near ~60 s marks.
+    # Dynamic threshold: quiet recordings need a lower threshold so that
+    # actual speech isn't treated as silence.
+    effective_thresh = min(silence_thresh, audio.dBFS - 16)
+
+    raw_segments = split_on_silence(
+        audio,
+        min_silence_len=min_silence_len,
+        silence_thresh=effective_thresh,
+        keep_silence=300,  # preserve 300 ms padding to avoid clipping words
+    )
+    if len(raw_segments) <= 1:
+        # No silence found (e.g. music, constant noise) — fall back to
+        # fixed-duration cuts.
+        raw_segments = make_chunks(audio, target_chunk_ms)
+
+    # Merge small segments so each chunk is close to the target duration.
+    # This avoids sending dozens of tiny requests to Whisper.
+    from pydub import AudioSegment as _AS
+
+    merged: list = []
+    current = _AS.empty()
+    for seg in raw_segments:
+        if len(current) + len(seg) > target_chunk_ms and len(current) >= 500:
+            merged.append(current)
+            current = seg
+        else:
+            current += seg
+    if len(current) >= 500:
+        merged.append(current)
+
+    # Export each merged segment as WAV.
+    buffers: list[BytesIO] = []
+    for seg in merged:
+        buf = BytesIO()
+        seg.export(buf, format="wav")
+        buf.seek(0)
+        buffers.append(buf)
+
+    return buffers
+
 
 def _links_to_edges(links: list[tuple[int, str, str]]) -> list[dict]:
     """Convert extracted markdown links to graph_edges dicts.
@@ -377,14 +462,11 @@ print(json.dumps(output))
         return full_text, chunks
 
     async def _transcribe_audio(self, data: bytes, mime_type: str) -> str:
-        """Split audio on silence and transcribe each segment via Whisper API."""
+        """Transcribe audio via Whisper API, chunking only when necessary."""
         import httpx
         from pydub import AudioSegment
-        from pydub.silence import split_on_silence
-        from pydub.utils import make_chunks
 
         fmt = mime_type.split("/")[-1]
-        # Normalize common MIME sub-types to pydub format names
         fmt_map = {"mpeg": "mp3", "x-m4a": "m4a", "mp4": "m4a", "x-wav": "wav", "ogg": "ogg"}
         fmt = fmt_map.get(fmt, fmt)
 
@@ -395,26 +477,19 @@ print(json.dumps(output))
                 f"Could not decode audio ({mime_type}): {e}", code="audio_decode_failed",
             ) from e
 
-        segments = split_on_silence(
+        buffers = chunk_audio_for_whisper(
             audio,
-            min_silence_len=self.settings.audio_min_silence_len,
             silence_thresh=self.settings.audio_silence_thresh,
+            min_silence_len=self.settings.audio_min_silence_len,
+            target_chunk_ms=self.settings.audio_chunk_duration_ms,
         )
-        if len(segments) <= 1:
-            segments = make_chunks(audio, self.settings.audio_chunk_duration_ms)
-
-        # Filter out segments shorter than 0.5s — Whisper rejects very short audio
-        segments = [s for s in segments if len(s) >= 500]
-        if not segments:
-            logger.info("All audio segments too short to transcribe (%d ms total)", len(audio))
+        if not buffers:
+            logger.info("No audio segments to transcribe (%d ms total)", len(audio))
             return ""
 
         transcriptions: list[str] = []
         async with httpx.AsyncClient(timeout=120) as client:
-            for i, segment in enumerate(segments):
-                buf = BytesIO()
-                segment.export(buf, format="wav")
-                buf.seek(0)
+            for i, buf in enumerate(buffers):
                 try:
                     resp = await client.post(
                         "https://api.openai.com/v1/audio/transcriptions",
@@ -425,9 +500,9 @@ print(json.dumps(output))
                     resp.raise_for_status()
                 except httpx.HTTPStatusError as e:
                     logger.warning("Whisper API error on segment %d/%d: %s %s",
-                                   i + 1, len(segments), e.response.status_code, e.response.text[:200])
+                                   i + 1, len(buffers), e.response.status_code, e.response.text[:200])
                     raise ContentProcessingError(
-                        f"Transcription failed (segment {i + 1}/{len(segments)}): {e.response.status_code}",
+                        f"Transcription failed (segment {i + 1}/{len(buffers)}): {e.response.status_code}",
                         code="transcription_failed",
                     ) from e
                 transcriptions.append(resp.text.strip())

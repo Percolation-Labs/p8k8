@@ -472,13 +472,12 @@ class TestAudioIngest:
                 return mock_resources[: len(entities)]
             return [mock_file]
 
-        # Mock pydub: AudioSegment and split_on_silence
-        mock_segment = MagicMock()
-        mock_segment.export = MagicMock(side_effect=lambda buf, format: buf.write(b"fake-wav"))
-        mock_segment.__len__ = MagicMock(return_value=5000)  # 5s segment, above 500ms minimum
+        # chunk_audio_for_whisper returns a single buffer for short audio.
+        from io import BytesIO
+        single_buf = BytesIO(b"fake-wav")
+        mock_chunk_fn = MagicMock(return_value=[single_buf])
 
         mock_audio = MagicMock()
-        mock_split = MagicMock(return_value=[mock_segment, mock_segment])
 
         # Mock httpx response
         mock_response = MagicMock()
@@ -492,15 +491,15 @@ class TestAudioIngest:
 
         # Mock Kreuzberg re-chunking
         rechunk_result = _FakeExtractResult(
-            content="Hello world. Hello world.",
-            chunks=[_FakeChunk("Hello world. Hello world.")],
+            content="Hello world.",
+            chunks=[_FakeChunk("Hello world.")],
         )
 
         mock_cms, _ = _mock_create_moment_session()
 
         with (
             patch("pydub.AudioSegment.from_file", return_value=mock_audio),
-            patch("pydub.silence.split_on_silence", mock_split),
+            patch("p8.services.content.chunk_audio_for_whisper", mock_chunk_fn),
             patch("httpx.AsyncClient", return_value=mock_client),
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=rechunk_result),
             patch("kreuzberg.ChunkingConfig"),
@@ -521,14 +520,15 @@ class TestAudioIngest:
 
         assert isinstance(result, IngestResult)
         assert result.file.name == "interview"
-        # Whisper called twice (two segments)
-        assert mock_client.post.await_count == 2
+        # Single buffer → one Whisper API call
+        assert mock_client.post.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_audio_ingest_fallback_to_fixed_chunks(self):
-        """When split_on_silence returns <=1 segment, falls back to make_chunks."""
+    async def test_audio_ingest_splits_large_file(self):
+        """When chunk_audio_for_whisper returns multiple buffers, each is transcribed."""
         svc, db, _ = _make_content_service()
 
+        from io import BytesIO
         from p8.ontology.types import File
 
         mock_file = File(name="podcast", parsed_content="Transcribed text.")
@@ -536,13 +536,12 @@ class TestAudioIngest:
         async def mock_upsert(entities):
             return [mock_file]
 
-        mock_segment = MagicMock()
-        mock_segment.export = MagicMock(side_effect=lambda buf, format: buf.write(b"fake-wav"))
-        mock_segment.__len__ = MagicMock(return_value=5000)  # 5s segment, above 500ms minimum
+        # chunk_audio_for_whisper returns 3 buffers (simulating a large file).
+        mock_chunk_fn = MagicMock(return_value=[
+            BytesIO(b"wav1"), BytesIO(b"wav2"), BytesIO(b"wav3"),
+        ])
 
         mock_audio = MagicMock()
-        mock_split = MagicMock(return_value=[mock_segment])  # only 1 segment → fallback
-        mock_make_chunks = MagicMock(return_value=[mock_segment, mock_segment, mock_segment])
 
         mock_response = MagicMock()
         mock_response.text = "Transcribed text."
@@ -562,8 +561,7 @@ class TestAudioIngest:
 
         with (
             patch("pydub.AudioSegment.from_file", return_value=mock_audio),
-            patch("pydub.silence.split_on_silence", mock_split),
-            patch("pydub.utils.make_chunks", mock_make_chunks),
+            patch("p8.services.content.chunk_audio_for_whisper", mock_chunk_fn),
             patch("httpx.AsyncClient", return_value=mock_client),
             patch("kreuzberg.extract_bytes", new_callable=AsyncMock, return_value=rechunk_result),
             patch("kreuzberg.ChunkingConfig"),
@@ -582,8 +580,8 @@ class TestAudioIngest:
                 mime_type="audio/mpeg",
             )
 
-        mock_make_chunks.assert_called_once_with(mock_audio, 30000)
-        assert mock_client.post.await_count == 3  # 3 fixed chunks
+        mock_chunk_fn.assert_called_once()
+        assert mock_client.post.await_count == 3  # 3 chunks → 3 Whisper calls
 
     @pytest.mark.asyncio
     async def test_audio_no_api_key_raises_error(self):
