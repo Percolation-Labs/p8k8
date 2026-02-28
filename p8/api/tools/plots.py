@@ -158,12 +158,25 @@ async def save_plot(
             )
             await session_repo.upsert(session)
     else:
-        plots = [plot_item]
+        # No session — read existing plots from the moment metadata directly
+        existing_moment_row = await db.fetchrow(
+            "SELECT id, metadata FROM moments "
+            "WHERE name = $1 AND moment_type = 'plot_collection' AND deleted_at IS NULL",
+            collection_key,
+        )
+        if existing_moment_row and existing_moment_row["metadata"]:
+            meta = existing_moment_row["metadata"]
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            plots = meta.get("plots", [])
+            plots.append(plot_item)
+        else:
+            plots = [plot_item]
 
     # ---- Upsert lightweight pointer moment in the feed ----
     moment_repo = Repository(Moment, db, encryption)
-    all_tags = _collect_tags(plots if session_id else [plot_item])
-    summary = _build_summary(plots if session_id else [plot_item])
+    all_tags = _collect_tags(plots)
+    summary = _build_summary(plots)
 
     existing_row = await db.fetchrow(
         "SELECT id FROM moments "
@@ -172,15 +185,24 @@ async def save_plot(
     )
 
     if existing_row:
-        # Update the pointer (summary, tags, count)
+        # Update the pointer (summary, tags, count, and plots if no session)
+        moment_meta = {"plot_count": len(plots), "date": today.isoformat()}
+        if not session_id:
+            moment_meta["plots"] = plots
         await db.execute(
             "UPDATE moments SET summary = $1, topic_tags = $2, "
-            "metadata = jsonb_set(metadata, '{plot_count}', $3::jsonb), "
+            "metadata = $3::jsonb, "
             "updated_at = NOW() WHERE id = $4",
-            summary, all_tags, json.dumps(len(plots)), existing_row["id"],
+            summary, all_tags, json.dumps(moment_meta), existing_row["id"],
         )
         moment_id = str(existing_row["id"])
     else:
+        new_meta: dict[str, Any] = {
+            "plot_count": len(plots),
+            "date": today.isoformat(),
+        }
+        if not session_id:
+            new_meta["plots"] = plots
         moment = Moment(
             name=collection_key,
             moment_type="plot_collection",
@@ -189,10 +211,7 @@ async def save_plot(
             topic_tags=all_tags,
             user_id=user_id,
             source_session_id=session_id,
-            metadata={
-                "plot_count": len(plots),
-                "date": today.isoformat(),
-            },
+            metadata=new_meta,
         )
         [saved] = await moment_repo.upsert(moment)
         moment_id = str(saved.id)
