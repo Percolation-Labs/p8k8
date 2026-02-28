@@ -277,7 +277,7 @@ from kreuzberg import ChunkingConfig, ExtractionConfig, extract_file_sync
 
 chunking = ChunkingConfig(max_chars={chunk_max}, max_overlap={chunk_overlap})
 config = ExtractionConfig(chunking=chunking)
-result = extract_file_sync(Path(sys.argv[1]), config=config)
+result = extract_file_sync(Path(sys.argv[1]), mime_type="{mime_type}", config=config)
 
 chunks = [c.content for c in result.chunks] if result.chunks else []
 if not chunks and result.content:
@@ -316,8 +316,11 @@ print(json.dumps(output))
             "text/plain": ".txt",
             "text/markdown": ".md",
             "text/html": ".html",
+            "text/csv": ".csv",
+            "text/tab-separated-values": ".tsv",
         }
-        return _map.get(mime_type, ".bin")
+        import mimetypes
+        return _map.get(mime_type) or mimetypes.guess_extension(mime_type) or ".bin"
 
     async def _persist_file(
         self, stem: str, uri: str | None, mime_type: str, data: bytes, full_text: str,

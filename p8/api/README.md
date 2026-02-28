@@ -59,7 +59,7 @@ Then open a new terminal in VS Code and `p8` will be available directly.
 | Variable | Required | Why |
 |----------|----------|-----|
 | `P8_OPENAI_API_KEY` | Yes | Powers LLM chat (GPT-4.1) and embeddings (text-embedding-3-small) |
-| `P8_DATABASE_URL` | No | Defaults to `postgresql://p8:p8_dev@localhost:5488/p8` (matches docker-compose) |
+| `P8_DATABASE_URL` | No | Defaults to `postgresql://p8:p8_dev@localhost:5489/p8` (matches docker-compose) |
 | `P8_KMS_PROVIDER` | No | Defaults to `local` (file-based master key at `.keys/.dev-master.key`) |
 
 Everything else is optional for local dev. See `.env.example` for OAuth, push notifications, S3, Stripe, etc.

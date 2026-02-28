@@ -1,0 +1,4 @@
+product_id,sku,cost,price,base_daily_demand,lead_time_days
+WIDGET-A,WA-001,8.50,24.99,50,7
+WIDGET-B,WB-001,12.00,34.99,30,14
+WIDGET-C,WC-001,3.25,9.99,120,5

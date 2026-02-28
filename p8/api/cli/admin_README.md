@@ -2,19 +2,19 @@
 
 Admin commands for pipeline diagnostics, queue inspection, quota management, and task enqueuing.
 
-**Defaults to remote** (Hetzner p8-w-1 via port-forward on `localhost:5490`). Use `--local` for the local docker-compose DB. See `docs/services.md` for full architecture and troubleshooting.
+**Defaults to remote** (Hetzner p8-w-1 via port-forward on `localhost:5491`). Use `--local` for the local docker-compose DB. See `docs/services.md` for full architecture and troubleshooting.
 
 ## Setup (remote)
 
 ```bash
-# Open port-forwards (standard ports: 5490 for Postgres, 8201 for Vault)
-kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5490:5432 &
+# Open port-forwards (standard ports: 5491 for Postgres, 8201 for Vault)
+kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5491:5432 &
 kubectl --context=p8-w-1 -n p8 port-forward svc/openbao 8201:8200 &
 
 # If the remote DB requires auth, set P8_DATABASE_URL:
 PG_PASS=$(kubectl --context=p8-w-1 -n p8 get secret p8-database-credentials \
   -o jsonpath='{.data.password}' | base64 -d)
-export P8_DATABASE_URL="postgresql://p8user:${PG_PASS}@localhost:5490/p8db?sslmode=disable"
+export P8_DATABASE_URL="postgresql://p8user:${PG_PASS}@localhost:5491/p8db?sslmode=disable"
 ```
 
 If the port-forward isn't open, commands exit with instructions.

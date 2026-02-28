@@ -174,7 +174,7 @@ p8 encryption test-isolation                       # verify cross-tenant decrypt
 
 ### admin
 
-Operations tooling for the processing pipeline. Defaults to remote (Hetzner via port-forward on `localhost:5490`). Use `--local` to target the local docker-compose DB.
+Operations tooling for the processing pipeline. Defaults to remote (Hetzner via port-forward on `localhost:5491`). Use `--local` to target the local docker-compose DB.
 
 ```bash
 # Health — pipeline checks + per-user task diagnostics

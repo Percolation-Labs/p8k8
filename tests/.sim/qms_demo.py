@@ -7,13 +7,13 @@ enqueues tasks, and watches state transitions in real-time.
 
 Usage:
     # Ensure port-forward or docker-compose is running
-    kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5488:5432 &
+    kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5491:5432 &
 
     # Run demo
     python tests/.sim/qms_demo.py
 
     # Or with custom DB URL
-    P8_DATABASE_URL=postgresql://user:pass@localhost:5488/p8db python tests/.sim/qms_demo.py
+    P8_DATABASE_URL=postgresql://user:pass@localhost:5491/p8db python tests/.sim/qms_demo.py
 
 Environment:
     Reads from .env in project root (P8_DATABASE_URL).
@@ -45,7 +45,7 @@ except ImportError:
     print("pip install asyncpg  (required for this demo)")
     sys.exit(1)
 
-_raw_url = os.environ.get("P8_DATABASE_URL", "postgresql://p8:p8_dev@localhost:5488/p8")
+_raw_url = os.environ.get("P8_DATABASE_URL", "postgresql://p8:p8_dev@localhost:5489/p8")
 # Disable SSL for port-forwarded connections (kubectl tunnel is already encrypted)
 DATABASE_URL = _raw_url + ("&" if "?" in _raw_url else "?") + "sslmode=disable"
 

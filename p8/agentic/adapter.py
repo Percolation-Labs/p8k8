@@ -60,6 +60,13 @@ BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
     for name, defn in BUILTIN_AGENT_DEFINITIONS.items()
 }
 
+# Extension agents from optional packages
+try:
+    from platoon.mcp.agent import COMMERCE_ANALYST
+    BUILTIN_AGENTS["commerce-analyst"] = COMMERCE_ANALYST
+except ImportError:
+    pass
+
 
 async def register_sample_agent(db: Database, encryption: EncryptionService) -> Schema:
     """Register the sample agent in the DB. Used by tests and bootstrapping."""

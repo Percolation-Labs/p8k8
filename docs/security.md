@@ -246,10 +246,10 @@ P8_KMS_VAULT_TRANSIT_KEY=p8-master \
 python tests/.sim/encryption_demo.py
 
 # Against Hetzner (via port-forward)
-kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5490:5432 &
+kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5491:5432 &
 kubectl --context=p8-w-1 -n p8 port-forward svc/openbao 8201:8200 &
 
-P8_DATABASE_URL="postgresql://p8user:<password>@localhost:5490/p8db?sslmode=disable" \
+P8_DATABASE_URL="postgresql://p8user:<password>@localhost:5491/p8db?sslmode=disable" \
 P8_KMS_PROVIDER=vault \
 P8_KMS_VAULT_URL=http://localhost:8201 \
 P8_KMS_VAULT_TOKEN=<token> \

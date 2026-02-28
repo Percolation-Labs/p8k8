@@ -103,11 +103,26 @@ p8 admin enqueue <TASK_TYPE> --user UUID [--delay MINUTES]
 p8 admin heal-jobs                               # Fix stale reminder cron jobs
 ```
 
+## Port Conventions
+
+See [docs/port-conventions.md](docs/port-conventions.md) for the full table.
+
+| Port | Use |
+|------|-----|
+| 5489 | Local dev PostgreSQL (`p8k8-db` container) |
+| 5490 | Test PostgreSQL (disposable) |
+| 5491 | kubectl port-forward to Hetzner K8s |
+| 5488 | Legacy `remslim` stack — do not reuse |
+| 8000 | API server (`p8 serve`) |
+| 8200 | OpenBao KMS |
+
+**Important:** kubectl port-forwards on `localhost` shadow Docker's `0.0.0.0` binding on the same port. Kill port-forwards (`lsof -i :5489`) before local dev.
+
 ## Settings
 
 `p8/settings.py` — pydantic-settings with `P8_` env prefix. Key settings:
 
-- `database_url` — Postgres connection (default: `postgresql://p8:p8_dev@localhost:5488/p8`)
+- `database_url` — Postgres connection (default: `postgresql://p8:p8_dev@localhost:5489/p8`)
 - `embedding_model` — `openai:text-embedding-3-small` (default, 1536d), `local` (tests only)
 - `kms_provider` — `local` | `vault` | `aws`
 - `context_token_budget` / `always_include_last_messages` — memory compaction config

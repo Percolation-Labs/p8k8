@@ -71,7 +71,7 @@ curl -N -X POST "http://localhost:8000/chat/${CHAT_ID}" \
   }"
 ```
 
-Docker compose starts Postgres 18 (with pgvector, pg_cron) on port `5488` and OpenBao KMS on port `8200`. Use `p8 migrate` to re-apply schema changes to an existing database.
+Docker compose starts Postgres 18 (with pgvector, pg_cron) on port `5489` and OpenBao KMS on port `8200`. See [docs/port-conventions.md](docs/port-conventions.md) for the full port table. Use `p8 migrate` to re-apply schema changes to an existing database.
 
 ## CLI Walkthrough
 
@@ -191,7 +191,7 @@ All settings via `P8_` environment variables or `.env` file. See [.env.example](
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `P8_OPENAI_API_KEY` | — | **Required.** Powers LLM and embeddings |
-| `P8_DATABASE_URL` | `postgresql://p8:p8_dev@localhost:5488/p8` | Postgres connection |
+| `P8_DATABASE_URL` | `postgresql://p8:p8_dev@localhost:5489/p8` | Postgres connection |
 | `P8_KMS_PROVIDER` | `local` | Encryption backend (`local` \| `vault` \| `aws`) |
 | `P8_DEFAULT_MODEL` | `openai:gpt-4.1` | Default LLM for agents |
 | `P8_EMBEDDING_MODEL` | `openai:text-embedding-3-small` | Embedding provider |

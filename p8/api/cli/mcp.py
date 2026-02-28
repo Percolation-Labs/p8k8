@@ -28,7 +28,7 @@ def mcp_command():
 
             init_tools(db, encryption)
             set_tool_context(user_id=default_user_id)
-            mcp = create_mcp_server()
+            mcp = create_mcp_server(stdio=True)
             await mcp.run_async(transport="stdio")
 
     asyncio.run(_run())

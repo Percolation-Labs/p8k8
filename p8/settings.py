@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql://p8:p8_dev@localhost:5488/p8"
+    database_url: str = "postgresql://p8:p8_dev@localhost:5489/p8"
     db_pool_min: int = 2
     db_pool_max: int = 10
 

@@ -3,13 +3,13 @@ name: p8
 services:
   db:
     # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)
-    container_name: p8-local
+    container_name: p8k8-db
     image: p8-local:pg18
     build:
       context: .
       dockerfile: docker/Dockerfile.pg18
     ports:
-      - "5488:5432"
+      - "5489:5432"
     environment:
       POSTGRES_DB: p8
       POSTGRES_USER: p8

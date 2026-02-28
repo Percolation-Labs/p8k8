@@ -156,13 +156,13 @@ Valid task types: `dreaming`, `news`, `reading_summary`, `file_processing`, `sch
 All admin commands default to **remote** (Hetzner p8-w-1 via port-forward). Open the port-forwards first:
 
 ```bash
-kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5490:5432 &
+kubectl --context=p8-w-1 -n p8 port-forward svc/p8-postgres-rw 5491:5432 &
 kubectl --context=p8-w-1 -n p8 port-forward svc/openbao 8201:8200 &    # optional, for email decryption
 ```
 
-Standard ports: **5490** (Postgres), **8201** (Vault/OpenBao).
+Standard ports: **5491** (Postgres), **8201** (Vault/OpenBao). See [port-conventions.md](port-conventions.md) for the full table.
 
-If the port-forward isn't open, admin commands exit with instructions. If `P8_DATABASE_URL` is already set to a remote URL (not `localhost:5488`), it's used as-is.
+If the port-forward isn't open, admin commands exit with instructions. If `P8_DATABASE_URL` is already set to a remote URL (not `localhost:5489`), it's used as-is.
 
 For the local docker-compose DB, use `--local`:
 
@@ -176,7 +176,7 @@ If credentials are needed (production DB has auth), set the env:
 PG_PASS=$(kubectl --context=p8-w-1 -n p8 get secret p8-database-credentials \
   -o jsonpath='{.data.password}' | base64 -d)
 
-P8_DATABASE_URL="postgresql://p8user:${PG_PASS}@localhost:5490/p8db?sslmode=disable" \
+P8_DATABASE_URL="postgresql://p8user:${PG_PASS}@localhost:5491/p8db?sslmode=disable" \
   p8 admin health --email amartey
 ```
 

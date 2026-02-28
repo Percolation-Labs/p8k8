@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from fastmcp import FastMCP
+
+log = logging.getLogger(__name__)
 
 from p8.api.tools import get_db, get_encryption, set_tool_context
 from p8.api.tools.action import action
@@ -33,6 +36,7 @@ from p8.api.tools.search import search
 from p8.api.tools.update_user_metadata import update_user_metadata
 from p8.api.tools.web_search import web_search
 from p8.api.tools.plots import save_plot
+from p8.api.tools.files import get_file, get_file_resource, resolve_data_path
 from p8.ontology.types import User
 from p8.services.repository import Repository
 from p8.settings import Settings, get_settings
@@ -91,8 +95,14 @@ def _create_auth(settings: Settings):
     )
 
 
-def create_mcp_server() -> FastMCP:
-    """Create the FastMCP server with p8 tools and resources."""
+def create_mcp_server(*, stdio: bool = False) -> FastMCP:
+    """Create the FastMCP server with p8 tools and resources.
+
+    Args:
+        stdio: When True (``p8 mcp`` CLI), also register platoon_read_file
+               for local filesystem access.  Over HTTP this tool is omitted —
+               use ``get_file`` with uploaded file IDs instead.
+    """
     settings = get_settings()
     auth = _create_auth(settings)
     mcp = FastMCP(
@@ -101,23 +111,113 @@ def create_mcp_server() -> FastMCP:
         auth=auth,
     )
 
-    # Register tools
+    # ── Platoon commerce analytics tools ────────────────────────────────
+    # Register tools directly (not via mount) so we can control which are
+    # available per transport.  forecast/optimize are always available;
+    # read_file is stdio-only (local filesystem).
+    try:
+        from platoon.mcp import controllers as platoon_ctl
+
+        if stdio:
+            @mcp.tool(name="platoon_read_file")
+            async def _platoon_read_file(path: str, head: int = 0) -> dict[str, Any]:
+                """Read a CSV or text file from the local filesystem.
+
+                Only available in local (stdio) mode. For cloud access, upload
+                files to Percolate and use get_file instead.
+
+                Args:
+                    path: File path to read.
+                    head: If > 0, return only the first N rows/lines.
+                """
+                return platoon_ctl.read_file(path, head=head)  # type: ignore[no-any-return]
+
+        @mcp.tool(name="platoon_forecast")
+        async def _platoon_forecast(
+            data_path: str,
+            product_id: str | None = None,
+            horizon: int = 14,
+            method: str = "auto",
+            season_length: int = 7,
+            holdout: int = 30,
+        ) -> dict[str, Any]:
+            """Run demand forecasting on a CSV time series.
+
+            CSV must have columns: date, product_id, units_sold.
+
+            Args:
+                data_path: Path to daily demand CSV file.
+                    Can be a local file path or an uploaded file ID (UUID).
+                product_id: Which product to forecast. Picks highest-volume if omitted.
+                horizon: Days ahead to forecast (default 14). Must be >= 1.
+                method: auto, moving_average, exponential_smoothing, croston, arima, ets, theta.
+                season_length: Seasonal period in days (default 7).
+                holdout: Days to hold out for accuracy eval (default 30).
+            """
+            resolved = await resolve_data_path(data_path)
+            return platoon_ctl.forecast(  # type: ignore[no-any-return]
+                resolved, product_id=product_id, horizon=horizon,
+                method=method, season_length=season_length, holdout=holdout,
+            )
+
+        @mcp.tool(name="platoon_optimize")
+        async def _platoon_optimize(
+            data_path: str,
+            product_id: str | None = None,
+            orders_path: str | None = None,
+            inventory_path: str | None = None,
+            service_level: float = 0.95,
+        ) -> dict[str, Any]:
+            """Run inventory optimization on product data.
+
+            Computes EOQ, safety stock, reorder point, ABC class, stockout risk,
+            plus price, cost, daily_revenue, restock_cost, and days_of_stock.
+
+            Args:
+                data_path: Path to products CSV (product_id, sku, cost, price, base_daily_demand, lead_time_days).
+                    Can be a local file path or an uploaded file ID (UUID).
+                product_id: Analyze a single product. If omitted, analyzes all.
+                orders_path: Optional orders CSV for ABC classification.
+                    Can be a local file path or an uploaded file ID (UUID).
+                inventory_path: Optional inventory CSV for current stock levels.
+                    Can be a local file path or an uploaded file ID (UUID).
+                service_level: Target service level (0-1 exclusive, default 0.95).
+            """
+            resolved = await resolve_data_path(data_path)
+            resolved_orders = await resolve_data_path(orders_path) if orders_path else None
+            resolved_inventory = await resolve_data_path(inventory_path) if inventory_path else None
+            return platoon_ctl.optimize(  # type: ignore[no-any-return]
+                resolved, product_id=product_id, orders_path=resolved_orders,
+                inventory_path=resolved_inventory, service_level=service_level,
+            )
+
+        log.info(
+            "Registered Platoon tools (platoon_forecast, platoon_optimize%s)",
+            ", platoon_read_file" if stdio else "",
+        )
+    except ImportError:
+        log.info("Platoon not installed — commerce tools skipped")
+
+    # ── Core tools ──────────────────────────────────────────────────────
     mcp.tool(name="search")(search)
     mcp.tool(name="action")(action)
     mcp.tool(name="ask_agent")(ask_agent)
     mcp.tool(name="remind_me")(remind_me)
-    # save_moments commented out — agents use structured output in workers
-    # mcp.tool(name="save_moments")(save_moments)
     mcp.tool(name="get_moments")(get_moments)
     mcp.tool(name="web_search")(web_search)
     mcp.tool(name="update_user_metadata")(update_user_metadata)
     mcp.tool(name="save_plot")(save_plot)
+
+    # File access — always available (reads uploaded files from S3/DB)
+    mcp.tool(name="get_file")(get_file)
+
     # Also register user_profile as a tool — the Claude.ai MCP connector
     # only supports tools (not resources), so this ensures it works remotely.
     mcp.tool(name="get_user_profile")(user_profile)
 
-    # Register resources (works over stdio, e.g. Claude Code)
+    # ── Resources (works over stdio, e.g. Claude Code) ─────────────────
     mcp.resource("user://profile")(user_profile)
+    mcp.resource("files://{file_id}")(get_file_resource)
 
     return mcp
 

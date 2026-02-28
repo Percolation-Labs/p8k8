@@ -1,7 +1,7 @@
 """p8 admin — queue health, schedule diagnostics, user quota reports.
 
-Defaults to REMOTE (Hetzner p8-w-1 via port-forward on localhost:5490).
-Use --local to target the local docker-compose Postgres on localhost:5488.
+Defaults to REMOTE (Hetzner p8-w-1 via port-forward on localhost:5491).
+Use --local to target the local docker-compose Postgres on localhost:5489.
 
 All output uses Rich tables.
 """
@@ -27,9 +27,9 @@ admin_app = typer.Typer(no_args_is_help=True)
 _con = Console(width=130)
 
 # Port-forward conventions (remote Hetzner → localhost)
-REMOTE_PG_PORT = 5490          # kubectl port-forward svc/p8-postgres-rw 5490:5432
+REMOTE_PG_PORT = 5491          # kubectl port-forward svc/p8-postgres-rw 5491:5432
 REMOTE_VAULT_PORT = 8201       # kubectl port-forward svc/openbao 8201:8200
-LOCAL_PG_PORT = 5488           # docker-compose default
+LOCAL_PG_PORT = 5489           # docker-compose default
 
 # Remote DB conventions (CNPG cluster uses different user/db than local dev)
 REMOTE_DB_USER = "p8user"
@@ -114,8 +114,8 @@ def _fetch_remote_db_password() -> str:
 async def _admin_services():
     """Bootstrap services targeting remote (default) or local DB.
 
-    Remote: overrides P8_DATABASE_URL to localhost:5490 (port-forwarded).
-    Local:  uses standard settings (localhost:5488).
+    Remote: overrides P8_DATABASE_URL to localhost:5491 (port-forwarded).
+    Local:  uses standard settings (localhost:5489).
     """
     if _use_local:
         if not _check_port(LOCAL_PG_PORT):

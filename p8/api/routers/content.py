@@ -52,6 +52,14 @@ async def upload_content(
     data = await file.read()
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
+    # Fix MIME type: clients often send application/octet-stream; fall back to
+    # filename-based detection so Kreuzberg gets a usable type.
+    from p8.services.files import FileService
+    mime = file.content_type
+    if not mime or mime == "application/octet-stream":
+        mime = FileService.mime_type_from_path(file.filename or "upload")
+    file.headers = file.headers  # keep original headers untouched
+
     # Storage quota check (only when user is identified)
     if user:
         plan_id = await get_user_plan(db, user.user_id, user.tenant_id)
@@ -78,7 +86,7 @@ async def upload_content(
             result = await content_service.ingest(
                 data,
                 file.filename or "upload",
-                mime_type=file.content_type,
+                mime_type=mime,
                 s3_key=s3_key,
                 session_id=session_id,
                 tenant_id=user.tenant_id if user else None,
@@ -111,7 +119,7 @@ async def upload_content(
     queue_service = request.app.state.queue_service
 
     filename = file.filename or "upload"
-    mime_type = file.content_type
+    mime_type = mime
     key = s3_key or filename
     uri = await file_service.write_to_bucket(key, data)
 
