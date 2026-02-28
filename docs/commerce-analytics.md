@@ -12,97 +12,231 @@ Upload CSV or spreadsheet files to Percolate, then reference them by file ID. Th
 - `POST /content/` API endpoint
 - `platoon_read_file` for local files (stdio/Claude Code only)
 
-**Reading uploaded files:**
-```
-get_file(file_id="08fd3fd6-222e-5c3a-88c7-254755f962da")
-→ {status, format, columns, row_count, rows}
-```
-
-Once a file is uploaded, pass its UUID directly to any analytics tool as the `data_path`:
-```
-platoon_optimize(data_path="08fd3fd6-222e-5c3a-88c7-254755f962da")
-```
-
 ## Tools
 
-### platoon_forecast
+| Tool | What it does |
+|------|-------------|
+| `get_file` | Read any uploaded file by ID — CSV rows or plain text |
+| `platoon_forecast` | Demand forecasting (ETS, ARIMA, Croston) |
+| `platoon_optimize` | EOQ, safety stock, reorder points, ABC, stockout risk |
+| `platoon_detect_anomalies` | Spike/drop detection (z-score, IQR) |
+| `platoon_basket_analysis` | Frequently-bought-together association rules |
+| `platoon_cashflow` | Daily revenue/COGS/reorder cash projection |
+| `platoon_schedule` | Demand-based staff shift assignment |
 
-Predict future demand per product using auto-selected statistical models.
+All `data_path` parameters accept either a local file path or an uploaded file UUID.
+
+## End-to-End Case Study: Trailhead Nature Shop
+
+This walkthrough uses a fictional outdoor/nature shop with 8 products — binoculars, bird feeders, field guides, trail boots, songbird seed, spotting scopes, field journals, and trail cameras. One month of February 2026 data with a Valentine's Day gift bump on optics and journals.
+
+### Step 1: Upload Data
+
+Upload four CSV files via the content API:
+
+```bash
+# Products catalog
+curl -X POST https://api.percolationlabs.ai/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@products.csv" -F "category=commerce"
+# → file_id: 439af134-368a-5371-96fb-c2b8c88bbc6f
+
+# 28 days of daily demand
+curl -X POST https://api.percolationlabs.ai/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@demand.csv" -F "category=commerce"
+# → file_id: 72a09785-826d-500e-9105-173a4e1b442b
+
+# 1,388 order line items (with line_total for ABC)
+curl -X POST https://api.percolationlabs.ai/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@orders.csv" -F "category=commerce"
+# → file_id: d86f8a30-3d0e-5671-b847-b7ee26ff2a30
+
+# Current stock levels
+curl -X POST https://api.percolationlabs.ai/content/ \
+  -H "x-user-id: $USER_ID" \
+  -F "file=@inventory.csv" -F "category=commerce"
+# → file_id: 85594c11-13cb-55ba-996c-53209cd7aeda
+```
+
+Files are stored in S3 and indexed. From here on, we reference them only by UUID.
+
+### Step 2: Read Uploaded Data
+
+Verify the upload by reading the products file:
+
+```
+get_file(file_id="439af134-368a-5371-96fb-c2b8c88bbc6f", head=3)
+```
+
+```json
+{
+  "status": "ok",
+  "format": "csv",
+  "name": "products",
+  "columns": ["product_id", "sku", "cost", "price", "base_daily_demand", "lead_time_days"],
+  "row_count": 3,
+  "rows": [
+    {"product_id": "BINOC-01", "sku": "BIN-PRO-8X42", "cost": "85.00", "price": "189.99", "base_daily_demand": "4", "lead_time_days": "10"},
+    {"product_id": "FEEDER-01", "sku": "FDR-CEDAR-LG", "cost": "12.50", "price": "34.99", "base_daily_demand": "15", "lead_time_days": "5"},
+    {"product_id": "GUIDE-01", "sku": "GDE-BIRDS-PNW", "cost": "8.00", "price": "24.95", "base_daily_demand": "8", "lead_time_days": "7"}
+  ]
+}
+```
+
+### Step 3: Forecast Demand
+
+> "How much songbird seed will we sell in the next two weeks?"
+
+```
+platoon_forecast(
+  data_path  = "72a09785-826d-500e-9105-173a4e1b442b",
+  product_id = "SEED-01",
+  horizon    = 14,
+  holdout    = 0
+)
+```
+
+**Result:**
+
+| Field | Value |
+|-------|-------|
+| method | statsforecast:ets |
+| predicted_sum | 356.4 units |
+| predicted_mean | 25.46/day |
+| trend | stable |
+| seasonality_detected | yes |
+| 95% CI | 15–36 units/day |
+
+With only 30 units in stock and demand at ~25/day, we have **1.2 days of stock**. This is critical.
+
+### Step 4: Inventory Optimization
+
+> "Which products are at risk? What's the full picture?"
+
+```
+platoon_optimize(
+  data_path      = "439af134-368a-5371-96fb-c2b8c88bbc6f",
+  orders_path    = "d86f8a30-3d0e-5671-b847-b7ee26ff2a30",
+  inventory_path = "85594c11-13cb-55ba-996c-53209cd7aeda"
+)
+```
+
+**Result — ABC Summary:** 3 A-class, 2 B-class, 3 C-class
+
+**All 8 products:**
+
+| Product | SKU | ABC | Price | Daily Demand | Stock | Days Left | Risk | EOQ | Action |
+|---------|-----|-----|------:|------------:|------:|----------:|-----:|----:|--------|
+| Binoculars | BIN-PRO-8X42 | **A** | $189.99 | 4 | 8 | 2.0 | 100% | 83 | Reorder 83 |
+| Spotting Scope | SCP-SPOT-20X | **A** | $279.99 | 2 | 22 | 11.0 | 83% | 49 | Reorder 49 |
+| Trail Camera | CAM-TRAIL-HD | **A** | $149.99 | 3 | 5 | 1.7 | 100% | 89 | Reorder 89 |
+| Cedar Feeder | FDR-CEDAR-LG | B | $34.99 | 15 | 180 | 12.0 | 0% | 419 | OK |
+| Trail Boots | BT-TRAIL-WP | B | $129.99 | 3 | 45 | 15.0 | 19% | 99 | OK |
+| Bird Guide PNW | GDE-BIRDS-PNW | C | $24.95 | 8 | 25 | 3.1 | 100% | 382 | Reorder 382 |
+| Songbird Seed | SD-SONGBIRD-5LB | C | $12.99 | 25 | 30 | 1.2 | 100% | 901 | Reorder 901 |
+| Field Journal | JRN-FIELD-LTH | C | $18.99 | 10 | 12 | 1.2 | 100% | 493 | Reorder 493 |
+
+**6 of 8 products are at elevated stockout risk.** The three A-class items (Binoculars, Scope, Camera) drive the most revenue and should be prioritized.
+
+### Step 5: Rush-Order Decision
+
+> "Our binoculars are almost out. Next shipment is in 10 days. Rush-order?"
+
+Combine forecast + optimize results:
+
+```
+current_stock           =     8 units
+forecasted daily demand =  3.75 units/day
+days_until_stockout     =  8 / 3.75  = 2.1 days
+regular shipment ETA    =    10 days
+coverage gap            =  10 - 2.1  = 7.9 days without stock
+daily_revenue           =  $760/day
+revenue at risk         =  7.9 × $760 = ~$6,004
+restock cost (EOQ)      =  83 × $85  = $7,055
+```
+
+**Yes — rush-order immediately.** The binoculars are A-class and will stock out in ~2 days, leaving a 7.9-day gap costing ~$6,000 in lost revenue.
+
+### Step 6: Budget Allocation
+
+> "I have $15K for restocking. Where does it go?"
+
+Using the alerts from Step 4, rank by daily revenue impact:
+
+| # | Product | ABC | Units | Cost | Daily Rev | Why |
+|---|---------|-----|------:|-----:|----------:|-----|
+| 1 | Binoculars | A | 83 | $7,046 | $760 | 2 days of stock, A-class |
+| 2 | Trail Camera | A | 89 | $4,908 | $450 | 1.7 days, A-class |
+| 3 | Songbird Seed (partial) | C | 454 | $2,046 | $325 | 1.2 days, highest volume |
+
+**Total: $14,000 → 626 units across 3 SKUs.** Remaining $1,000 held for Scope reorder when it drops below reorder point.
+
+The A-class items get funded first despite the Seed having worse days-of-stock — because Binoculars generate $760/day vs Seed's $325/day.
+
+## Decision Patterns
+
+Most business questions require composing multiple tools:
+
+| Question | Tools | Agent Adds |
+|----------|-------|-----------|
+| "How many will we sell?" | `forecast` | Narrates trend + seasonal pattern + planning range |
+| "What should I reorder?" | `optimize` | Prioritizes by ABC class × risk, not just risk |
+| "Should I rush-order?" | `forecast` + `optimize` | Days-to-stockout math + revenue-at-risk |
+| "Where does my $N go?" | `optimize` | ROI ranking + greedy budget allocation |
+| "Top products trending?" | `optimize` + `forecast` ×N | Cross-references ABC + trend + stock |
+| "Cash flow outlook?" | `cashflow` | Identifies reorder spikes, sizes credit line |
+| "Any anomalies?" | `detect_anomalies` | Clusters by season, distinguishes noise from signal |
+| "Cross-sell opportunities?" | `basket_analysis` | Resolves IDs to names, suggests bundles |
+
+## Tool Reference
+
+### platoon_forecast
 
 ```
 platoon_forecast(
   data_path  = "<file_id or path>",   # CSV: date, product_id, units_sold
-  product_id = "PROD-1004",            # omit to auto-pick highest volume
+  product_id = "PROD-1004",            # omit → auto-pick highest volume
   horizon    = 14,                     # days ahead
   method     = "auto",                 # auto | moving_average | exponential_smoothing | croston | arima | ets | theta
-  holdout    = 30                      # days held out for MAE accuracy eval
+  holdout    = 30                      # days held out for MAE eval
 )
 → {status, product_id, method, forecast, lower_bound, upper_bound,
    predicted_sum, predicted_mean, trend, seasonality_detected, mae}
 ```
 
-**Auto-selection logic:**
-- Regular demand (few zeros) → AutoETS / AutoARIMA / AutoTheta (statsforecast)
-- Intermittent demand (>40% zeros) → Croston's method
-- Fallback → exponential smoothing or moving average (zero-dependency)
-
-**Key fields:**
-- `forecast` — daily point predictions
-- `lower_bound` / `upper_bound` — 95% confidence interval
-- `predicted_sum` — total units over the horizon
-- `trend` — "up", "down", or "stable"
-- `seasonality_detected` — true if weekly pattern found
-- `mae` — mean absolute error on holdout (only when holdout > 0)
-
 ### platoon_optimize
-
-Compute EOQ, safety stock, reorder points, ABC classification, and stockout risk.
 
 ```
 platoon_optimize(
   data_path      = "<file_id or path>",  # CSV: product_id, sku, cost, price, base_daily_demand, lead_time_days
-  orders_path    = "<file_id or path>",  # optional, enables ABC classification
-  inventory_path = "<file_id or path>",  # optional, enables stock levels + risk
+  orders_path    = "<file_id or path>",  # optional — enables ABC classification (needs line_total column)
+  inventory_path = "<file_id or path>",  # optional — enables stock levels + risk (needs closing_stock column)
   product_id     = "PROD-1004",          # omit for all products
   service_level  = 0.95
 )
 → {status, product_count, abc_summary, results, alerts}
 ```
 
-**Key fields per product:**
-- `eoq` — Economic Order Quantity: √(2DS/H)
-- `safety_stock` — buffer: z × σ × √(lead_time)
-- `reorder_point` — (daily_demand × lead_time) + safety_stock
-- `stockout_risk` — probability 0.0–1.0 via normal CDF
-- `abc_class` — A (top 80% revenue), B (next 15%), C (bottom 5%)
-- `daily_revenue`, `restock_cost`, `days_of_stock` — for business math
-
-**Alerts** are products with >30% risk, sorted descending, with action recommendations.
-
 ### platoon_detect_anomalies
-
-Detect demand spikes and drops using rolling-window statistics.
 
 ```
 platoon_detect_anomalies(
-  data_path  = "<file_id or path>",
+  data_path  = "<file_id or path>",  # CSV: date, product_id, units_sold
   product_id = "PROD-1004",
-  method     = "zscore",     # zscore or iqr
+  method     = "zscore",              # zscore or iqr
   window     = 30,
   threshold  = 2.5
 )
 → {status, product_id, anomaly_count, anomaly_rate, anomalies}
 ```
 
-Each anomaly includes date, value, expected, z_score, direction (spike/drop), severity (low/medium/high).
-
 ### platoon_basket_analysis
-
-Find frequently-bought-together association rules from order data.
 
 ```
 platoon_basket_analysis(
-  orders_path    = "<file_id or path>",
+  orders_path    = "<file_id or path>",  # CSV: order_id, product_id, quantity, unit_price, order_date, line_total
   min_support    = 0.01,
   min_confidence = 0.3,
   max_rules      = 50
@@ -110,28 +244,20 @@ platoon_basket_analysis(
 → {status, total_orders, multi_item_orders, rule_count, rules}
 ```
 
-Each rule has antecedent, consequent, support, confidence, lift. Lift > 1.0 means positive association.
-
 ### platoon_cashflow
-
-Project daily revenue, COGS, and reorder costs over a planning horizon.
 
 ```
 platoon_cashflow(
-  data_path      = "<file_id or path>",
-  demand_path    = "<file_id or path>",
-  inventory_path = "<file_id or path>",
+  data_path      = "<file_id or path>",  # products CSV
+  demand_path    = "<file_id or path>",  # demand CSV
+  inventory_path = "<file_id or path>",  # inventory CSV
   horizon        = 30,
   product_id     = "PROD-1004"           # omit for all
 )
 → {status, summary, reorder_events, periods}
 ```
 
-Summary includes total_revenue, total_cogs, total_gross_profit, total_reorder_costs, net_cash.
-
 ### platoon_schedule
-
-Assign staff to shifts based on demand signal and availability.
 
 ```
 platoon_schedule(
@@ -144,144 +270,30 @@ platoon_schedule(
 → {status, total_cost, total_hours, demand_by_slot, coverage_gaps, schedule_grid}
 ```
 
-## Agent: commerce-analyst
-
-The `commerce-analyst` agent schema (registered in the `schemas` table) wraps these tools with a system prompt that interprets raw results into business recommendations. It:
-
-- Leads with the answer, not the data
-- Shows math for derived metrics (days-to-stockout, ROI, revenue at risk)
-- Uses tables for multi-product comparisons
-- Flags uncertainty when confidence intervals are wide
-- Recommends concrete actions with quantities and dollar amounts
-
-Invoke via MCP:
-```
-ask_agent(agent_name="commerce-analyst", input_text="Which products should I reorder?")
-```
-
-## Decision Patterns
-
-Most business questions require composing multiple tools:
-
-### "Should I rush-order X?"
-→ `forecast` (velocity) + `optimize` (stock + price) → days-until-stockout math
-
-```
-days_until_stockout = current_stock / predicted_mean
-coverage_gap        = shipment_eta - days_until_stockout
-revenue_at_risk     = coverage_gap × daily_revenue
-```
-
-### "Where does my $N budget go?"
-→ `optimize` (alerts with daily_revenue + restock_cost) → ROI ranking + greedy allocation
-
-```
-ROI = (daily_revenue × lead_time_days) / restock_cost
-```
-Sort by absolute daily revenue, allocate greedily until budget exhausted.
-
-### "Are my top products trending?"
-→ `optimize` (ABC classification) + `forecast` × N → cross-reference trend with stock
-
-### "What's our cash position?"
-→ `cashflow` (revenue - COGS - reorders) → identify reorder spikes, size credit line
-
-### "How should I staff?"
-→ `schedule` (demand → shifts) → spot coverage gaps, size hires
-
-## Worked Examples
-
-### Forecasting
-
-> "How many Bluetooth Speakers will we sell in the next two weeks?"
-
-```
-platoon_forecast(data_path="...", product_id="PROD-1004", horizon=14, holdout=0)
-```
-
-**Result:** ~331 units over 14 days (~24/day). Weekly cycle — peaks mid-week at ~29, dips to ~22 on weekends. Planning range: 137–525 total units (95% CI).
-
-### Inventory Optimization
-
-> "Which SKUs are most at risk of stocking out?"
-
-```
-platoon_optimize(
-  data_path="...", orders_path="...", inventory_path="...", service_level=0.95
-)
-```
-
-**Result:** 34 of 80 SKUs at elevated risk. ABC summary: 48 A-class, 20 B, 12 C. Zero-stock A-class items flagged as urgent with EOQ quantities.
-
-### Rush-Order Decision (Compound)
-
-> "Our webcam stock is getting low. Should I rush-order or wait 15 days?"
-
-Agent calls both `forecast` and `optimize` in parallel:
-
-```
-current_stock           =    32 units
-forecasted daily demand =   8.88 units/day
-days_until_stockout     =  32 / 8.88  = 3.6 days
-coverage gap            =  15 - 3.6   = 11.4 days without stock
-revenue at risk         =  11.4 × $456 = ~$5,200
-→ Rush-order 153 units (EOQ, cost $3,040)
-```
-
-### Budget Allocation
-
-> "I have $10K for restocking. Where does it go?"
-
-Agent ranks alerts by daily revenue impact, allocates greedily:
-
-| # | Product | Units | Cost | Daily Rev | Why |
-|---|---------|------:|-----:|----------:|-----|
-| 1 | Bluetooth Speaker | 248 | $5,277 | $631 | Zero stock, 1.3× ROI |
-| 2 | Webcam | 153 | $3,040 | $456 | Stocks out in 3.6 days |
-| 3 | Keyboard (partial) | 68 | $1,683 | $159 | Remaining budget |
-
-**Total: $10,000 → 469 units across 3 SKUs.** Speaker pays back in ~8.4 days.
-
-### Anomaly Detection
-
-> "Any unusual demand spikes for Bluetooth Speakers?"
-
-```
-platoon_detect_anomalies(data_path="...", product_id="PROD-1004")
-```
-
-**Result:** 12 anomalous days out of 731 (1.6%). All upward spikes. Medium-severity cluster in November/December — Black Friday and holiday effects, not data quality issues.
-
-### Intermittent Demand
-
-> "The Brocade Ring Purse sells sporadically. Can you forecast it?"
-
-Auto-selects Croston's method (50% zero-demand days). Returns flat daily expected value of ~51 units. Agent explains flat ≠ bad — it's the expected value across sporadic bulk orders.
-
 ## Data Format
 
 ### Products CSV
 ```csv
 product_id,sku,cost,price,base_daily_demand,lead_time_days
-WIDGET-A,WA-001,8.50,24.99,50,7
+BINOC-01,BIN-PRO-8X42,85.00,189.99,4,10
 ```
 
 ### Daily Demand CSV
 ```csv
 date,product_id,units_sold
-2024-01-01,WIDGET-A,45
+2026-02-01,BINOC-01,5
 ```
 
 ### Orders CSV (for ABC + basket analysis)
 ```csv
-order_id,product_id,quantity,unit_price,order_date
-ORD-001,WIDGET-A,3,24.99,2024-01-01
+order_id,product_id,quantity,unit_price,order_date,line_total
+ORD-01000,BINOC-01,2,189.99,2026-02-01,379.98
 ```
 
 ### Inventory CSV
 ```csv
-product_id,current_stock
-WIDGET-A,350
+product_id,closing_stock
+BINOC-01,8
 ```
 
 ### Staff CSV (for scheduling)
