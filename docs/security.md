@@ -202,15 +202,22 @@ Upload PDF → S3 → Worker extracts text → encrypt(parsed_content) → Postg
 
 ### OpenBao (Hetzner)
 
-OpenBao runs as a StatefulSet in the `p8` namespace. A one-shot init Job enables the Transit secrets engine and creates the `p8-master` key (`aes256-gcm96`).
-For testing it lives on the same cluster but in production it would be an external KMS outside the cluster.
+OpenBao runs as a StatefulSet in the `p8` namespace with **file storage** on a persistent volume (1Gi PVC). It serves two functions:
+
+1. **Transit engine** — envelope encryption for per-tenant DEKs
+2. **KV v2 engine** — source of truth for all K8s secrets (synced by ESO)
 
 ```
 Pod: openbao-0  →  Transit engine  →  p8-master key
                                     →  p8-master-{tenant_id} per-tenant keys
+                →  KV v2 engine    →  secret/p8/app-secrets
+                                    →  secret/p8/database-credentials
+                                    →  secret/p8/keda-pg-connection
 ```
 
-The API and workers connect to `http://openbao.p8.svc.cluster.local:8200`. The vault token is stored in `p8-app-secrets`.
+OpenBao runs in **production mode** (not `-dev`). On pod restart, an `auto-unseal` init container reads unseal keys from `openbao-unseal-keys` K8s secret and automatically unseals. A `fix-permissions` init container ensures PVC ownership is correct.
+
+The API and workers connect to `http://openbao.p8.svc.cluster.local:8200`. The vault token is stored in `openbao-unseal-keys` (root token) and `openbao-eso-token` (for ESO auth).
 
 In production, OpenBao should run on a dedicated cluster or external service, isolated from the workload plane. The in-cluster deployment is a convenience for single-cluster setups.
 

@@ -1,6 +1,6 @@
 # p8
 
-Cloud-native agentic memory framework. Postgres does the heavy lifting — pgvector for embeddings, pg_trgm for fuzzy search, JSONB graph edges for traversal, pg_cron for scheduled tasks. The Python layer is intentionally thin: FastAPI for HTTP, FastMCP for tool serving, pydantic-ai for agent orchestration. Every entity — models, agents, tools, ontologies — is a row in the `schemas` table.
+Cloud-native agentic memory framework. Postgres does the heavy lifting — pgvector for embeddings, pg_trgm for fuzzy search, JSONB graph edges for traversal, pg_cron for scheduled tasks. The Python layer is intentionally thin: FastAPI for HTTP, FastMCP for tool serving, Pydantic-ai for agent orchestration. Every entity — models, agents, tools, ontologies — is a row in the `schemas` table.
 
 ## What is REM?
 
@@ -21,7 +21,7 @@ You can run REM queries from the CLI (`p8 query`), the API (`POST /query/raw`), 
 Two deployment recipes exist:
 
 - **Hetzner recipe** (this repo) — CloudNativePG Postgres, KEDA-scaled file workers, OpenBao KMS, OTEL collector. Plain K8s secrets from `.env`. Lighter weight, no NATS.
-- **AWS recipe** (`reminiscent/` repo) — SQS + KEDA SQS trigger, ExternalSecrets from AWS Parameter Store, S3 native events. Full CDK setup.
+- **AWS recipe** — SQS + KEDA SQS trigger, ExternalSecrets from AWS Parameter Store, S3 native events. Full CDK setup.
 
 ```
 p8k8/
@@ -75,16 +75,16 @@ Docker compose starts Postgres 18 (with pgvector, pg_cron) on port `5489` and Op
 
 ## CLI Walkthrough
 
-The `p8` CLI is the primary interface. Here's a typical workflow:
+The `p8` CLI is the primary interface. Here's a typical workflow after setting the uv venv:
 
 ```bash
-# Upload documents into the knowledge base
+# Upload documents into the knowledge base. This is optional but teaches percolate about your domain
 p8 upsert docs/ontology/
 
 # Chat with an agent (it can search what you just uploaded)
 p8 chat
 
-# See what the system remembered from the conversation
+# See what the system remembered from the conversation - moments are created after interactions such as content uploads, "dreaming" and more
 p8 moments
 
 # Query the knowledge base directly
@@ -125,27 +125,35 @@ Agents come from three sources, checked in order:
 2. **Built-in** — Python classes in `p8/agentic/core_agents.py` (general, dreaming-agent, sample-agent)
 3. **YAML** — Files in the `P8_SCHEMA_DIR` folder (hot-reloaded on lookup)
 
-An agent is just a schema row where `content` is the system prompt and `json_schema` holds config (tools, model, limits). Example YAML:
+Agents are JSON Schema (exported from Pydantic models). The `description` is the system prompt, `properties` define structured output or inline structured prompting, and `tools`/`model`/`temperature` are extra schema fields:
 
 ```yaml
-- name: my-agent
-  kind: agent
-  description: A domain-specific assistant
-  content: |
-    You are an expert in distributed systems.
-    Search the knowledge base before answering.
-  json_schema:
-    tools:
-      - name: search
-      - name: ask_agent
-    model: openai:gpt-4.1
-    temperature: 0.2
+type: object
+name: my-agent
+short_description: A domain-specific assistant
+description: |
+  You are an expert in distributed systems.
+  Search the knowledge base before answering.
+properties:
+  topic:
+    type: string
+    description: Primary topic of the user's question
+  requires_search:
+    type: boolean
+    description: Whether to search the knowledge base first
+tools:
+  - name: search
+    description: Query the knowledge base using REM
+  - name: ask_agent
+    description: Delegate to specialist agents
+model: openai:gpt-4.1
+temperature: 0.2
 ```
 
-Load it:
+Drop YAML files in `P8_SCHEMA_DIR` (default `.schema/`) for hot-reload, or upsert into the database:
 
 ```bash
-p8 upsert schemas agents.yaml
+p8 upsert schemas my-agent.yaml
 ```
 
 ## Testing

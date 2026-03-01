@@ -3,7 +3,7 @@
 # Deploys the p8 stack to Hetzner with:
 # - nginx ingress + cert-manager TLS
 # - CloudNativePG PostgreSQL (single instance)
-# - Plain K8s Secrets (no ExternalSecrets)
+# - ESO-managed secrets from OpenBao KV v2
 #
 # Usage:
 #   kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
@@ -24,10 +24,11 @@ namespace: p8
 resources:
   - ../../base
   - namespace.yaml
-  # secrets.yaml removed — managed separately via manifests/scripts/sync-secrets.sh
-  # to prevent kubectl apply -k from overwriting patched values with placeholders
+  # secrets.yaml removed — now managed by ESO ExternalSecrets from OpenBao KV v2
+  # Bootstrap: create openbao-eso-token, then seed-openbao.sh, then apply -k
   - ../../../../platform/otel-collector
   - ../../../../platform/openbao
+  - ../../../../platform/external-secrets
 
 commonLabels:
   environment: hetzner
@@ -62,9 +63,9 @@ configMapGenerator:
       - P8_AUTH_ACCESS_TOKEN_EXPIRY=3600
       - P8_AUTH_REFRESH_TOKEN_EXPIRY=2592000
       - P8_AUTH_MAGIC_LINK_EXPIRY=600
-      # Email
-      - P8_EMAIL_PROVIDER=console
-      - P8_EMAIL_FROM=noreply@percolationlabs.ai
+      # Email — Microsoft Graph (OAuth2 client credentials)
+      - P8_EMAIL_PROVIDER=microsoft_graph
+      - P8_EMAIL_FROM=saoirse@percolationlabs.ai
       - P8_SMTP_HOST=
       - P8_SMTP_PORT=587
       - P8_MAGIC_LINK_BASE_URL=

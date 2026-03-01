@@ -35,8 +35,8 @@ from uuid import UUID
 
 import jwt
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from p8.api.deps import CurrentUser, get_current_user
@@ -863,25 +863,173 @@ async def token_revoke(request: Request, body: RevokeTokenRequest = RevokeTokenR
 
 
 # ---------------------------------------------------------------------------
-# Magic link
+# Magic code sign-in (8-digit code via email)
 # ---------------------------------------------------------------------------
+
+
+def _render_code_entry_page(jti: str, error: str = "") -> str:
+    """Render the code entry HTML page with 8 digit input boxes."""
+    error_html = (
+        f'<p id="err" style="color:#dc2626;font-size:14px;margin:0 0 16px;">{error}</p>'
+        if error else ""
+    )
+    return f"""\
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — Percolate</title>
+<link href="https://fonts.googleapis.com/css2?family=Gruppo&display=swap" rel="stylesheet">
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ background:#f4f4f5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+         display:flex; align-items:center; justify-content:center; min-height:100vh; }}
+  .card {{ background:#fff; border-radius:12px; padding:40px; width:100%; max-width:420px;
+           box-shadow:0 1px 3px rgba(0,0,0,.1); text-align:center; }}
+  .logo {{ font-family:'Gruppo',cursive; font-size:42px; color:#18181b; margin-bottom:24px; letter-spacing:2px; }}
+  h1 {{ font-size:20px; font-weight:600; color:#18181b; margin-bottom:6px; }}
+  .sub {{ font-size:14px; color:#71717a; margin-bottom:24px; }}
+  .digits {{ display:flex; justify-content:center; gap:8px; margin-bottom:24px; }}
+  .digits .gap {{ width:12px; }}
+  .digits input {{
+    width:42px; height:52px; text-align:center; font-size:24px; font-weight:600;
+    border:2px solid #e4e4e7; border-radius:8px; outline:none; color:#18181b;
+    font-family:'SF Mono',SFMono-Regular,Consolas,monospace;
+  }}
+  .digits input:focus {{ border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }}
+  button {{
+    width:100%; padding:12px; font-size:16px; font-weight:600; color:#fff;
+    background:#2563eb; border:none; border-radius:8px; cursor:pointer;
+  }}
+  button:hover {{ background:#1d4ed8; }}
+  .footer {{ margin-top:24px; font-size:12px; color:#a1a1aa; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">percolate</div>
+  <h1>Enter your code</h1>
+  <p class="sub">We sent an 8-digit code to your email</p>
+  {error_html}
+  <form method="POST" action="/auth/verify-code" id="codeform">
+    <input type="hidden" name="jti" value="{jti}">
+    <div class="digits">
+      <input name="d0" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="one-time-code" autofocus>
+      <input name="d1" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <input name="d2" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <input name="d3" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <div class="gap"></div>
+      <input name="d4" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <input name="d5" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <input name="d6" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      <input name="d7" maxlength="1" inputmode="numeric" pattern="[0-9]">
+    </div>
+    <button type="submit">Verify</button>
+  </form>
+  <p class="footer">Code expires in 10 minutes</p>
+</div>
+<script>
+(function() {{
+  const inputs = document.querySelectorAll('.digits input');
+  inputs.forEach((inp, i) => {{
+    inp.addEventListener('input', () => {{
+      if (inp.value.length === 1 && i < inputs.length - 1) inputs[i+1].focus();
+      if (inp.value.length === 1 && i === inputs.length - 1) document.getElementById('codeform').submit();
+    }});
+    inp.addEventListener('keydown', (e) => {{
+      if (e.key === 'Backspace' && !inp.value && i > 0) inputs[i-1].focus();
+    }});
+    inp.addEventListener('paste', (e) => {{
+      const text = (e.clipboardData||window.clipboardData).getData('text').replace(/\\D/g,'');
+      if (text.length >= 8) {{
+        e.preventDefault();
+        for (let j = 0; j < 8 && j < inputs.length; j++) inputs[j].value = text[j];
+        document.getElementById('codeform').submit();
+      }}
+    }});
+  }});
+}})();
+</script>
+</body></html>"""
 
 
 @router.post("/magic-link")
 async def send_magic_link(body: MagicLinkRequest, request: Request):
-    """Send a magic link email. Always returns 200 (no email leak)."""
+    """Send a sign-in code email. Always returns 200 (no email leak)."""
+    auth = request.app.state.auth
+    settings = request.app.state.settings
+    base_url = settings.magic_link_base_url or settings.api_base_url
+    jti = None
+    try:
+        jti = await auth.send_magic_code(body.email)
+    except Exception:
+        logger.exception("Failed to send magic code")
+    # Always 200 — don't reveal whether email exists
+    return {
+        "status": "ok",
+        "enter_code_url": f"{base_url}/auth/enter-code?jti={jti}" if jti else None,
+    }
+
+
+@router.get("/enter-code", response_class=HTMLResponse)
+async def enter_code_page(request: Request, jti: str):
+    """Render the code entry page."""
+    return HTMLResponse(_render_code_entry_page(jti))
+
+
+@router.post("/verify-code")
+async def verify_code(
+    request: Request,
+    jti: str = Form(...),
+    d0: str = Form(""), d1: str = Form(""), d2: str = Form(""),
+    d3: str = Form(""), d4: str = Form(""), d5: str = Form(""),
+    d6: str = Form(""), d7: str = Form(""),
+):
+    """Verify the 8-digit code from the entry page. Redirects on success."""
+    auth = request.app.state.auth
+    settings = request.app.state.settings
+    code = f"{d0}{d1}{d2}{d3}{d4}{d5}{d6}{d7}"
+
+    try:
+        user, tenant_id = await auth.verify_magic_code(jti, code)
+    except ValueError as e:
+        return HTMLResponse(
+            _render_code_entry_page(jti, error=str(e))
+        )
+
+    tokens = await auth.issue_tokens(user, tenant_id)
+    redirect_url = f"{settings.api_base_url}/"
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    _set_token_cookies(response, tokens)
+    return response
+
+
+class VerifyCodeRequest(BaseModel):
+    jti: str
+    code: str
+
+
+@router.post("/verify-code-api")
+async def verify_code_api(body: VerifyCodeRequest, request: Request):
+    """Verify the 8-digit code and return tokens as JSON (for mobile clients)."""
     auth = request.app.state.auth
     try:
-        await auth.send_magic_link(body.email)
-    except Exception:
-        logger.exception("Failed to send magic link")
-    # Always 200 — don't reveal whether email exists
-    return {"status": "ok"}
+        user, tenant_id = await auth.verify_magic_code(body.jti, body.code)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    tokens = await auth.issue_tokens(user, tenant_id)
+    return {
+        **tokens,
+        "user_id": str(user.id),
+        "tenant_id": tenant_id,
+        "email": user.email or "",
+        "name": user.name or "",
+    }
 
 
 @router.get("/verify")
 async def verify_magic_link(request: Request, token: str):
-    """Verify a magic link token, issue session tokens, redirect with cookies."""
+    """Verify a magic link token (legacy), issue session tokens, redirect."""
     auth = request.app.state.auth
     settings = request.app.state.settings
 

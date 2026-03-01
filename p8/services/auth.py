@@ -54,7 +54,9 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import time
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import jwt
@@ -115,6 +117,83 @@ def _coerce_user_row(data: dict) -> None:
     """
     if isinstance(data.get("devices"), str):
         data["devices"] = json.loads(data["devices"])
+
+
+
+def _render_code_email(code: str) -> str:
+    """Render branded HTML email with 8-digit sign-in code.
+
+    Uses old-school HTML attributes (bgcolor, align, width on <td>) for
+    maximum email client compatibility. Gmail, Outlook, and Apple Mail all
+    strip or ignore many CSS properties but respect table attributes.
+    """
+    spaced = f"{code[:4]}&nbsp;&nbsp;{code[4:]}"
+    return f"""\
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Percolate sign-in code</title>
+  <!--[if !mso]><!-->
+  <link href="https://fonts.googleapis.com/css2?family=Gruppo&display=swap" rel="stylesheet" />
+  <!--<![endif]-->
+</head>
+<body style="margin:0; padding:0;" bgcolor="#f4f4f5">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#f4f4f5">
+  <tr>
+    <td align="center" style="padding: 40px 0;">
+      <!--[if (gte mso 9)|(IE)]><table role="presentation" width="480" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="480" bgcolor="#ffffff" style="border-radius:12px; max-width:480px; width:100%;">
+        <!-- Logo -->
+        <tr>
+          <td align="center" style="padding: 32px 40px 24px 40px; font-family: 'Gruppo', Helvetica, Arial, sans-serif; font-size: 42px; color: #18181b; letter-spacing: 2px;">
+            percolate
+          </td>
+        </tr>
+        <!-- Heading -->
+        <tr>
+          <td align="center" style="padding: 0 40px 8px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 22px; font-weight: bold; color: #18181b;">
+            Your sign-in code
+          </td>
+        </tr>
+        <!-- Subheading -->
+        <tr>
+          <td align="center" style="padding: 0 40px 24px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #71717a;">
+            Enter this code to sign in to Percolate
+          </td>
+        </tr>
+        <!-- Code box -->
+        <tr>
+          <td align="center" style="padding: 0 40px;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" bgcolor="#eff6ff" style="border-radius: 8px;">
+              <tr>
+                <td align="center" style="padding: 20px 32px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1e40af;">
+                  {spaced}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Expiry notice -->
+        <tr>
+          <td align="center" style="padding: 24px 40px 0 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; color: #a1a1aa;">
+            This code expires in 10 minutes.
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td align="center" style="padding: 32px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; color: #a1a1aa; border-top: 1px solid #e4e4e7;">
+            Percolation Labs
+          </td>
+        </tr>
+      </table>
+      <!--[if (gte mso 9)|(IE)]></td></tr></table><![endif]-->
+    </td>
+  </tr>
+</table>
+</body>
+</html>"""
 
 
 class AuthService:
@@ -845,3 +924,88 @@ class AuthService:
             subject="Sign in to p8",
             body=f"Click to sign in:\n\n{link}\n\nThis link expires in 10 minutes.",
         )
+
+    # -----------------------------------------------------------------------
+    # Magic code (8-digit numeric)
+    # -----------------------------------------------------------------------
+
+    async def create_magic_code(self, email: str) -> tuple[str, str]:
+        """Generate an 8-digit code and store its HMAC hash in kv_store.
+
+        Returns (code, jti). The plaintext code is never stored.
+        """
+        code = "".join(secrets.choice("0123456789") for _ in range(8))
+        jti = str(uuid4())
+        mac = hmac.new(
+            self.settings.auth_secret_key.encode(), code.encode(), hashlib.sha256
+        ).hexdigest()
+
+        record = {
+            "email": email,
+            "hash": mac,
+            "attempts": 0,
+            "created_at": int(time.time()),
+        }
+        await self._kv_set_json(f"magic_code:{jti}", "auth_token", record)
+        return code, jti
+
+    async def verify_magic_code(self, jti: str, code: str) -> tuple[User, str]:
+        """Verify an 8-digit code. Enforces max 5 attempts and 10-min expiry.
+
+        Returns (user, tenant_id). Raises ValueError on failure.
+        """
+        key = f"magic_code:{jti}"
+        record = await self._kv_get_json(key, "auth_token")
+        if not record:
+            raise ValueError("Code expired or not found")
+
+        # Check expiry
+        created = record.get("created_at", 0)
+        if time.time() - created > self.settings.auth_magic_link_expiry:
+            await self.db.execute(
+                "DELETE FROM kv_store WHERE entity_key = $1", key
+            )
+            raise ValueError("Code expired")
+
+        # Check attempts
+        attempts = record.get("attempts", 0)
+        if attempts >= 5:
+            await self.db.execute(
+                "DELETE FROM kv_store WHERE entity_key = $1", key
+            )
+            raise ValueError("Too many attempts")
+
+        # Verify HMAC
+        mac = hmac.new(
+            self.settings.auth_secret_key.encode(), code.encode(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(mac, record.get("hash", "")):
+            # Increment attempts
+            record["attempts"] = attempts + 1
+            await self._kv_set_json(key, "auth_token", record)
+            remaining = 5 - record["attempts"]
+            raise ValueError(
+                f"Invalid code ({remaining} attempt{'s' if remaining != 1 else ''} remaining)"
+            )
+
+        # Success — consume the code
+        await self.db.execute("DELETE FROM kv_store WHERE entity_key = $1", key)
+
+        email = record["email"]
+        return await self._find_or_create_by_email(email)
+
+    async def send_magic_code(self, email: str) -> str:
+        """Generate a magic code, send branded HTML email, return jti."""
+        from p8.services.email import EmailService
+
+        code, jti = await self.create_magic_code(email)
+        html = _render_code_email(code)
+
+        svc = EmailService(self.settings)
+        await svc.send(
+            to=email,
+            subject="Your Percolate sign-in code",
+            body=f"Your sign-in code is: {code[:4]} {code[4:]}. It expires in 10 minutes.",
+            html=html,
+        )
+        return jti

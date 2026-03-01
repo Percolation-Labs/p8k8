@@ -160,6 +160,15 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
 
+    # Slack
+    slack_bot_token: str = ""
+    slack_app_id: str = ""
+    slack_client_secret: str = ""
+    slack_signing_secret: str = ""
+    slack_verification_token: str = ""
+    slack_default_agent: str = "p8"
+    slack_alerts_channel: str = "p8-cloud-alerts"
+
     # Web search (Tavily)
     tavily_api_key: str = ""
 

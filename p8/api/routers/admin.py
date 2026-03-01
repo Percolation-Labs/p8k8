@@ -140,8 +140,9 @@ async def send_report(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Send the system health report email."""
+    """Send the system health report email (+ Slack if configured)."""
     from p8.services.reports import send_health_report
 
     settings = request.app.state.settings
-    return await send_health_report(db, settings, encryption)
+    slack_service = getattr(request.app.state, "slack_service", None)
+    return await send_health_report(db, settings, encryption, slack_service=slack_service)

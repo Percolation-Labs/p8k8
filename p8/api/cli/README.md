@@ -5,7 +5,7 @@ Typer CLI for p8. Every command is a thin wrapper — all logic lives in `servic
 ## Install
 
 ```bash
-uv sync                # installs p8 + typer + pyyaml
+uv sync                # installs p8 + typer + pyyaml then SET your virtual env to uv's one (or use uv run with all commands)
 p8 --help         # or: python -m api.cli --help
 ```
 
@@ -21,7 +21,7 @@ p8 serve --port 9000 --reload   # dev mode
 p8 serve --workers 4            # production
 ```
 
-### migrate
+### migrate (optional - docker normally runs this)
 
 Run database bootstrap scripts (`sql/01..04`).
 
@@ -34,10 +34,10 @@ p8 migrate
 Execute REM dialect queries. Without arguments, starts an interactive REPL.
 
 ```bash
-p8 query 'LOOKUP percolate'
-p8 query 'SEARCH "database" FROM schemas LIMIT 5'
-p8 query 'FUZZY "sara" LIMIT 10'
-p8 query 'SELECT name, kind FROM schemas LIMIT 5'
+p8 query 'LOOKUP percolate' #table agnostic entity key lookup
+p8 query 'SEARCH "database" FROM schemas LIMIT 5' #semantic search
+p8 query 'FUZZY "sara" LIMIT 10' #fuzzy key lookup
+p8 query 'SELECT name, kind FROM schemas LIMIT 5' #regular SQL
 p8 query --format table 'FUZZY "agent"'
 p8 query                        # interactive REPL
 ```
@@ -47,9 +47,9 @@ p8 query                        # interactive REPL
 Bulk upsert from files. Markdown defaults to `ontologies`. JSON/YAML requires an explicit table.
 
 ```bash
-p8 upsert docs/percolate.md               # .md → ontologies (default)
-p8 upsert docs/                               # folder of .md → ontologies
-p8 upsert schemas data/agents.yaml            # YAML → schemas
+p8 upsert docs/percolate.md                    # .md → ontologies (default)
+p8 upsert docs/                                # folder of .md → ontologies
+p8 upsert schemas data/agents.yaml             # YAML → schemas
 p8 upsert resources data/chunks.json           # JSON → resources
 p8 upsert servers data/servers.yaml            # YAML → servers
 ```
@@ -130,6 +130,8 @@ p8 chat --user-id user-123           # with user context
 
 #### Commerce analytics via `commerce-analyst`
 
+This comes from the percolate `platoon` add on. Platoon provides agents and tools for web scraping, optimization libraries and many other useful things. 
+
 Upload data files to Percolate, then ask questions in natural language. The agent discovers your files automatically and selects the right Platoon tool.
 
 ```bash
@@ -163,7 +165,7 @@ See [docs/commerce-analytics.md](../../../docs/commerce-analytics.md) for the fu
 
 ### dream
 
-Run dreaming for a user — consolidation (Phase 1) + AI insights (Phase 2).
+Run dreaming for a user — consolidation (Phase 1) + AI insights (Phase 2). Dreaming is the background process that links moments together.
 
 ```bash
 p8 dream <user-id>                              # default: last 24 hours
@@ -186,7 +188,7 @@ p8 moments --user-id <uuid>             # filter by user
 p8 moments --limit 50                   # max results
 p8 moments timeline <session-uuid>      # interleaved messages + moments for a session
 p8 moments timeline <session-uuid> -n 100
-p8 moments compact <session-uuid>       # trigger moment compaction
+p8 moments compact <session-uuid>         # trigger moment compaction
 p8 moments compact <session-uuid> -t 500  # custom token threshold
 ```
 

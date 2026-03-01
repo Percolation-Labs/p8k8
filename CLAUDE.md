@@ -132,7 +132,7 @@ See [docs/port-conventions.md](docs/port-conventions.md) for the full table.
 Two deployment recipes exist for the p8 stack:
 
 - **AWS recipe** (`reminiscent/` repo): SQS queue + KEDA SQS trigger + ExternalSecrets from AWS Parameter Store + S3 native events. Full CDK setup.
-- **Hetzner recipe** (this repo): PostgreSQL queue (`task_queue`) + KEDA postgresql trigger + plain K8s Secrets from `.env`. Lighter weight, no NATS.
+- **Hetzner recipe** (this repo): PostgreSQL queue (`task_queue`) + KEDA postgresql trigger + ESO-managed secrets from OpenBao KV v2. Lighter weight, no NATS.
 
 **Hetzner stack**: API (chat, file upload, MCP server) + CloudNativePG PostgreSQL + KEDA-scaled tiered workers (file_processing, dreaming, news, reading, scheduled).
 
@@ -159,6 +159,57 @@ This avoids encryption/Vault issues with `--email` lookups in admin commands.
 - NEVER add `Co-Authored-By` or any AI attribution lines to commit messages
 - Keep commit messages concise — summary line + optional body
 
+## Secret Management (Hetzner)
+
+Secrets are managed by **ESO (External Secrets Operator)** pulling from **OpenBao KV v2**:
+
+```
+.env → seed-openbao.sh → OpenBao KV v2 → ESO (1h refresh) → K8s Secrets → Pods
+```
+
+| K8s Secret | OpenBao Path | Contents |
+|------------|-------------|----------|
+| `p8-app-secrets` | `secret/p8/app-secrets` | API keys, OAuth, Stripe, Slack, etc. |
+| `p8-database-credentials` | `secret/p8/database-credentials` | username + password |
+| `p8-keda-pg-connection` | `secret/p8/keda-pg-connection` | connection string |
+
+Bootstrap secrets (manual, one-time, created by `init-openbao.sh`):
+- `openbao-unseal-keys` — 3 unseal keys + root token
+- `openbao-eso-token` — root token for ESO auth
+
+### Adding a secret to an existing K8s secret
+
+```bash
+# Get root token
+ROOT_TOKEN=$(kubectl --context=p8-w-1 -n p8 get secret openbao-unseal-keys \
+  -o jsonpath='{.data.root_token}' | base64 -d)
+
+# Use `kv patch` to add/update without overwriting other keys
+kubectl --context=p8-w-1 -n p8 exec openbao-0 -c openbao -- env \
+  BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN="$ROOT_TOKEN" \
+  bao kv patch secret/p8/app-secrets NEW_KEY=value
+
+# Force ESO sync (default is 1h)
+kubectl --context=p8-w-1 -n p8 annotate externalsecrets p8-app-secrets \
+  force-sync=$(date +%s) --overwrite
+
+# Restart pods
+kubectl --context=p8-w-1 -n p8 rollout restart deploy/p8-api
+```
+
+### Adding a new K8s secret (new ExternalSecret)
+
+1. Write to a new KV path: `bao kv put secret/p8/my-secret key=value`
+2. Create `manifests/platform/external-secrets/external-secret-my-secret.yaml`
+3. Add to `manifests/platform/external-secrets/kustomization.yaml`
+4. Apply: `kubectl --context=p8-w-1 apply -k manifests/platform/external-secrets/`
+
+### Bulk seed from .env
+
+```bash
+./manifests/scripts/seed-openbao.sh --context=p8-w-1
+```
+
 ## Deployment (Hetzner p8-w-1)
 
 ```bash
@@ -166,19 +217,14 @@ This avoids encryption/Vault issues with `--email` lookups in admin commands.
 docker buildx build --platform linux/amd64 \
   -t percolationlabs/p8k8:latest --push .
 
-# Create namespace
-kubectl --context=p8-w-1 create namespace p8 --dry-run=client -o yaml | kubectl apply -f -
-
-# Create secrets from .env (or edit overlays/hetzner/secrets.yaml)
-kubectl --context=p8-w-1 -n p8 create secret generic p8-database-credentials \
-  --from-literal=username=p8user --from-literal=password=REAL_PASSWORD \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Deploy the full stack
+# Deploy the full stack (includes ESO ExternalSecrets, OpenBao, etc.)
 kubectl --context=p8-w-1 apply -k manifests/application/p8-stack/overlays/hetzner/
 
-# Run migrations (blank DB — no SQL baked into the PG image)
+# Run migrations
 p8 migrate
+
+# Seed secrets from .env into OpenBao (after init)
+./manifests/scripts/seed-openbao.sh --context=p8-w-1
 
 # Local dev
 docker compose up -d --build

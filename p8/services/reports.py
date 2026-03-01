@@ -338,8 +338,13 @@ async def send_health_report(
     encryption: EncryptionService,
     *,
     to: str | None = None,
+    slack_service=None,
 ) -> dict:
-    """Build and send the system health HTML email with CSV attachment."""
+    """Build and send the system health HTML email with CSV attachment.
+
+    If a SlackService is provided (or settings.slack_bot_token is set),
+    also posts a summary + CSV to the Slack alerts channel.
+    """
     recipient = to or settings.email_from
     queue = QueueService(db)
 
@@ -381,6 +386,10 @@ async def send_health_report(
         f"See attached CSV for full details."
     )
 
+    # 5. Slack — post summary + CSV to alerts channel
+    _send_to_slack(slack_service, settings, stats, len(all_tasks), csv_data)
+
+    # 6. Email
     email_svc = EmailService(settings)
     if settings.email_provider == "microsoft_graph":
         return await _send_graph_with_attachment(
@@ -389,6 +398,33 @@ async def send_health_report(
     return await email_svc.send(
         to=recipient, subject="p8 System Health Report", body=plain, html=html,
     )
+
+
+def _send_to_slack(slack_service, settings, stats: dict, total: int, csv_data: str) -> None:
+    """Best-effort post of report summary + CSV file to Slack alerts channel."""
+    if slack_service is None:
+        if not settings.slack_bot_token:
+            return
+        from p8.services.slack import SlackService
+        slack_service = SlackService(None, settings)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    summary = (
+        f"*p8 Daily Health Report* ({now})\n"
+        f"> Pending: *{stats.get('pending', 0)}* | "
+        f"Processing: *{stats.get('processing', 0)}* | "
+        f"Failed: *{stats.get('failed', 0)}* | "
+        f"Completed: *{stats.get('completed', 0)}*\n"
+        f"> Total tasks: {total}"
+    )
+    slack_service.post_alert(summary)
+
+    if csv_data:
+        slack_service.upload_file(
+            csv_data,
+            filename=f"task_queue_{now.replace(' ', '_').replace(':', '')}.csv",
+            initial_comment="Task queue export attached.",
+        )
 
 
 async def _send_graph_with_attachment(

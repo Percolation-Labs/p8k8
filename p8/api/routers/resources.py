@@ -197,13 +197,33 @@ async def record_reading(
         meta_ex = dict(ensure_parsed(existing["metadata"], default={}) or {})
         items: list = meta_ex.get("items", [])
 
-        # Deduplicate by resource_id
-        already = any(i.get("resource_id") == str(resource_id) for i in items)
-        if already:
+        # Check if already present by resource_id
+        existing_idx = next(
+            (idx for idx, i in enumerate(items) if i.get("resource_id") == str(resource_id)),
+            None,
+        )
+        if existing_idx is not None:
+            old_action = items[existing_idx].get("action")
+            if old_action == body.action.value:
+                return {
+                    "moment_id": str(moment_id),
+                    "action": body.action.value,
+                    "duplicate": True,
+                }
+            # Update the item's action in the moment metadata
+            items[existing_idx]["action"] = body.action.value
+            items[existing_idx]["timestamp"] = now_iso
+            meta_ex["items"] = items
+            await db.execute(
+                """UPDATE moments SET metadata = $1::jsonb, updated_at = NOW()
+                   WHERE id = $2""",
+                json.dumps(meta_ex), moment_id,
+            )
             return {
                 "moment_id": str(moment_id),
                 "action": body.action.value,
-                "duplicate": True,
+                "duplicate": False,
+                "updated": True,
             }
 
         # Append new item and update metadata
@@ -363,6 +383,7 @@ async def get_resource_by_name(
 @router.get("/{resource_id}")
 async def get_resource(
     resource_id: UUID,
+    user: CurrentUser | None = Depends(get_optional_user),
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
@@ -371,7 +392,11 @@ async def get_resource(
     entity = await repo.get(resource_id)
     if not entity:
         raise HTTPException(status_code=404, detail="Resource not found")
-    return _add_source_url(entity.model_dump(mode="json"))
+    d = _add_source_url(entity.model_dump(mode="json"))
+    uid = str(user.user_id) if user else None
+    res_meta = dict(ensure_parsed(d.get("metadata"), default={}) or {})
+    d["bookmarked"] = uid in (res_meta.get("bookmarked_by") or []) if uid else False
+    return d
 
 
 @router.get("/")

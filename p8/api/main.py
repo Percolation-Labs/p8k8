@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -109,6 +110,14 @@ async def lifespan(app: FastAPI):
         app.state.queue_service = queue_service
         app.state.stripe_service = StripeService(db, settings) if settings.stripe_secret_key else None
 
+        # Slack (gated on bot token being set)
+        if settings.slack_bot_token:
+            from p8.services.slack import SlackService, setup_slack_logging
+            app.state.slack_service = SlackService(db, settings)
+            setup_slack_logging(app.state.slack_service)
+        else:
+            app.state.slack_service = None
+
         # Push notifications (gated on at least one platform being configured)
         notification_service = None
         if settings.apns_bundle_id or settings.fcm_project_id:
@@ -164,7 +173,7 @@ def create_app() -> FastAPI:
     # Trust X-Forwarded-Proto/For from reverse proxy so request.url uses https://
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
-    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, query, resources, schemas, share
+    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, query, resources, schemas, share, slack
 
     # Protected routers — require API key when P8_API_KEY is set
     api_key_dep = [Depends(require_api_key)]
@@ -184,6 +193,16 @@ def create_app() -> FastAPI:
 
     # Auth router — open (handles OAuth callbacks, token exchange)
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+    # Static assets (logo, etc.) — served publicly at /assets/
+
+    from pathlib import Path
+    assets_dir = Path(__file__).resolve().parent / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    # Slack — webhook signature verified, no API key dep
+    app.include_router(slack.router, prefix="/slack", tags=["slack"])
 
     # Root health check (matches Dockerfile HEALTHCHECK path)
     @app.get("/health")

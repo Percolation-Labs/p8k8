@@ -22,10 +22,118 @@ spec:
       serviceAccountName: openbao
       terminationGracePeriodSeconds: 10
 
+      # Fix data dir ownership (may be root-owned from previous dev-mode runs)
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 100:1000 /openbao/data"]
+          volumeMounts:
+            - name: data
+              mountPath: /openbao/data
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+
+        # Auto-unseal on every pod start using keys from K8s secret
+        - name: auto-unseal
+          image: quay.io/openbao/openbao:2
+          command:
+            - sh
+            - -c
+            - |
+              export BAO_ADDR=http://127.0.0.1:8200
+
+              # Start a background server to unseal against
+              bao server -config=/openbao/config &
+              SERVER_PID=$!
+
+              # Wait for it to start (sealed state returns 501/503)
+              for i in $(seq 1 30); do
+                if wget -qO- http://127.0.0.1:8200/v1/sys/health 2>&1 | grep -q '"initialized"'; then
+                  break
+                fi
+                sleep 1
+              done
+
+              # Check if already initialized
+              STATUS=$(wget -qO- http://127.0.0.1:8200/v1/sys/health 2>&1 || true)
+              if echo "$STATUS" | grep -q '"sealed":false'; then
+                echo "Already unsealed (shouldn't happen on fresh start). Done."
+                kill $SERVER_PID 2>/dev/null || true
+                exit 0
+              fi
+
+              if echo "$STATUS" | grep -q '"initialized":false'; then
+                echo "Not initialized yet — skipping unseal (run init-openbao.sh first)."
+                kill $SERVER_PID 2>/dev/null || true
+                exit 0
+              fi
+
+              # Unseal with keys from the secret (mounted as files)
+              echo "Unsealing OpenBao..."
+              UNSEAL_DIR=/openbao/unseal-keys
+              if [ ! -d "$UNSEAL_DIR" ] || [ -z "$(ls -A $UNSEAL_DIR 2>/dev/null)" ]; then
+                echo "Error: No unseal keys found at $UNSEAL_DIR"
+                echo "Run init-openbao.sh to initialize OpenBao first."
+                kill $SERVER_PID 2>/dev/null || true
+                exit 1
+              fi
+
+              for keyfile in "$UNSEAL_DIR"/unseal_key_*; do
+                [ -f "$keyfile" ] || continue
+                KEY=$(cat "$keyfile")
+                echo "Applying unseal key from $(basename $keyfile)..."
+                bao operator unseal "$KEY"
+              done
+
+              # Verify
+              if wget -qO- http://127.0.0.1:8200/v1/sys/health 2>&1 | grep -q '"sealed":false'; then
+                echo "OpenBao unsealed successfully."
+              else
+                echo "Warning: OpenBao may still be sealed."
+              fi
+
+              kill $SERVER_PID 2>/dev/null || true
+              wait $SERVER_PID 2>/dev/null || true
+          env:
+            - name: SKIP_SETCAP
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /openbao/data
+            - name: config
+              mountPath: /openbao/config
+              readOnly: true
+            - name: unseal-keys
+              mountPath: /openbao/unseal-keys
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - IPC_LOCK
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
       containers:
         - name: openbao
           image: quay.io/openbao/openbao:2
-          command: ["bao", "server", "-dev"]
+          command: ["bao", "server", "-config=/openbao/config"]
 
           ports:
             - name: api
@@ -33,13 +141,6 @@ spec:
               protocol: TCP
 
           env:
-            - name: BAO_DEV_ROOT_TOKEN_ID
-              valueFrom:
-                secretKeyRef:
-                  name: p8-app-secrets
-                  key: P8_KMS_VAULT_TOKEN
-            - name: BAO_DEV_LISTEN_ADDRESS
-              value: "0.0.0.0:8200"
             # Skip mlock in container
             - name: SKIP_SETCAP
               value: "true"
@@ -56,20 +157,23 @@ spec:
             httpGet:
               path: /v1/sys/health
               port: api
-              # dev mode is always initialized+unsealed, so 200 is expected
-            initialDelaySeconds: 10
+              # standbyok + unsealed: returns 200 for active/standby, 503 for sealed
+              httpHeaders:
+                - name: X-Vault-Request
+                  value: "true"
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 5
 
           readinessProbe:
             httpGet:
               path: /v1/sys/health
               port: api
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 5
 
           securityContext:
             runAsNonRoot: true
@@ -92,6 +196,10 @@ spec:
         - name: config
           configMap:
             name: openbao-config
+        - name: unseal-keys
+          secret:
+            secretName: openbao-unseal-keys
+            optional: true  # Allow pod to start before init (uninitialized state)
 
   volumeClaimTemplates:
     - metadata:

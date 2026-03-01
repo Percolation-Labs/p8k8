@@ -138,6 +138,31 @@ class EmailService:
         self._ms_token_expires = time.time() + data.get("expires_in", 3600) - 300
         return self._ms_token
 
+    def _build_mime(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        *,
+        html: str | None = None,
+        sender: str,
+        cc: str | None = None,
+        bcc: str | None = None,
+    ) -> EmailMessage:
+        """Build a standard MIME message with text + optional HTML alternative."""
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = to
+        if cc:
+            msg["Cc"] = cc
+        if bcc:
+            msg["Bcc"] = bcc
+        msg.set_content(body)
+        if html:
+            msg.add_alternative(html, subtype="html")
+        return msg
+
     async def _send_graph(
         self,
         to: str,
@@ -149,37 +174,34 @@ class EmailService:
         cc: str | None = None,
         bcc: str | None = None,
     ) -> dict:
+        """Send via Microsoft Graph using MIME format.
+
+        The JSON format causes Exchange to TNEF-encode emails, which
+        non-Outlook clients (Gmail, Apple Mail) can't render. Sending
+        as a proper MIME message avoids this entirely.
+        """
+        import base64 as b64
+
         token = await self._get_graph_token()
         url = _MS_SEND_MAIL_URL.format(user_email=sender)
 
-        # Build recipients
-        def _recipients(addrs: str) -> list[dict]:
-            return [{"emailAddress": {"address": a.strip()}} for a in addrs.split(",") if a.strip()]
-
-        content_type = "HTML" if html else "Text"
-        content = html if html else body
-
-        message: dict = {
-            "subject": subject,
-            "body": {"contentType": content_type, "content": content},
-            "toRecipients": _recipients(to),
-        }
-        if cc:
-            message["ccRecipients"] = _recipients(cc)
-        if bcc:
-            message["bccRecipients"] = _recipients(bcc)
+        mime_msg = self._build_mime(
+            to, subject, body, html=html, sender=sender, cc=cc, bcc=bcc,
+        )
+        mime_bytes = mime_msg.as_bytes()
+        mime_b64 = b64.b64encode(mime_bytes).decode("ascii")
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 url,
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
+                    "Content-Type": "text/plain",
                 },
-                json={"message": message, "saveToSentItems": True},
+                content=mime_b64,
             )
             if resp.status_code == 202:
-                logger.info("Email sent via Microsoft Graph to %s: %s", to, subject)
+                logger.info("Email sent via Microsoft Graph (MIME) to %s: %s", to, subject)
                 return {"status": "sent", "provider": "microsoft_graph", "to": to}
 
             # Log error details for debugging

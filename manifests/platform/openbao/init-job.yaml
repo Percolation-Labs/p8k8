@@ -1,7 +1,7 @@
-# One-shot Job: enable Transit engine + create the p8-master key
+# One-shot Job: enable Transit + KV v2 engines, create the p8-master key
 #
-# Runs after OpenBao starts in dev mode. Idempotent — safe to re-run.
-# In a non-dev deployment, replace this with proper unseal + init automation.
+# Runs after OpenBao is initialized and unsealed. Idempotent — safe to re-run.
+# Reads the root token from openbao-unseal-keys secret (created by init-openbao.sh).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -46,14 +46,18 @@ spec:
               echo "Creating p8-master transit key..."
               bao write -f transit/keys/p8-master type=aes256-gcm96 2>/dev/null || echo "Key already exists"
 
-              echo "Transit engine ready."
+              echo "Enabling KV v2 secrets engine..."
+              bao secrets enable -version=2 -path=secret kv 2>/dev/null || echo "KV v2 already enabled"
+
+              echo "Engines ready."
               bao read transit/keys/p8-master
+              bao secrets list
           env:
             - name: VAULT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: p8-app-secrets
-                  key: P8_KMS_VAULT_TOKEN
+                  name: openbao-unseal-keys
+                  key: root_token
           resources:
             requests:
               memory: "32Mi"
