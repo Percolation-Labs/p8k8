@@ -163,48 +163,51 @@ async def remind_me(
         job_name, cron_expr, job_sql,
     )
 
-    # Persist a reminder moment — starts_timestamp is the future fire date,
-    # created_at is now. Graph edges with relation="reminder" link back to
-    # the source session so daily summaries can aggregate reminder counts.
-    session_id = get_session_id()
+    # Persist a reminder moment with its own companion session so tapping
+    # the reminder card in the feed opens a dedicated chat (not the session
+    # it was created in, which may contain unrelated conversations).
+    origin_session_id = get_session_id()
     graph_edges = []
-    if session_id:
+    if origin_session_id:
         graph_edges.append({
-            "target": str(session_id),
+            "target": str(origin_session_id),
             "relation": "reminder",
             "weight": 1.0,
             "reason": f"Reminder '{name}' created in this session",
         })
 
     encryption = get_encryption()
-    from p8.ontology.types import Moment
-    from p8.services.repository import Repository
+    from p8.services.memory import MemoryService
 
-    repo = Repository(Moment, db, encryption)
-    moment = Moment(
+    memory = MemoryService(db, encryption)
+    moment, session = await memory.create_moment_session(
         name=name,
         moment_type="reminder",
-        category="reminder",
         summary=description,
         starts_timestamp=next_fire,
         topic_tags=tags or [],
         graph_edges=graph_edges,
         user_id=user_id,
-        source_session_id=session_id,
+        session_description=f"Reminder: {description}",
         metadata={
             "reminder_id": str(reminder_id),
             "job_name": job_name,
             "schedule": cron_expr,
             "recurrence": recurrence,
             "frequency": frequency,
+            "category": "reminder",
         },
     )
-    [saved] = await repo.upsert(moment)
+    # Set category on the moment (create_moment_session doesn't have a category param)
+    await db.execute(
+        "UPDATE moments SET category = 'reminder' WHERE id = $1",
+        moment.id,
+    )
 
     return {
         "status": "success",
         "reminder_id": str(reminder_id),
-        "moment_id": str(saved.id),
+        "moment_id": str(moment.id),
         "name": name,
         "frequency": frequency,
         "recurrence": recurrence,
