@@ -803,6 +803,7 @@ async def _quota_reset(user_id: UUID, resource_type: str | None):
 
 @admin_app.command()
 def quota(
+    email: Optional[str] = typer.Option(None, "--email", "-e", help="User email (deterministic ID lookup)"),
     user_id: Optional[str] = typer.Option(None, "--user", "-u", help="Filter to a single user UUID"),
     reset: bool = typer.Option(False, "--reset", "-r", help="Reset quotas instead of reporting"),
     resource: Optional[str] = typer.Option(None, "--resource", help="Specific resource to reset (with --reset)"),
@@ -811,9 +812,14 @@ def quota(
 ):
     """User quota report — utilization percentage per resource, or reset quotas."""
     _set_local(local)
+    if email:
+        from p8.ontology.base import deterministic_id
+        resolved = deterministic_id("users", email)
+        _con.print(f"Resolved [bold]{email}[/bold] → {resolved}")
+        user_id = str(resolved)
     if reset:
         if not user_id:
-            _con.print("--user is required with --reset", style="red")
+            _con.print("--user or --email is required with --reset", style="red")
             raise typer.Exit(1)
         _run(_quota_reset(UUID(user_id), resource))
     else:

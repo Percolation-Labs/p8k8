@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -197,7 +200,18 @@ class VaultTransitKMS(KMSProvider):
             return None
         import httpx
 
-        ciphertext = bytes(row["wrapped_dek"]).decode()
+        # DEKs written by LocalKMS are raw binary and can't be unwrapped by Vault
+        raw = bytes(row["wrapped_dek"])
+        try:
+            ciphertext = raw.decode()
+        except UnicodeDecodeError:
+            logger.warning(
+                "Tenant %s has a non-Vault wrapped DEK (kms_key_id=%s) — "
+                "cannot decrypt with Vault transit. Re-wrap with: "
+                "p8 encryption configure %s",
+                tenant_id, row["kms_key_id"], tenant_id,
+            )
+            return None
         key_name = row["kms_key_id"]
         ctx = base64.b64encode(tenant_id.encode()).decode()
         async with httpx.AsyncClient() as client:

@@ -98,7 +98,7 @@ p8 db apply <SQL_FILE> [--target-url URL] [--dry-run]
 # Admin (defaults to remote Hetzner via port-forward; use --local for docker-compose)
 p8 admin health [--email PARTIAL] [--user UUID]
 p8 admin queue [--status pending|failed] [--detail] [--type TYPE]
-p8 admin quota [--user UUID] [--reset] [--resource chat_tokens]
+p8 admin quota [--email EMAIL] [--user UUID] [--reset] [--resource chat_tokens]
 p8 admin enqueue <TASK_TYPE> --user UUID [--delay MINUTES]
 p8 admin heal-jobs                               # Fix stale reminder cron jobs
 ```
@@ -150,6 +150,7 @@ User IDs are deterministic UUID5 hashes of the email: `deterministic_id("users",
 from p8.ontology.base import deterministic_id
 user_id = deterministic_id("users", "someone@example.com")
 # Then: p8 admin quota --user <user_id> --reset
+# Or simply: p8 admin quota --email someone@example.com --reset
 ```
 
 This avoids encryption/Vault issues with `--email` lookups in admin commands.

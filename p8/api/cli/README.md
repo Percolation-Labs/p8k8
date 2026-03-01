@@ -226,9 +226,10 @@ p8 admin queue --detail --status failed -n 50  # paginated detail
 
 # Quota — user utilization reports
 p8 admin quota                           # all users
-p8 admin quota --user <uuid>             # single user
-p8 admin quota --user <uuid> --reset     # reset all current-period quotas
-p8 admin quota --user <uuid> --reset --resource chat_tokens  # reset one resource
+p8 admin quota --email user@example.com  # by email (deterministic ID)
+p8 admin quota --user <uuid>             # by user UUID
+p8 admin quota --email user@example.com --reset     # reset all current-period quotas
+p8 admin quota --email user@example.com --reset --resource chat_tokens  # reset one resource
 
 # Enqueue — manually enqueue a one-off task
 p8 admin enqueue dreaming --user <uuid>
