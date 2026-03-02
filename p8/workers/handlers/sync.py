@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from p8.services.memory import MemoryService
-from p8.services.providers.gdrive import GoogleDriveService
+from p8.services.providers.gdrive import GoogleDriveService, OAuthTokenError
 
 log = logging.getLogger(__name__)
 
@@ -55,11 +55,22 @@ class DriveSyncHandler:
             content_service=ctx.content_service,
         )
 
-        result = await gdrive.sync_folder(
-            user_id,
-            tenant_id or "",
-            folder_id=folder_id,
-        )
+        try:
+            result = await gdrive.sync_folder(
+                user_id,
+                tenant_id or "",
+                folder_id=folder_id,
+            )
+        except OAuthTokenError as exc:
+            log.warning(
+                "OAuth token failed for user %s, pausing grant %s: %s",
+                user_id, row["id"], exc,
+            )
+            await ctx.db.execute(
+                "UPDATE storage_grants SET status = 'paused' WHERE id = $1",
+                row["id"],
+            )
+            return {"status": "ok", "paused_grant": str(row["id"]), "reason": str(exc)}
 
         log.info(
             "Drive sync complete for user %s: synced=%d updated=%d skipped=%d errors=%d",

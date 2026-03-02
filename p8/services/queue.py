@@ -101,6 +101,14 @@ class QueueService:
         )
         log.info("Completed task %s", task_id)
 
+    async def heartbeat(self, task_id: UUID) -> None:
+        """Refresh claimed_at to prevent stale-task recovery during long-running tasks."""
+        await self.db.execute(
+            "UPDATE task_queue SET claimed_at = CURRENT_TIMESTAMP"
+            " WHERE id = $1 AND status = 'processing'",
+            task_id,
+        )
+
     async def fail(self, task_id: UUID, error: str) -> None:
         """Mark a task as failed. SQL handles retry logic."""
         await self.db.execute("SELECT fail_task($1, $2)", task_id, error)

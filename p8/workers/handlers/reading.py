@@ -102,6 +102,7 @@ class ReadingSummaryHandler:
         if isinstance(user_id, str):
             user_id = UUID(user_id)
 
+        task_id = task.get("id")
         log.info("Reading pipeline for user %s", user_id)
 
         # ── 1. Load user metadata ────────────────────────────────
@@ -137,6 +138,11 @@ class ReadingSummaryHandler:
             len(result.resources), user_id, user_sources is not None,
         )
 
+        # Heartbeat after feed fetch (the slowest stage) to prevent
+        # the 15-min stale-task recovery from reclaiming us.
+        if task_id and hasattr(ctx, "queue") and ctx.queue:
+            await ctx.queue.heartbeat(task_id)
+
         if not result.resources:
             return {"status": "ok", "resources": 0}
 
@@ -162,6 +168,10 @@ class ReadingSummaryHandler:
                 resources_saved += 1
             except Exception:
                 log.exception("Failed to upsert resource %s", p8r.name[:60])
+
+        # Heartbeat after resource upserts
+        if task_id and hasattr(ctx, "queue") and ctx.queue:
+            await ctx.queue.heartbeat(task_id)
 
         # ── 4. Build reading moment ───────────────────────────────
         now = datetime.now(timezone.utc)

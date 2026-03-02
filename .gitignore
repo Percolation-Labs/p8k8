@@ -14,3 +14,4 @@ recording-*.wav
 *.p8
 .mypy_cache/
 .notes/
+agentic-cluster/

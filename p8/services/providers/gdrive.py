@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
+
+class OAuthTokenError(Exception):
+    """Raised when the refresh token is invalid/expired (HTTP 400/401)."""
+
+    pass
+
 # MIME types we can extract text from
 SYNCABLE_MIME_TYPES = {
     "application/pdf",
@@ -94,7 +100,7 @@ class GoogleDriveService:
         """Exchange the stored refresh token for a fresh access token."""
         refresh_token = (grant.metadata or {}).get("refresh_token")
         if not refresh_token:
-            raise ValueError("StorageGrant has no refresh_token in metadata")
+            raise OAuthTokenError("StorageGrant has no refresh_token in metadata")
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(GOOGLE_TOKEN_URL, data={
@@ -103,6 +109,11 @@ class GoogleDriveService:
                 "refresh_token": refresh_token,
                 "grant_type": "refresh_token",
             })
+            if resp.status_code in (400, 401):
+                raise OAuthTokenError(
+                    f"Refresh token rejected ({resp.status_code}): "
+                    f"user must re-authorize Google Drive"
+                )
             resp.raise_for_status()
             return resp.json()["access_token"]  # type: ignore[no-any-return]
 

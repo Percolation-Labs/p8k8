@@ -200,19 +200,27 @@ class VaultTransitKMS(KMSProvider):
             return None
         import httpx
 
-        # DEKs written by LocalKMS are raw binary and can't be unwrapped by Vault
+        key_name = row["kms_key_id"]
+
+        # DEKs written by LocalKMS can't be unwrapped by Vault transit
+        if not key_name or not key_name.startswith(self.key_name):
+            logger.warning(
+                "Tenant %s has a non-Vault wrapped DEK (kms_key_id=%s) — "
+                "cannot decrypt with Vault transit. Re-wrap with: "
+                "p8 encryption configure %s",
+                tenant_id, key_name, tenant_id,
+            )
+            return None
+
         raw = bytes(row["wrapped_dek"])
         try:
             ciphertext = raw.decode()
         except UnicodeDecodeError:
             logger.warning(
-                "Tenant %s has a non-Vault wrapped DEK (kms_key_id=%s) — "
-                "cannot decrypt with Vault transit. Re-wrap with: "
-                "p8 encryption configure %s",
-                tenant_id, row["kms_key_id"], tenant_id,
+                "Tenant %s wrapped_dek is not valid UTF-8 — likely LocalKMS binary",
+                tenant_id,
             )
             return None
-        key_name = row["kms_key_id"]
         ctx = base64.b64encode(tenant_id.encode()).decode()
         async with httpx.AsyncClient() as client:
             resp = await client.post(
