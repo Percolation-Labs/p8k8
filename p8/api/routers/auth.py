@@ -405,11 +405,15 @@ async def oauth_callback(request: Request, provider: str):
 # Mobile — server-relayed OAuth (browser-based, no native SDK)
 # ---------------------------------------------------------------------------
 
-_MOBILE_APP_SCHEME = "remapp"
+_MOBILE_APP_SCHEME_DEFAULT = "remapp"
 
 
 @router.get("/mobile/authorize/google-drive")
-async def mobile_drive_authorize(request: Request, token: str | None = None):
+async def mobile_drive_authorize(
+    request: Request,
+    token: str | None = None,
+    redirect_uri: str | None = None,
+):
     """Initiate Google OAuth with Drive scope (opt-in file sync).
 
     Accepts the user's access token as a ?token= query param (since the
@@ -430,6 +434,15 @@ async def mobile_drive_authorize(request: Request, token: str | None = None):
 
     request.session["drive_connect_user_id"] = payload["sub"]
     request.session["drive_connect_tenant_id"] = payload["tenant_id"]
+
+    # Store caller's app scheme for callback redirect
+    if redirect_uri:
+        try:
+            scheme = urlparse(redirect_uri).scheme
+            if scheme:
+                request.session["mobile_app_scheme"] = scheme
+        except Exception:
+            pass
 
     oauth = _get_oauth(request)
     client = getattr(oauth, "google", None)
@@ -465,10 +478,12 @@ async def mobile_drive_callback(request: Request):
     settings = request.app.state.settings
     token_data = await client.authorize_access_token(request)
 
+    app_scheme = request.session.pop("mobile_app_scheme", _MOBILE_APP_SCHEME_DEFAULT)
+
     google_refresh = token_data.get("refresh_token")
     if not google_refresh:
         return RedirectResponse(
-            url=f"{_MOBILE_APP_SCHEME}://drive-callback?status=error&reason=no_refresh_token",
+            url=f"{app_scheme}://drive-callback?status=error&reason=no_refresh_token",
             status_code=302,
         )
 
@@ -490,22 +505,42 @@ async def mobile_drive_callback(request: Request):
     await grants_repo.upsert(grant)
 
     return RedirectResponse(
-        url=f"{_MOBILE_APP_SCHEME}://drive-callback?status=connected",
+        url=f"{app_scheme}://drive-callback?status=connected",
         status_code=302,
     )
 
 
 @router.get("/mobile/authorize/{provider}")
-async def mobile_oauth_authorize(request: Request, provider: str):
-    """Initiate OAuth from mobile app. Opens Google in browser, callbacks redirect to app."""
+async def mobile_oauth_authorize(
+    request: Request,
+    provider: str,
+    redirect_uri: str | None = None,
+):
+    """Initiate OAuth from mobile app. Opens Google in browser, callbacks redirect to app.
+
+    Args:
+        redirect_uri: Optional app deep-link base URL (e.g. ``kittenapp://auth-callback``).
+            When provided, the callback will redirect to this URI instead of the
+            default ``remapp://auth-callback``. Only the **scheme** is extracted
+            to prevent open-redirect attacks.
+    """
     oauth = _get_oauth(request)
     client = getattr(oauth, provider, None)
     if client is None:
         raise HTTPException(400, f"Unknown or unconfigured provider: {provider}")
 
+    # Store the caller's app scheme in the session so the callback can redirect back
+    if redirect_uri:
+        try:
+            scheme = urlparse(redirect_uri).scheme
+            if scheme:
+                request.session["mobile_app_scheme"] = scheme
+        except Exception:
+            pass
+
     settings = request.app.state.settings
-    redirect_uri = f"{settings.api_base_url}/auth/mobile/callback/{provider}"
-    return await client.authorize_redirect(request, redirect_uri)
+    server_callback = f"{settings.api_base_url}/auth/mobile/callback/{provider}"
+    return await client.authorize_redirect(request, server_callback)
 
 
 @router.get("/mobile/callback/{provider}")
@@ -552,6 +587,8 @@ async def mobile_oauth_callback(request: Request, provider: str):
 
     tokens = await auth.issue_tokens(user, tenant_id)
 
+    app_scheme = request.session.pop("mobile_app_scheme", _MOBILE_APP_SCHEME_DEFAULT)
+
     params = urlencode({
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
@@ -562,7 +599,7 @@ async def mobile_oauth_callback(request: Request, provider: str):
         "picture": (user.metadata or {}).get("picture", ""),
     })
     return RedirectResponse(
-        url=f"{_MOBILE_APP_SCHEME}://auth-callback?{params}",
+        url=f"{app_scheme}://auth-callback?{params}",
         status_code=302,
     )
 
