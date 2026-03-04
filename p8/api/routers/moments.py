@@ -543,11 +543,12 @@ async def update_moment(
     db: Database = Depends(get_db),
     encryption: EncryptionService = Depends(get_encryption),
 ):
-    """Update a text note moment (summary, name).
+    """Update a moment's fields (summary, name, metadata, topic_tags).
 
     Only moments with editable types (note, content_upload, voice_note) can
     be updated.  Changing the summary triggers automatic re-embedding via
-    the database trigger.
+    the database trigger.  ``metadata`` is shallow-merged into the existing
+    JSONB column; ``topic_tags`` replaces the entire array.
     """
     repo = Repository(Moment, db, encryption)
     entity = await repo.get(moment_id)
@@ -563,7 +564,13 @@ async def update_moment(
 
     allowed = {"summary", "name"}
     updates = {k: v for k, v in body.items() if k in allowed and v is not None}
-    if not updates:
+
+    # metadata: shallow merge into existing JSONB
+    merge_metadata = body.get("metadata")
+    # topic_tags: replace entire array
+    new_tags = body.get("topic_tags")
+
+    if not updates and merge_metadata is None and new_tags is None:
         raise HTTPException(status_code=400, detail="Nothing to update")
 
     set_clauses = []
@@ -571,6 +578,22 @@ async def update_moment(
     for key, val in updates.items():
         args.append(val)
         set_clauses.append(f"{key} = ${len(args)}")
+    if merge_metadata is not None:
+        import json as _json
+        # Pass as text, cast via ::text::jsonb to avoid asyncpg double-encoding
+        args.append(_json.dumps(merge_metadata))
+        # CASE handles metadata stored as array (not object) —
+        # jsonb || on arrays concatenates instead of merging.
+        set_clauses.append(
+            f"metadata = CASE"
+            f" WHEN jsonb_typeof(COALESCE(metadata, '{{}}'::jsonb)) = 'object'"
+            f" THEN metadata || (${len(args)})::text::jsonb"
+            f" ELSE (${len(args)})::text::jsonb"
+            f" END"
+        )
+    if new_tags is not None:
+        args.append(new_tags)
+        set_clauses.append(f"topic_tags = ${len(args)}::text[]")
     args.append(moment_id)
     set_sql = ", ".join(set_clauses)
 

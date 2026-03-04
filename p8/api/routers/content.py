@@ -198,3 +198,139 @@ async def download_file(
         media_type=file_entity.mime_type or "application/octet-stream",
         headers={"Content-Disposition": f'inline; filename="{file_entity.name}"'},
     )
+
+
+@router.post("/analyse")
+async def analyse_content_endpoint(
+    request: Request,
+    image: UploadFile | None = None,
+    query: str = Form(default="Analyse this content"),
+    descriptor: str | None = Form(default=None),
+    user: CurrentUser | None = Depends(get_optional_user),
+    db: Database = Depends(get_db),
+    encryption: EncryptionService = Depends(get_encryption),
+):
+    """Analyse content via multimodal LLM — accepts images or content descriptors.
+
+    **Two modes:**
+
+    1. **Image mode** — upload an image file (e.g. rendered PDF page, screenshot).
+    2. **Descriptor mode** — pass a JSON content descriptor referencing Percolate
+       entities. The server resolves resources/moments and assembles context.
+
+    Descriptor schema::
+
+        {
+            "flow": "note" | "pdf_page" | "generic",
+            "moment_id": "uuid",          // optional — moment for context
+            "resources": [                // optional — files to include
+                "uuid",                   // simple: whole file
+                {"id": "uuid", "pages": [12, 13]}  // with page selection (0-indexed)
+            ],
+            "context": { ... }            // optional — extra metadata as text
+        }
+
+    Both modes can be combined (image + descriptor for enriched context).
+    """
+    import json as _json
+
+    from p8.services.vision import ContentItem, analyse_content, analyse_image
+
+    items: list[ContentItem] = []
+    result_meta: dict = {}
+
+    # ── Image mode ────────────────────────────────────────────────────
+    if image:
+        data = await image.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty image")
+        media_type = image.content_type or "image/png"
+        if media_type == "application/octet-stream":
+            media_type = "image/png"
+        items.append(ContentItem(image_data=data, media_type=media_type, label="uploaded image"))
+
+    # ── Descriptor mode ───────────────────────────────────────────────
+    desc = None
+    if descriptor:
+        try:
+            desc = _json.loads(descriptor)
+        except _json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid descriptor JSON")
+
+        flow = desc.get("flow", "generic")
+        moment_id = desc.get("moment_id")
+        resources = desc.get("resources", [])
+        context = desc.get("context")
+
+        result_meta["flow"] = flow
+        result_meta["moment_id"] = moment_id
+
+        # Resolve moment metadata as text context
+        if moment_id:
+            await _add_moment_context(items, moment_id, db, encryption)
+
+        # Resolve resources — each can be a plain UUID string or
+        # {"id": "uuid", "pages": [0, 1, 2]} for PDF page selection
+        for res in resources:
+            if isinstance(res, str):
+                items.append(ContentItem(uri=res, label=f"resource {res}"))
+            elif isinstance(res, dict):
+                rid = res.get("id", "")
+                res_pages = res.get("pages")
+                label = f"resource {rid}"
+                if res_pages:
+                    label += f" pages {res_pages}"
+                items.append(ContentItem(uri=rid, pages=res_pages, label=label))
+
+        # Include arbitrary context dict as text
+        if context:
+            items.append(ContentItem(
+                text=f"Additional context:\n{_json.dumps(context, indent=2)}",
+                label="context",
+            ))
+
+    if not items:
+        raise HTTPException(status_code=400, detail="No content provided — upload an image or pass a descriptor")
+
+    result = await analyse_content(items, query)
+    result.update(result_meta)
+    return result
+
+
+async def _add_moment_context(
+    items: list,
+    moment_id: str,
+    db: Database,
+    encryption: EncryptionService,
+) -> None:
+    """Resolve a moment and add its metadata as text context to the item list."""
+    import json as _json
+    from uuid import UUID
+
+    from p8.ontology.types import Moment
+    from p8.services.repository import Repository
+    from p8.services.vision import ContentItem
+
+    try:
+        mid = UUID(moment_id)
+    except ValueError:
+        return
+
+    repo = Repository(Moment, db, encryption)
+    moment = await repo.get(mid)
+    if not moment:
+        return
+
+    # Include moment summary
+    if moment.summary:
+        items.append(ContentItem(text=f"Document summary: {moment.summary}", label="moment summary"))
+
+    # Include annotation metadata (stickers, drawings, etc.)
+    if moment.metadata:
+        meta = dict(moment.metadata)
+        meta.pop("file_id", None)  # don't leak internal IDs to the LLM
+        if meta:
+            items.append(ContentItem(
+                text=f"Annotation metadata:\n{_json.dumps(meta, indent=2, default=str)}",
+                label="annotations",
+            ))
