@@ -20,12 +20,12 @@ from pydantic_ai import Agent, BinaryContent
 
 log = logging.getLogger(__name__)
 
-# Default model — override via VISION_MODEL env var
-DEFAULT_MODEL = "anthropic:claude-sonnet-4-20250514"
-
-
 def _get_model() -> str:
-    return os.environ.get("VISION_MODEL", DEFAULT_MODEL)
+    """Return model for vision tasks — respects VISION_MODEL env, else uses default_model from settings."""
+    if env_model := os.environ.get("VISION_MODEL"):
+        return env_model
+    from p8.settings import get_settings
+    return get_settings().default_model
 
 
 @dataclass
