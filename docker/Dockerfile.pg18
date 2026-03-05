@@ -1,10 +1,16 @@
-# Local dev + test Postgres with pgvector, pg_cron, pg_net.
+# Local dev + test Postgres with pgvector, pg_cron, pg_net, PostGIS, h3-pg.
 # For CNPG/K8s, use the CNPG base image variant instead.
 FROM postgres:18-bookworm
 
+# CNPG runs as UID 26 — add a passwd entry so peer auth resolves in K8s.
+# The default postgres user (UID 999) is kept for local docker-compose.
+RUN echo 'cnpg:x:26:26::/var/lib/postgresql:/bin/bash' >> /etc/passwd \
+    && echo 'cnpg:x:26:' >> /etc/group
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git postgresql-server-dev-18 ca-certificates \
-    libcurl4-openssl-dev \
+    libcurl4-openssl-dev cmake \
+    postgresql-18-postgis-3 \
     && rm -rf /var/lib/apt/lists/*
 
 # pgvector
@@ -19,8 +25,17 @@ RUN cd /tmp && git clone --branch v1.6.7 https://github.com/citusdata/pg_cron.gi
 RUN cd /tmp && git clone --branch v0.20.2 https://github.com/supabase/pg_net.git \
     && cd pg_net && make && make install && rm -rf /tmp/pg_net
 
-# Keep libcurl4 (pg_net runtime dep) through autoremove
-RUN apt-mark manual libcurl4 2>/dev/null || true
+# h3-pg (Uber H3 hexagonal indexing — downloads H3 core during cmake build)
+# Hide pgindent so cmake skips the format target (pgindent breaks on PG18).
+RUN cd /tmp && git clone --branch v4.2.3 https://github.com/postgis/h3-pg.git \
+    && mv /usr/lib/postgresql/18/bin/pgindent /usr/lib/postgresql/18/bin/pgindent.bak 2>/dev/null || true \
+    && cd h3-pg && cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --parallel && cmake --install build \
+    && mv /usr/lib/postgresql/18/bin/pgindent.bak /usr/lib/postgresql/18/bin/pgindent 2>/dev/null || true \
+    && rm -rf /tmp/h3-pg
+
+# Keep runtime deps through autoremove
+RUN apt-mark manual libcurl4 postgresql-18-postgis-3 2>/dev/null || true
 RUN apt-get purge -y build-essential git postgresql-server-dev-18 ca-certificates \
     libcurl4-openssl-dev \
     && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*

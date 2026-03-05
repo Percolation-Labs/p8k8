@@ -7,7 +7,7 @@ spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
 
-  # Custom PG18 with pgvector + pg_cron + pg_net (built from docker/Dockerfile.pg18)
+  # Custom PG18 with pgvector + pg_cron + pg_net + PostGIS (built from docker/Dockerfile.pg18)
   imageName: percolationlabs/rem-pg:18
   imagePullPolicy: Always
 
