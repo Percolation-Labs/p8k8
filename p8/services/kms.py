@@ -67,6 +67,7 @@ class LocalFileKMS(KMSProvider):
                 self.master_key = f.read()
         else:
             self.master_key = os.urandom(32)
+            os.makedirs(os.path.dirname(keyfile) or ".", exist_ok=True)
             with open(keyfile, "wb") as f:
                 f.write(self.master_key)
             os.chmod(keyfile, 0o600)
