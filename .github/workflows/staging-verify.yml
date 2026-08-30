@@ -1,0 +1,105 @@
+name: Staging Verify
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: staging-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  staging-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Run staging check Job on cluster
+        id: run
+        run: |
+          JOB_NAME="staging-check-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
+          echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
+
+          sed \
+            -e "s/name: staging-check/name: ${JOB_NAME}/" \
+            -e "s/value: \"main\"/value: \"${{ github.event.pull_request.head.ref }}\"/" \
+            manifests/staging/percolate-check-job.yaml | kubectl apply -f -
+
+          echo "Waiting for pod to appear..."
+          for i in $(seq 1 30); do
+            POD=$(kubectl get pods -n p8-staging -l job-name="$JOB_NAME" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | tail -1)
+            [ -n "$POD" ] && break
+            sleep 5
+          done
+          echo "pod=$POD" >> "$GITHUB_OUTPUT"
+
+          echo "Waiting for runner container to finish (timeout 15m)..."
+          EXIT_CODE=""
+          for i in $(seq 1 180); do
+            STATE=$(kubectl get pod "$POD" -n p8-staging -o jsonpath='{.status.containerStatuses[?(@.name=="runner")].state.terminated.exitCode}' 2>/dev/null)
+            if [ -n "$STATE" ]; then
+              EXIT_CODE="$STATE"
+              break
+            fi
+            sleep 5
+          done
+
+          if [ -z "$EXIT_CODE" ]; then
+            echo "result=timeout" >> "$GITHUB_OUTPUT"
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+            echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          fi
+
+          kubectl logs "$POD" -n p8-staging -c runner --tail=150 > staging-log.txt 2>&1 || true
+
+      - name: Clean up Job
+        if: always()
+        run: |
+          kubectl delete job "${{ steps.run.outputs.job_name }}" -n p8-staging --ignore-not-found
+
+      - name: Post result as PR comment
+        if: always()
+        run: |
+          RESULT="${{ steps.run.outputs.result }}"
+          if [ "$RESULT" = "pass" ]; then
+            BADGE="✅ Staging check passed"
+          elif [ "$RESULT" = "timeout" ]; then
+            BADGE="⏱️ Staging check timed out (15m)"
+          else
+            BADGE="❌ Staging check failed"
+          fi
+
+          {
+            echo "## $BADGE"
+            echo ""
+            echo "Real migration + mypy + unit + integration tests + a live ingest against real external APIs, run on p8-arm."
+            echo ""
+            echo "<details><summary>Last 150 lines of output</summary>"
+            echo ""
+            echo '```'
+            cat staging-log.txt 2>/dev/null | tail -150
+            echo '```'
+            echo "</details>"
+          } > comment-body.md
+
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment-body.md --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
