@@ -35,8 +35,8 @@ jobs:
           echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
 
           sed \
-            -e "s/name: staging-check/name: ${JOB_NAME}/" \
-            -e "s/value: \"main\"/value: \"${{ github.event.pull_request.head.ref }}\"/" \
+            -e "s|name: staging-check|name: ${JOB_NAME}|" \
+            -e "s|value: \"main\"|value: \"${{ github.event.pull_request.head.ref }}\"|" \
             manifests/staging/percolate-check-job.yaml | kubectl apply -f -
 
           echo "Waiting for pod to appear..."
