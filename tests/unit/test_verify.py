@@ -57,6 +57,23 @@ class TestDeriveKvSummary:
 
         assert _derive_kv_summary(Feedback) is None
 
+    def test_event_uses_explicit_override(self):
+        """Event.name is a dedupe key, not human-readable — it declares
+        __kv_summary_expr__ explicitly rather than falling back to 'name'."""
+        from p8.ontology.types import Event
+
+        assert _derive_kv_summary(Event) == "COALESCE(summary, title)"
+
+    def test_explicit_override_wins_over_heuristic(self):
+        """A model with __kv_summary_expr__ set should use it verbatim,
+        even when the field-presence heuristic would derive something else."""
+
+        class Fake(Schema):
+            __table_name__ = "schemas"
+            __kv_summary_expr__ = "COALESCE(foo, bar)"
+
+        assert _derive_kv_summary(Fake) == "COALESCE(foo, bar)"
+
 
 # ============================================================================
 # Unit tests — _build_json_schema
@@ -332,10 +349,15 @@ class TestVerifyCLI:
 class TestRegisterCLI:
     def test_register_outputs_count(self):
         mock = MockAsyncServices()
+        expected_count = len(ALL_ENTITY_TYPES)
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
-            patch("p8.ontology.verify.register_models", new_callable=AsyncMock, return_value=13),
+            patch(
+                "p8.ontology.verify.register_models",
+                new_callable=AsyncMock,
+                return_value=expected_count,
+            ),
         ):
             result = runner.invoke(app, ["schema", "register"])
         assert result.exit_code == 0
-        assert "Registered 13 model(s)" in result.output
+        assert f"Registered {expected_count} model(s)" in result.output

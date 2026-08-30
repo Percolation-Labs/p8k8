@@ -24,6 +24,10 @@ from p8.services.repository import Repository
 log = logging.getLogger(__name__)
 
 _WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
+# Wikimedia's User-Agent policy (https://meta.wikimedia.org/wiki/User-Agent_policy)
+# rejects requests with no/anonymous User-Agent as 403 Forbidden. Falls back to
+# this default if settings is unset (e.g. in tests that don't exercise this tier).
+_DEFAULT_USER_AGENT = "p8-percolate/0.1 (contact: dev@percolationlabs.ai)"
 
 
 @dataclass
@@ -80,14 +84,16 @@ async def _match_registry(raw_name: str, db) -> ResolvedEntity | None:
     )
 
 
-async def _match_wikidata(raw_name: str, db, encryption) -> ResolvedEntity | None:
+async def _match_wikidata(raw_name: str, db, encryption, settings) -> ResolvedEntity | None:
     params = {
         "action": "wbsearchentities", "search": raw_name, "language": "en",
         "format": "json", "limit": "1",
     }
+    user_agent = getattr(settings, "percolate_user_agent", None) or _DEFAULT_USER_AGENT
+    headers = {"User-Agent": user_agent}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(_WIKIDATA_URL, params=params)
+            resp = await client.get(_WIKIDATA_URL, params=params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
     except Exception:
@@ -198,7 +204,7 @@ async def resolve_entity_name(
     if resolved:
         return resolved
 
-    resolved = await _match_wikidata(raw_name, db, encryption)
+    resolved = await _match_wikidata(raw_name, db, encryption, settings)
     if resolved:
         return resolved
 

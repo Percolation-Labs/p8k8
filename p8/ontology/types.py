@@ -418,6 +418,7 @@ class Event(CoreModel):
     __table_name__ = "percolate_events"
     __id_fields__ = ("name",)
     __embedding_field__ = "summary"
+    __kv_summary_expr__ = "COALESCE(summary, title)"
     __encrypted_fields__ = {}
     __redacted_fields__ = []
 

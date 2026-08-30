@@ -214,8 +214,10 @@ async def fetch_federal_register(*, limit: int = 20) -> list[dict]:
     return items
 
 
-async def fetch_wikipedia_recent_changes(*, limit: int = 20) -> list[dict]:
-    """Wikipedia RecentChanges API (§15.1) — no auth.
+async def fetch_wikipedia_recent_changes(*, limit: int = 20, user_agent: str) -> list[dict]:
+    """Wikipedia RecentChanges API (§15.1) — no auth, but Wikimedia's User-Agent
+    policy (https://meta.wikimedia.org/wiki/User-Agent_policy) rejects requests
+    with no/anonymous User-Agent as 403 Forbidden, so one is required here too.
 
     The edited page's title IS the entity (a broad general-attention proxy via
     edit velocity). Bot edits excluded to cut noise per the spec's own warning
@@ -231,9 +233,10 @@ async def fetch_wikipedia_recent_changes(*, limit: int = 20) -> list[dict]:
         "rclimit": str(limit),
         "format": "json",
     }
+    headers = {"User-Agent": user_agent}
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(url, params=params)
+        resp = await client.get(url, params=params, headers=headers)
         resp.raise_for_status()
         data = resp.json()
 
