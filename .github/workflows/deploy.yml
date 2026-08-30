@@ -57,3 +57,39 @@ jobs:
         run: |
           kubectl set image deployment/p8-api p8-api=percolationlabs/p8k8:sha-${{ github.sha }} -n p8
           kubectl rollout status deployment/p8-api -n p8 --timeout=180s
+
+      - name: Post-deploy summary
+        if: always()
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-12)
+          WHOAMI_CODE=$(curl -sS -o /tmp/whoami_body.json -w "%{http_code}" https://api.percolationlabs.ai/whoami/ || echo "000")
+          WHOAMI_STATUS="✅ HTTP $WHOAMI_CODE"
+          if [ "$WHOAMI_CODE" != "200" ]; then WHOAMI_STATUS="❌ HTTP $WHOAMI_CODE"; fi
+
+          {
+            echo "## Deploy summary"
+            echo ""
+            echo "**Image:** \`percolationlabs/p8k8:sha-${SHA_SHORT}\`"
+            echo "**Commit:** [${SHA_SHORT}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})"
+            echo ""
+            echo "### Quick checks"
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| API (\`/whoami\`) | $WHOAMI_STATUS |"
+            echo ""
+            echo "**Response body:**"
+            echo '```json'
+            cat /tmp/whoami_body.json 2>/dev/null || echo "(no response body)"
+            echo '```'
+            echo ""
+            echo "### Pods"
+            echo '```'
+            kubectl get pods -n p8 2>&1 || echo "kubectl get pods failed"
+            echo '```'
+            echo ""
+            echo "### Useful links"
+            echo "- Live API: https://api.percolationlabs.ai/whoami/"
+            echo "- This run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "_For a deeper narrated health check (logs, anomalies), comment \`@claude check cluster health\` on any issue — optional, not run automatically._"
+          } >> "$GITHUB_STEP_SUMMARY"
