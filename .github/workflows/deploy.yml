@@ -57,6 +57,33 @@ jobs:
             exit 1
           fi
 
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Run database migrations
+        run: |
+          # The app's own DB role is intentionally restricted (can't run DDL),
+          # so migrations run directly against the postgres pod via its local
+          # peer-trust socket (kubectl exec), piping in each already-checked-out
+          # sql/*.sql file. Idempotent scripts, safe to run before the new image
+          # rolls out -- new tables/columns existing before new code needs them
+          # beats the reverse.
+          for f in sql/*.sql; do
+            echo "Running $f..."
+            if ! kubectl exec -i p8-postgres-1 -n p8 -- psql -U postgres -d p8db -v ON_ERROR_STOP=1 < "$f"; then
+              echo "::error::Migration failed on $f"
+              exit 1
+            fi
+            echo "  $f applied"
+          done
+          echo "Migration complete"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -82,15 +109,6 @@ jobs:
             percolationlabs/p8k8:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Configure kubeconfig
-        run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
-          chmod 600 ~/.kube/config
 
       - name: Roll out p8-api
         run: |
