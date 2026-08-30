@@ -35,6 +35,7 @@ from p8.api.tools.get_moments import get_moments
 from p8.api.tools.search import search
 from p8.api.tools.update_user_metadata import update_user_metadata
 from p8.api.tools.web_search import web_search
+from p8.api.tools.related_searches import related_searches
 from p8.api.tools.plots import save_plot
 from p8.api.tools.files import get_file, get_file_resource, resolve_data_path
 from p8.ontology.types import User
@@ -326,6 +327,7 @@ def create_mcp_server(*, stdio: bool = False) -> FastMCP:
     mcp.tool(name="remind_me")(remind_me)
     mcp.tool(name="get_moments")(get_moments)
     mcp.tool(name="web_search")(web_search)
+    mcp.tool(name="related_searches")(related_searches)
     mcp.tool(name="update_user_metadata")(update_user_metadata)
     mcp.tool(name="save_plot")(save_plot)
 

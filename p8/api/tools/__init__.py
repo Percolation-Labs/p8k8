@@ -90,6 +90,7 @@ def _ensure_registry() -> None:
     from p8.api.tools.save_moments import save_moments
     from p8.api.tools.get_moments import get_moments
     from p8.api.tools.web_search import web_search
+    from p8.api.tools.related_searches import related_searches
     from p8.api.tools.update_user_metadata import update_user_metadata
     from p8.api.tools.remind_me import remind_me
     from p8.api.tools.plots import save_plot
@@ -102,6 +103,7 @@ def _ensure_registry() -> None:
         "save_moments": save_moments,
         "get_moments": get_moments,
         "web_search": web_search,
+        "related_searches": related_searches,
         "update_user_metadata": update_user_metadata,
         "remind_me": remind_me,
         "save_plot": save_plot,
