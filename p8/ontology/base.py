@@ -44,6 +44,14 @@ class CoreModel(BaseModel):
     # --- Embedding field (set by subclasses, None = no embeddings) ---
     __embedding_field__: ClassVar[str | None] = None
 
+    # --- KV summary expression override (set by subclasses, None = auto-derive) ---
+    __kv_summary_expr__: ClassVar[str | None] = None
+    # SQL expression for the kv_store content_summary column. Most models
+    # leave this unset and let verify.py derive it from field presence
+    # (content/description/name). Set explicitly when a model's `name` is
+    # not human-readable (e.g. a stable dedupe key) and a different
+    # expression makes a better display summary.
+
     # --- Identity declarations (subclasses override) ---
     __id_fields__: ClassVar[tuple[str, ...]] = ("name",)
     # Ordered fields to try for deterministic ID generation.

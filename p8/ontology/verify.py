@@ -58,7 +58,13 @@ def _expected_triggers(table: str, has_kv: bool, has_embed: bool) -> list[str]:
 def _derive_kv_summary(model: type[CoreModel]) -> str | None:
     """Derive the kv_summary_expr from model field declarations.
 
-    Follows the same logic as seed_table_schemas() in 01_install_entities.sql:
+    A model may set `__kv_summary_expr__` explicitly to override this
+    derivation — e.g. when `name` is a stable dedupe key rather than a
+    human-readable value, and a different expression makes a better
+    display summary (see Event in types.py).
+
+    Otherwise, follows the same logic as seed_table_schemas() in
+    01_install_entities.sql:
     - Encrypted content → "name" (KV stores name only, not ciphertext)
     - Has content + description + name → COALESCE(content, description, name)
     - Has description + name → COALESCE(description, name)
@@ -68,6 +74,10 @@ def _derive_kv_summary(model: type[CoreModel]) -> str | None:
     table = model.__table_name__
     if table not in KV_TABLES:
         return None
+
+    override = getattr(model, "__kv_summary_expr__", None)
+    if override is not None:
+        return override
 
     fields = set(model.model_fields)
     encrypted = getattr(model, "__encrypted_fields__", {})

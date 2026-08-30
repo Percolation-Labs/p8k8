@@ -57,6 +57,23 @@ class TestDeriveKvSummary:
 
         assert _derive_kv_summary(Feedback) is None
 
+    def test_event_uses_explicit_override(self):
+        """Event.name is a dedupe key, not human-readable — it declares
+        __kv_summary_expr__ explicitly rather than falling back to 'name'."""
+        from p8.ontology.types import Event
+
+        assert _derive_kv_summary(Event) == "COALESCE(summary, title)"
+
+    def test_explicit_override_wins_over_heuristic(self):
+        """A model with __kv_summary_expr__ set should use it verbatim,
+        even when the field-presence heuristic would derive something else."""
+
+        class Fake(Schema):
+            __table_name__ = "schemas"
+            __kv_summary_expr__ = "COALESCE(foo, bar)"
+
+        assert _derive_kv_summary(Fake) == "COALESCE(foo, bar)"
+
 
 # ============================================================================
 # Unit tests — _build_json_schema
