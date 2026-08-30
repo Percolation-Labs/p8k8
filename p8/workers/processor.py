@@ -101,6 +101,7 @@ class TieredWorker:
     tier: str
     poll_interval: float = 5.0
     batch_size: int = 1
+    exit_when_idle: bool = False
     worker_id: str = field(default_factory=lambda: short_id("worker-"))
     _running: bool = field(default=False, repr=False)
 
@@ -134,6 +135,9 @@ class TieredWorker:
                 try:
                     tasks = await queue.claim(self.tier, self.worker_id, self.batch_size)
                     if not tasks:
+                        if self.exit_when_idle:
+                            log.info("Worker %s: queue empty, exiting (--exit-when-idle)", self.worker_id)
+                            break
                         await asyncio.sleep(self.poll_interval)
                         continue
 
@@ -204,6 +208,11 @@ def main() -> None:
     parser.add_argument("--tier", required=True, choices=["micro", "small", "medium", "large"])
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--exit-when-idle", action="store_true",
+        help="Process whatever is currently pending, then exit on the first empty poll "
+             "instead of looping forever. For smoke tests / CI, never real deployments.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -215,6 +224,7 @@ def main() -> None:
         tier=args.tier,
         poll_interval=args.poll_interval,
         batch_size=args.batch_size,
+        exit_when_idle=args.exit_when_idle,
     )
 
     loop = asyncio.new_event_loop()
