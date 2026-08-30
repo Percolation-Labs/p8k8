@@ -173,7 +173,7 @@ def create_app() -> FastAPI:
     # Trust X-Forwarded-Proto/For from reverse proxy so request.url uses https://
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
-    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, query, resources, schemas, share, slack
+    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, query, resources, schemas, share, slack, whoami
 
     # Protected routers — require API key when P8_API_KEY is set
     api_key_dep = [Depends(require_api_key)]
@@ -193,6 +193,9 @@ def create_app() -> FastAPI:
 
     # Auth router — open (handles OAuth callbacks, token exchange)
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+    # whoami — open, minimal status check confirming CI/deploy pipeline works
+    app.include_router(whoami.router, prefix="/whoami", tags=["whoami"])
 
     # Static assets (logo, etc.) — served publicly at /assets/
 
