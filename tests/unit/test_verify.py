@@ -332,10 +332,15 @@ class TestVerifyCLI:
 class TestRegisterCLI:
     def test_register_outputs_count(self):
         mock = MockAsyncServices()
+        expected_count = len(ALL_ENTITY_TYPES)
         with (
             patch("p8.services.bootstrap.bootstrap_services", return_value=mock),
-            patch("p8.ontology.verify.register_models", new_callable=AsyncMock, return_value=13),
+            patch(
+                "p8.ontology.verify.register_models",
+                new_callable=AsyncMock,
+                return_value=expected_count,
+            ),
         ):
             result = runner.invoke(app, ["schema", "register"])
         assert result.exit_code == 0
-        assert "Registered 13 model(s)" in result.output
+        assert f"Registered {expected_count} model(s)" in result.output
