@@ -2,14 +2,21 @@ name: Staging Verify
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/ref to verify (e.g. main, for a post-batch check)"
+        required: false
+        default: "main"
 
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 concurrency:
-  group: staging-verify-${{ github.event.pull_request.number }}
+  group: staging-verify-${{ github.event.pull_request.number || github.event.inputs.ref || 'manual' }}
   cancel-in-progress: true
 
 jobs:
@@ -19,10 +26,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Determine skip / target ref
+        id: plan
+        env:
+          # toJSON of an absent/null value renders as the literal string
+          # "null" rather than erroring, so this is safe on non-pull_request
+          # events too. Avoids the `.labels.*.name` wildcard selector, whose
+          # null-safety on a missing pull_request context isn't worth
+          # trusting without testing.
+          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          # Batch-PR mode: label a PR "skip-staging" to opt it out of its own
+          # check, then trigger this workflow manually (workflow_dispatch)
+          # against main once the whole batch is merged, for one consolidated
+          # verification instead of N per-PR runs. Skips are still commented
+          # on the PR (not silent) so an unverified merge stays visible.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if echo "$PR_LABELS_JSON" | grep -q '"name":[[:space:]]*"skip-staging"'; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "target_ref=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+            echo "job_name=staging-check-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "target_ref=${{ github.event.inputs.ref || 'main' }}" >> "$GITHUB_OUTPUT"
+            echo "job_name=staging-check-manual-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post skip comment
+        if: github.event_name == 'pull_request' && steps.plan.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body \
+            "## ⏭️ Staging check skipped (\`skip-staging\` label)
+
+          Intentionally not run — part of a batch being verified together. Trigger \`Staging Verify\` manually (workflow_dispatch) against \`main\` after the batch merges to verify the combined result. This comment exists so the skip is visible, not silent."
+
       - name: Set up kubectl
+        if: steps.plan.outputs.skip != 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
+        if: steps.plan.outputs.skip != 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBE_CONFIG_STAGING }}" > ~/.kube/config
@@ -30,13 +78,14 @@ jobs:
 
       - name: Run staging check Job on cluster
         id: run
+        if: steps.plan.outputs.skip != 'true'
         run: |
-          JOB_NAME="staging-check-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
+          JOB_NAME="${{ steps.plan.outputs.job_name }}"
           echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
 
           sed \
             -e "s|name: staging-check|name: ${JOB_NAME}|" \
-            -e "s|value: \"main\"|value: \"${{ github.event.pull_request.head.ref }}\"|" \
+            -e "s|value: \"main\"|value: \"${{ steps.plan.outputs.target_ref }}\"|" \
             manifests/staging/percolate-check-job.yaml | kubectl apply -f -
 
           echo "Waiting for pod to appear..."
@@ -72,12 +121,12 @@ jobs:
           kubectl logs "$POD" -n p8-staging -c runner --tail=150 > staging-log.txt 2>&1 || true
 
       - name: Clean up Job
-        if: always()
+        if: always() && steps.plan.outputs.skip != 'true'
         run: |
-          kubectl delete job "${{ steps.run.outputs.job_name }}" -n p8-staging --ignore-not-found
+          kubectl delete job "${{ steps.plan.outputs.job_name }}" -n p8-staging --ignore-not-found
 
-      - name: Post result as PR comment
-        if: always()
+      - name: Build result comment/summary body
+        if: always() && steps.plan.outputs.skip != 'true'
         run: |
           RESULT="${{ steps.run.outputs.result }}"
           if [ "$RESULT" = "pass" ]; then
@@ -101,6 +150,8 @@ jobs:
             echo "## $BADGE"
             echo ""
             echo "Real migration + mypy + unit + integration tests + a live ingest against real external APIs, run on p8-arm."
+            echo ""
+            echo "**Ref:** \`${{ steps.plan.outputs.target_ref }}\`"
             [ -n "$DURATION_LINE" ] && echo "" && echo "$DURATION_LINE"
             echo ""
             echo "<details><summary>Last 150 lines of output</summary>"
@@ -111,6 +162,12 @@ jobs:
             echo "</details>"
           } > comment-body.md
 
-          gh pr comment ${{ github.event.pull_request.number }} --body-file comment-body.md --repo ${{ github.repository }}
+      - name: Post result as PR comment
+        if: always() && github.event_name == 'pull_request' && steps.plan.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body-file comment-body.md --repo ${{ github.repository }}
+
+      - name: Post result to job summary (manual/batch runs)
+        if: always() && github.event_name != 'pull_request' && steps.plan.outputs.skip != 'true'
+        run: cat comment-body.md >> "$GITHUB_STEP_SUMMARY"
