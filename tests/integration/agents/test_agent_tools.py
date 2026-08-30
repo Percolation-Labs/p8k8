@@ -61,6 +61,7 @@ async def test_user(db, encryption):
 
     repo = Repository(User, db, encryption)
     user = User(
+        id=USER_ADA,
         name="Ada Lovelace",
         email="ada@example.com",
         content="Pioneer of computing. Interested in algorithms and mathematics.",

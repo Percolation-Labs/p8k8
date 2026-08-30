@@ -109,6 +109,7 @@ async def _seed_user(db, encryption):
 
     repo = Repository(User, db, encryption)
     user = User(
+        id=USER_ADA,
         name="Ada Lovelace",
         email="ada@example.com",
         content="Mathematician and first programmer.",
