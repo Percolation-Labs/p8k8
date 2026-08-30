@@ -156,9 +156,33 @@ spec:
                 echo "⚠️  Consider parallelizing (pytest-xdist) or splitting slow tests before this creeps further."
               fi
 
-              echo "=== Running live percolate ingest (real external APIs) ==="
-              if ! uv run p8 percolate ingest; then
-                echo "RESULT: percolate ingest FAILED"
+              # Smoke test the REAL production dispatch path, not a CLI shortcut:
+              # cron's own enqueue function -> task_queue row -> a real worker
+              # process claims it -> dispatches to a registered handler. This is
+              # what actually broke in production (percolate_ingest tasks failed
+              # with "No handler registered" because only p8-api got redeployed,
+              # not the worker deployments) -- calling `p8 percolate ingest`
+              # directly, in-process, bypasses this whole path and can't catch
+              # that class of bug. Never do that again here.
+              echo "=== Enqueueing percolate ingest tasks (real cron function) ==="
+              PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "SELECT enqueue_percolate_ingest_tasks();"
+
+              echo "=== Running the real worker to drain the queue (real external APIs) ==="
+              if ! uv run python -m p8.workers.processor --tier small --exit-when-idle --poll-interval 1; then
+                echo "RESULT: worker process FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Checking for failed tasks (e.g. unregistered handlers) ==="
+              FAILED_TASKS=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
+                SELECT count(*) FROM task_queue WHERE task_type = 'percolate_ingest' AND status = 'failed';
+              ")
+              if [ "$FAILED_TASKS" != "0" ]; then
+                echo "::error::$FAILED_TASKS percolate_ingest task(s) failed via the real worker dispatch path:"
+                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
+                  SELECT payload->>'source_key' AS source, error FROM task_queue
+                  WHERE task_type = 'percolate_ingest' AND status = 'failed';
+                "
                 OVERALL_STATUS=1
               fi
 
