@@ -55,5 +55,5 @@ jobs:
 
       - name: Roll out p8-api
         run: |
-          kubectl rollout restart deployment/p8-api -n p8
+          kubectl set image deployment/p8-api p8-api=percolationlabs/p8k8:sha-${{ github.sha }} -n p8
           kubectl rollout status deployment/p8-api -n p8 --timeout=180s
