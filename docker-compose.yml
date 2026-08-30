@@ -5,6 +5,7 @@ services:
     # Custom PG18 with pgvector + pg_cron (built from docker/Dockerfile.pg18)
     container_name: p8k8-db
     image: p8-local:pg18
+    restart: unless-stopped
     build:
       context: .
       dockerfile: docker/Dockerfile.pg18
@@ -26,6 +27,7 @@ services:
 
   kms:
     image: quay.io/openbao/openbao:2
+    restart: unless-stopped
     ports:
       - "8200:8200"
     environment:
