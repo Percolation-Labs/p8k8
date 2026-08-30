@@ -3,9 +3,21 @@ name: Deploy
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - ".github/workflows/**"
+    # Allow-list, not a blocklist: only these paths actually affect what
+    # Dockerfile COPYs into the running image. Anything else (docs, staging
+    # manifests, tests, .schema/, etc.) is irrelevant to the deployed app -
+    # deploying because of a docs change is wasted build time, not caution.
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "p8/**"
+      - "sql/**"
+      - "Dockerfile"
+      - ".github/workflows/deploy.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: deploy-p8-arm
@@ -17,6 +29,33 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Verify staging check passed for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Branch protection (required status checks) isn't available on this
+          # plan (private repo, free tier). This is the substitute: refuse to
+          # deploy code whose PR's staging check clearly failed. It can't stop
+          # a bad merge from landing in git history, but it stops it from
+          # reaching production.
+          PR_NUMBER=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "No associated PR found for this commit (direct push, or pre-dates the staging gate) — proceeding."
+            exit 0
+          fi
+
+          LAST_COMMENT=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json comments --jq '[.comments[] | select(.body | contains("Staging check"))] | last | .body' 2>/dev/null || echo "")
+
+          if [ -z "$LAST_COMMENT" ]; then
+            echo "No staging check comment found on PR #$PR_NUMBER — proceeding (staging-verify may not have run for this PR)."
+          elif echo "$LAST_COMMENT" | grep -q "✅ Staging check passed"; then
+            echo "Staging check passed for PR #$PR_NUMBER — proceeding."
+          else
+            echo "::error::Staging check did NOT pass for PR #$PR_NUMBER — refusing to deploy. Fix and re-run staging-verify before merging next time, or re-trigger it and merge a fix."
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
