@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     # Web search (Tavily)
     tavily_api_key: str = ""
 
+    # Percolate detection core (§16) — entity resolution, corroboration, interpretation
+    percolate_corroboration_threshold: float = 0.6  # min corroboration_score to reach LLM interpretation
+    percolate_embedding_match_threshold: float = 0.82  # entity-resolution tier 3 (embedding fallback) cutoff
+    percolate_interpret_model: str = ""  # falls back to default_model when unset
+    percolate_user_agent: str = "p8-percolate/0.1 (contact: dev@percolationlabs.ai)"  # SEC EDGAR requires one
+
     model_config = {"env_prefix": "P8_", "env_file": ".env", "extra": "ignore"}
 
 

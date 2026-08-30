@@ -334,6 +334,103 @@ CREATE TABLE IF NOT EXISTS storage_grants (
 );
 
 
+-- percolate_sources — registered ingestion sources for the detection core (§15/§16.1)
+CREATE TABLE IF NOT EXISTS percolate_sources (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    key             VARCHAR(100) NOT NULL UNIQUE,
+    name            VARCHAR(255) NOT NULL,
+    source_type     VARCHAR(50) NOT NULL,
+    domain          VARCHAR(50) NOT NULL,
+    base_url        TEXT NOT NULL,
+    auth_required   BOOLEAN NOT NULL DEFAULT false,
+    reliability_weight REAL NOT NULL DEFAULT 1.0,
+    enabled         BOOLEAN NOT NULL DEFAULT true,
+    description     TEXT,
+    -- system fields
+    tenant_id       VARCHAR(100),
+    user_id         UUID,
+    encryption_level VARCHAR(20),
+    graph_edges     JSONB DEFAULT '[]'::jsonb,
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    tags            TEXT[] DEFAULT '{}',
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMPTZ
+);
+
+
+-- percolate_entities — canonical entity nodes on the event/entity graph (§8.2/§16.2)
+CREATE TABLE IF NOT EXISTS percolate_entities (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            VARCHAR(255) NOT NULL,
+    entity_type     VARCHAR(50),
+    aliases         TEXT[] DEFAULT '{}',
+    external_ids    JSONB DEFAULT '{}'::jsonb,
+    description     TEXT,
+    resolution_text TEXT,
+    resolution_tier VARCHAR(20),
+    resolution_confidence REAL NOT NULL DEFAULT 1.0,
+    -- system fields
+    tenant_id       VARCHAR(100),
+    user_id         UUID,
+    encryption_level VARCHAR(20),
+    graph_edges     JSONB DEFAULT '[]'::jsonb,
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    tags            TEXT[] DEFAULT '{}',
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMPTZ
+);
+
+
+-- percolate_topics — topic/category nodes on the event/entity graph (§8.2)
+CREATE TABLE IF NOT EXISTS percolate_topics (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            VARCHAR(255) NOT NULL,
+    description     TEXT,
+    -- system fields
+    tenant_id       VARCHAR(100),
+    user_id         UUID,
+    encryption_level VARCHAR(20),
+    graph_edges     JSONB DEFAULT '[]'::jsonb,
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    tags            TEXT[] DEFAULT '{}',
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMPTZ
+);
+
+
+-- percolate_events — detected event nodes: raw ingestion -> entity resolution ->
+-- corroboration -> threshold -> LLM interpretation (§16.4)
+CREATE TABLE IF NOT EXISTS percolate_events (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            VARCHAR(255) NOT NULL,
+    title           TEXT NOT NULL,
+    summary         TEXT,
+    primary_source_url TEXT NOT NULL,
+    primary_source_excerpt TEXT,
+    category        VARCHAR(50),
+    status          VARCHAR(20) NOT NULL DEFAULT 'raw',
+    classification  VARCHAR(30),
+    corroboration_score REAL NOT NULL DEFAULT 0.0,
+    distinct_source_types TEXT[] DEFAULT '{}',
+    contributing_sources JSONB DEFAULT '[]'::jsonb,
+    entity_resolution_confidence REAL NOT NULL DEFAULT 1.0,
+    event_time      TIMESTAMPTZ,
+    -- system fields
+    tenant_id       VARCHAR(100),
+    user_id         UUID,
+    encryption_level VARCHAR(20),
+    graph_edges     JSONB DEFAULT '[]'::jsonb,
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    tags            TEXT[] DEFAULT '{}',
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMPTZ
+);
+
+
 -- ---------------------------------------------------------------------------
 -- seed_table_schemas() — register entity tables in schemas with kind='table'
 --
@@ -417,7 +514,23 @@ BEGIN
 
     (p8_deterministic_id('schemas', 'storage_grants'),
      'storage_grants', 'table', 'Cloud storage folder sync permissions',
-     '{"has_kv_sync": false, "has_embeddings": false, "embedding_field": null,             "is_encrypted": false, "kv_summary_expr": null}'::jsonb)
+     '{"has_kv_sync": false, "has_embeddings": false, "embedding_field": null,             "is_encrypted": false, "kv_summary_expr": null}'::jsonb),
+
+    (p8_deterministic_id('schemas', 'percolate_sources'),
+     'percolate_sources', 'table', 'Percolate detection core — registered ingestion sources',
+     '{"has_kv_sync": true,  "has_embeddings": false, "embedding_field": null,             "is_encrypted": false, "kv_summary_expr": "COALESCE(description, name)"}'::jsonb),
+
+    (p8_deterministic_id('schemas', 'percolate_entities'),
+     'percolate_entities', 'table', 'Percolate detection core — canonical entity nodes',
+     '{"has_kv_sync": true,  "has_embeddings": true,  "embedding_field": "resolution_text", "is_encrypted": false, "kv_summary_expr": "COALESCE(description, name)"}'::jsonb),
+
+    (p8_deterministic_id('schemas', 'percolate_topics'),
+     'percolate_topics', 'table', 'Percolate detection core — topic/category nodes',
+     '{"has_kv_sync": true,  "has_embeddings": true,  "embedding_field": "description",    "is_encrypted": false, "kv_summary_expr": "COALESCE(description, name)"}'::jsonb),
+
+    (p8_deterministic_id('schemas', 'percolate_events'),
+     'percolate_events', 'table', 'Percolate detection core — detected/interpreted event nodes',
+     '{"has_kv_sync": true,  "has_embeddings": true,  "embedding_field": "summary",        "is_encrypted": false, "kv_summary_expr": "COALESCE(summary, title)"}'::jsonb)
 
     ON CONFLICT (id) DO UPDATE SET
         name        = EXCLUDED.name,
@@ -525,6 +638,39 @@ CREATE TABLE IF NOT EXISTS embeddings_files (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity_id   UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     field_name  VARCHAR(100) NOT NULL DEFAULT 'parsed_content',
+    embedding   vector(1536) NOT NULL,
+    provider    VARCHAR(50) DEFAULT 'openai',
+    content_hash VARCHAR(64),
+    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (entity_id, field_name, provider)
+);
+
+CREATE TABLE IF NOT EXISTS embeddings_percolate_entities (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id   UUID NOT NULL REFERENCES percolate_entities(id) ON DELETE CASCADE,
+    field_name  VARCHAR(100) NOT NULL DEFAULT 'resolution_text',
+    embedding   vector(1536) NOT NULL,
+    provider    VARCHAR(50) DEFAULT 'openai',
+    content_hash VARCHAR(64),
+    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (entity_id, field_name, provider)
+);
+
+CREATE TABLE IF NOT EXISTS embeddings_percolate_topics (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id   UUID NOT NULL REFERENCES percolate_topics(id) ON DELETE CASCADE,
+    field_name  VARCHAR(100) NOT NULL DEFAULT 'description',
+    embedding   vector(1536) NOT NULL,
+    provider    VARCHAR(50) DEFAULT 'openai',
+    content_hash VARCHAR(64),
+    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (entity_id, field_name, provider)
+);
+
+CREATE TABLE IF NOT EXISTS embeddings_percolate_events (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id   UUID NOT NULL REFERENCES percolate_events(id) ON DELETE CASCADE,
+    field_name  VARCHAR(100) NOT NULL DEFAULT 'summary',
     embedding   vector(1536) NOT NULL,
     provider    VARCHAR(50) DEFAULT 'openai',
     content_hash VARCHAR(64),

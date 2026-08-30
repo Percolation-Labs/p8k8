@@ -40,6 +40,7 @@ class WorkerContext:
     file_service: object = None  # type: ignore[assignment]
     content_service: object = None  # type: ignore[assignment]
     settings: object = None  # type: ignore[assignment]
+    embedding_service: object = None  # type: ignore[assignment]
 
 
 class TaskHandler:
@@ -83,6 +84,9 @@ def _register_default_handlers() -> None:
     from p8.workers.handlers.sync import DriveSyncHandler
     if "drive_sync" not in _HANDLER_REGISTRY:
         register_handler("drive_sync", DriveSyncHandler())  # type: ignore[arg-type]
+    from p8.workers.handlers.percolate import PercolateIngestHandler
+    if "percolate_ingest" not in _HANDLER_REGISTRY:
+        register_handler("percolate_ingest", PercolateIngestHandler())  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +108,8 @@ class TieredWorker:
         """Bootstrap services and enter the poll loop."""
         _register_default_handlers()
 
-        async with bootstrap_services() as (
-            db, encryption, settings, file_service, content_service, _embedding_service, queue,
+        async with bootstrap_services(include_embeddings=True) as (
+            db, encryption, settings, file_service, content_service, embedding_service, queue,
         ):
             ctx = WorkerContext(
                 db=db,
@@ -118,6 +122,7 @@ class TieredWorker:
             ctx.file_service = file_service
             ctx.content_service = content_service
             ctx.settings = settings
+            ctx.embedding_service = embedding_service
 
             self._running = True
             log.info(

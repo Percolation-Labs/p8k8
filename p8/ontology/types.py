@@ -335,6 +335,108 @@ class StorageGrant(CoreModel):
     status: str = "active"  # active | paused | revoked
 
 
+class Source(CoreModel):
+    """A registered ingestion source for the Percolate detection core (§15/§16.1).
+
+    Seeded with the v1 free, zero-auth source set (SEC EDGAR, arXiv, HN, Federal
+    Register, Wikipedia RecentChanges) — see sql/05_percolate.sql. source_type is
+    the tradecraft independence category used by corroboration scoring (§16.3):
+    two sources of the *same* source_type never count as independent confirmation.
+    """
+
+    __table_name__ = "percolate_sources"
+    __id_fields__ = ("key",)
+    __embedding_field__ = None
+    __encrypted_fields__ = {}
+    __redacted_fields__ = []
+
+    key: str  # stable slug, e.g. "sec_edgar"
+    name: str
+    source_type: str  # regulatory_filing | research_paper | social_chatter | regulatory_notice | attention_signal
+    domain: str  # finance | research | dev_tech | regulatory | general
+    base_url: str
+    auth_required: bool = False
+    reliability_weight: float = 1.0  # tradecraft weight — GDELT-style unreliable sources score lower (§16.4)
+    enabled: bool = True
+    description: str | None = None
+
+
+class Entity(CoreModel):
+    """Canonical entity node on the event/entity graph (§8.2) — a company, person,
+    product, or government body resolved across sources (§16.2).
+
+    resolution_text (name + aliases + description) is the embedding field used
+    by entity-resolution tier 3 (embedding fallback). external_ids holds the
+    tier-1 registry crosswalk (SEC CIK, ticker, Wikidata QID).
+    """
+
+    __table_name__ = "percolate_entities"
+    __id_fields__ = ("name",)
+    __embedding_field__ = "resolution_text"
+    __encrypted_fields__ = {}
+    __redacted_fields__ = []
+
+    name: str  # canonical name — also the graph/KV key
+    entity_type: str | None = None  # company | person | product | government_body | other
+    aliases: list[str] = Field(default_factory=list)
+    external_ids: dict = Field(default_factory=dict)  # {"cik": "...", "ticker": "...", "wikidata_qid": "..."}
+    description: str | None = None
+    resolution_text: str | None = None  # computed: name + aliases + description
+    resolution_tier: str | None = None  # registry | wikidata | embedding | llm
+    resolution_confidence: float = 1.0
+
+
+class Topic(CoreModel):
+    """A topic/category node on the event/entity graph (§8.2). v1 seeds one
+    topic per source domain (finance, research, dev_tech, regulatory, general);
+    events link to topics via an "about" graph edge."""
+
+    __table_name__ = "percolate_topics"
+    __id_fields__ = ("name",)
+    __embedding_field__ = "description"
+    __encrypted_fields__ = {}
+    __redacted_fields__ = []
+
+    name: str
+    description: str | None = None
+
+
+class Event(CoreModel):
+    """A detected event node on the event/entity graph (§8.2) — the output of
+    the raw-ingestion -> entity-resolution -> corroboration -> threshold -> LLM
+    pipeline (§16.4).
+
+    ``name`` is a stable dedupe key (not the headline) derived from the
+    resolved entity cluster + day, so repeat sightings of the same underlying
+    event merge into one row instead of duplicating. ``title``/``summary``
+    carry the human-readable content; ``summary`` becomes the LLM write-up
+    once the event clears the corroboration threshold and is interpreted.
+    ``primary_source_url`` is required per §16.5 — every event traces back to
+    the actual primary document, never a paraphrase.
+    """
+
+    __table_name__ = "percolate_events"
+    __id_fields__ = ("name",)
+    __embedding_field__ = "summary"
+    __encrypted_fields__ = {}
+    __redacted_fields__ = []
+
+    name: str  # stable dedupe key, e.g. "evt-<hash12>"
+    title: str
+    summary: str | None = None
+    primary_source_url: str
+    primary_source_excerpt: str | None = None
+    category: str | None = None  # source domain: finance | research | dev_tech | regulatory | general
+    status: str = "raw"  # raw | thresholded | interpreted
+    classification: str | None = None  # fresh_scoop | ongoing_story | saturated (§3.1)
+    corroboration_score: float = 0.0
+    distinct_source_types: list[str] = Field(default_factory=list)
+    contributing_sources: list[dict] = Field(default_factory=list)
+    # Each: {"source_key": "...", "source_type": "...", "url": "...", "published_at": "...ISO..."}
+    entity_resolution_confidence: float = 1.0
+    event_time: datetime | None = None
+
+
 class TenantMetadata(BaseModel):
     """Structured tenant metadata — stored in tenants.metadata JSONB.
 
@@ -380,6 +482,10 @@ ALL_ENTITY_TYPES: list[type[CoreModel]] = [
     Feedback,
     StorageGrant,
     Tenant,
+    Source,
+    Entity,
+    Topic,
+    Event,
 ]
 
 # Tables that get companion embeddings tables
@@ -401,6 +507,10 @@ KV_TABLES: list[str] = [
     "users",
     "files",
     "tenants",
+    "percolate_sources",
+    "percolate_entities",
+    "percolate_topics",
+    "percolate_events",
 ]
 
 # Tables with encrypted fields (content stored as ciphertext)
