@@ -150,7 +150,7 @@ async def test_fetch_wikipedia_uses_page_title_as_entity():
         client = mock_client_cls.return_value.__aenter__.return_value
         client.get = AsyncMock(return_value=_mock_response(payload))
 
-        items = await fetch_wikipedia_recent_changes(limit=5)
+        items = await fetch_wikipedia_recent_changes(limit=5, user_agent="test-agent test@example.com")
 
     assert len(items) == 1
     assert items[0]["entity_names"] == ["Henley Festival"]

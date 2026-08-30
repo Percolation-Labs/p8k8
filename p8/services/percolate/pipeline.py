@@ -62,7 +62,7 @@ async def _fetch_items(source_key: str, *, settings, limit: int) -> list[dict]:
     if not fetcher:
         raise ValueError(f"Unknown percolate source_key: {source_key}")
     kwargs: dict = {"limit": limit}
-    if source_key == "sec_edgar":
+    if source_key in ("sec_edgar", "wikipedia_recent_changes"):
         kwargs["user_agent"] = settings.percolate_user_agent
     return await fetcher(**kwargs)
 
