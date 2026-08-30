@@ -122,16 +122,38 @@ spec:
                 OVERALL_STATUS=1
               fi
 
+              # Soft time budget for the test phases (unit+integration combined).
+              # Not a hard cutoff — we still let the suite finish so results are
+              # meaningful — but breaching it prints a loud warning so the suite
+              # getting slower over time is visible, not silent, before it
+              # gets bad enough to need a hard cap or parallelization.
+              TEST_BUDGET_SECONDS=300
+
+              T0=$(date +%s)
               echo "=== Running unit tests ==="
               if ! uv run pytest tests/unit -q; then
                 echo "RESULT: unit tests FAILED"
                 OVERALL_STATUS=1
               fi
+              T1=$(date +%s)
+              UNIT_SECONDS=$((T1 - T0))
+              echo "unit tests: ${UNIT_SECONDS}s"
 
               echo "=== Running integration tests ==="
               if ! uv run pytest tests/integration -q; then
                 echo "RESULT: integration tests FAILED"
                 OVERALL_STATUS=1
+              fi
+              T2=$(date +%s)
+              INTEGRATION_SECONDS=$((T2 - T1))
+              echo "integration tests: ${INTEGRATION_SECONDS}s"
+
+              TEST_TOTAL_SECONDS=$((T2 - T0))
+              echo ""
+              echo "=== Test phase duration: ${TEST_TOTAL_SECONDS}s (budget: ${TEST_BUDGET_SECONDS}s) ==="
+              if [ "$TEST_TOTAL_SECONDS" -gt "$TEST_BUDGET_SECONDS" ]; then
+                echo "⚠️  SLOW: test phase exceeded the ${TEST_BUDGET_SECONDS}s budget by $((TEST_TOTAL_SECONDS - TEST_BUDGET_SECONDS))s."
+                echo "⚠️  Consider parallelizing (pytest-xdist) or splitting slow tests before this creeps further."
               fi
 
               echo "=== Running live percolate ingest (real external APIs) ==="
@@ -148,7 +170,7 @@ spec:
                 FROM percolate_events;
               " || OVERALL_STATUS=1
 
-              echo "=== STAGING CHECK COMPLETE: overall_status=$OVERALL_STATUS ==="
+              echo "=== STAGING CHECK COMPLETE: overall_status=$OVERALL_STATUS  test_phase_seconds=$TEST_TOTAL_SECONDS ==="
               exit $OVERALL_STATUS
           resources:
             requests:

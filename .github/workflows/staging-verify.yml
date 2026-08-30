@@ -88,10 +88,20 @@ jobs:
             BADGE="❌ Staging check failed"
           fi
 
+          TEST_SECONDS=$(grep -o 'test_phase_seconds=[0-9]*' staging-log.txt 2>/dev/null | tail -1 | cut -d= -f2)
+          DURATION_LINE=""
+          if [ -n "$TEST_SECONDS" ]; then
+            DURATION_LINE="**Unit+integration test phase: ${TEST_SECONDS}s** (budget: 300s)"
+            if [ "$TEST_SECONDS" -gt 300 ] 2>/dev/null; then
+              DURATION_LINE="⚠️ **Unit+integration test phase: ${TEST_SECONDS}s — over the 300s budget, getting slow**"
+            fi
+          fi
+
           {
             echo "## $BADGE"
             echo ""
             echo "Real migration + mypy + unit + integration tests + a live ingest against real external APIs, run on p8-arm."
+            [ -n "$DURATION_LINE" ] && echo "" && echo "$DURATION_LINE"
             echo ""
             echo "<details><summary>Last 150 lines of output</summary>"
             echo ""
