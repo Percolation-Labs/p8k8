@@ -1,0 +1,159 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: staging-check
+  namespace: p8-staging
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: postgres
+          restartPolicy: Always  # native sidecar (K8s 1.28+) - tied to the pod's lifecycle,
+                                  # terminates when the main "runner" container exits so the
+                                  # Job actually reaches Complete/Failed instead of hanging as
+                                  # "Running" forever.
+          image: percolationlabs/rem-pg:18-arm64
+          env:
+            - name: POSTGRES_DB
+              value: p8
+            - name: POSTGRES_USER
+              value: p8
+            - name: POSTGRES_PASSWORD
+              value: p8_dev
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+          args: ["-c", "shared_preload_libraries=pg_cron", "-c", "cron.database_name=p8"]
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "p8", "-d", "p8"]
+            initialDelaySeconds: 2
+            periodSeconds: 2
+
+      containers:
+        - name: runner
+          image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+          env:
+            - name: BRANCH_REF
+              value: "main"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: staging-github-token
+                  key: token
+            - name: P8_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: staging-app-secrets
+                  key: P8_OPENAI_API_KEY
+            - name: P8_MOONSHOT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: staging-app-secrets
+                  key: P8_MOONSHOT_API_KEY
+            - name: P8_S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: staging-s3-secrets
+                  key: P8_S3_ENDPOINT_URL
+            - name: P8_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: staging-s3-secrets
+                  key: P8_S3_BUCKET
+            - name: P8_S3_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: staging-s3-secrets
+                  key: P8_S3_REGION
+            - name: P8_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: staging-s3-secrets
+                  key: P8_S3_ACCESS_KEY_ID
+            - name: P8_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: staging-s3-secrets
+                  key: P8_S3_SECRET_ACCESS_KEY
+            - name: P8_DATABASE_URL
+              value: "postgresql://p8:p8_dev@localhost:5432/p8"
+            - name: P8_KMS_PROVIDER
+              value: local
+            - name: P8_KMS_LOCAL_KEYFILE
+              value: "/work/.keys/.dev-master.key"
+          command:
+            - bash
+            - -c
+            - |
+              OVERALL_STATUS=0
+              echo "=== Installing system deps ==="
+              apt-get update -qq && apt-get install -y -qq git gcc g++ curl postgresql-client > /dev/null
+
+              echo "=== Waiting for postgres ==="
+              until pg_isready -h localhost -U p8 -d p8 -q; do sleep 1; done
+              echo "postgres ready"
+
+              echo "=== Cloning branch: $BRANCH_REF ==="
+              git clone --quiet "https://x-access-token:${GITHUB_TOKEN}@github.com/Percolation-Labs/p8k8.git" /work
+              cd /work
+              git checkout --quiet "$BRANCH_REF"
+              mkdir -p .keys
+              echo "Checked out $(git rev-parse HEAD)"
+
+              echo "=== Running mypy ==="
+              if ! uv run mypy p8; then
+                echo "RESULT: mypy FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Running migrations ==="
+              if ! uv run p8 migrate; then
+                echo "RESULT: migrate FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Running unit tests ==="
+              if ! uv run pytest tests/unit -q; then
+                echo "RESULT: unit tests FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Running integration tests ==="
+              if ! uv run pytest tests/integration -q; then
+                echo "RESULT: integration tests FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Running live percolate ingest (real external APIs) ==="
+              if ! uv run p8 percolate ingest; then
+                echo "RESULT: percolate ingest FAILED"
+                OVERALL_STATUS=1
+              fi
+
+              echo "=== Acceptance check: querying real DB state ==="
+              PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
+                SELECT count(*) AS total_events,
+                       count(*) FILTER (WHERE primary_source_url IS NOT NULL AND primary_source_url != '') AS with_primary_source,
+                       count(*) FILTER (WHERE status = 'interpreted') AS interpreted
+                FROM percolate_events;
+              " || OVERALL_STATUS=1
+
+              echo "=== STAGING CHECK COMPLETE: overall_status=$OVERALL_STATUS ==="
+              exit $OVERALL_STATUS
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+      volumes:
+        - name: pgdata
+          emptyDir: {}
