@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -127,9 +128,9 @@ async def fetch_arxiv(
         published_el = entry.find("atom:published", _ATOM_NS)
         link_el = entry.find("atom:link[@rel='alternate']", _ATOM_NS)
         authors = [
-            (a.find("atom:name", _ATOM_NS).text or "").strip()
+            (name_el.text or "").strip()
             for a in entry.findall("atom:author", _ATOM_NS)
-            if a.find("atom:name", _ATOM_NS) is not None
+            if (name_el := a.find("atom:name", _ATOM_NS)) is not None
         ]
         title = " ".join((title_el.text or "").split()) if title_el is not None else "Untitled"
         summary = " ".join((summary_el.text or "").split())[:800] if summary_el is not None else ""
@@ -257,7 +258,7 @@ async def fetch_wikipedia_recent_changes(*, limit: int = 20, user_agent: str) ->
     return items
 
 
-FETCHERS = {
+FETCHERS: dict[str, Callable[..., Awaitable[list[dict]]]] = {
     "sec_edgar": fetch_sec_edgar,
     "arxiv": fetch_arxiv,
     "hn": fetch_hn,

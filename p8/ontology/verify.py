@@ -76,7 +76,7 @@ def _derive_kv_summary(model: type[CoreModel]) -> str | None:
         return None
 
     override = getattr(model, "__kv_summary_expr__", None)
-    if override is not None:
+    if isinstance(override, str):
         return override
 
     fields = set(model.model_fields)
