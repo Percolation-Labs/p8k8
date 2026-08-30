@@ -10,7 +10,7 @@ If you follow the instructions to ingest the ontology and the MCP server is enab
 Minimal agentic framework where **ontology is everything**. Every entity — models, agents, evaluators, tools — is a row in the `schemas` table.
 
 - **p8/ontology/** — Pydantic models -> JSON Schema -> Postgres tables -> agents
-- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content, queue, usage, web_search, files, graph, notifications, stripe, providers
+- **p8/services/** — Database (REM queries), embeddings, repository, encryption, content, queue, usage, web_search, related_searches, files, graph, notifications, stripe, providers
 - **p8/agentic/** — pydantic-ai agent adapter, agent_schema, streaming, delegation, routing, core_agents, otel
 - **p8/api/** — FastAPI + FastMCP server, AG-UI chat, CLI (Typer)
 
@@ -33,10 +33,10 @@ p8/
 ├── agentic/        # adapter, agent_schema, streaming, delegate, routing, core_agents, types, otel
 ├── api/
 │   ├── main.py         # FastAPI app factory + lifespan
-│   ├── mcp_server.py   # FastMCP: search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me + user://profile resource
+│   ├── mcp_server.py   # FastMCP: search, action, ask_agent, get_moments, web_search, related_searches, update_user_metadata, remind_me + user://profile resource
 │   ├── controllers/    # ChatController (shared API+CLI logic)
 │   ├── routers/        # chat, query, schemas, moments, admin, auth, content, embeddings, resources, notifications, share, payments
-│   ├── tools/          # MCP tool implementations (search, action, ask_agent, get_moments, web_search, update_user_metadata, remind_me, save_moments)
+│   ├── tools/          # MCP tool implementations (search, action, ask_agent, get_moments, web_search, related_searches, update_user_metadata, remind_me, save_moments)
 │   └── cli/            # Typer CLI (serve, migrate, query, upsert, schema, chat, moments, dream, admin, db, encryption, mcp, verify-links)
 ├── workers/        # TieredWorker processor, task handlers (dreaming, file_processing, news, reading, scheduled)
 ├── utils/          # Parsing, token estimation, ID generation, data, links
