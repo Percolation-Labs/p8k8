@@ -500,10 +500,28 @@ $$ LANGUAGE plpgsql;
 
 -- ---------------------------------------------------------------------------
 -- pg_cron Jobs
+--
+-- NOTE: cron.schedule() upserts on (jobname, username), NOT jobname alone.
+-- Running these migrations as a different DB role therefore creates a second
+-- copy of every named job rather than updating the existing one. This bit us
+-- once: migrations moved from the app role (p8user) to postgres, silently
+-- duplicating qms-recover-stale, qms-news-enqueue and qms-daily-report -- so
+-- stale-task recovery ran 576x/day instead of 288, and the daily health report
+-- was emailed and Slacked twice. Keep running migrations as the same role
+-- (postgres, per deploy.yml), and if the role ever changes again, unschedule
+-- the old role's copies. Check with:
+--   SELECT jobname, count(*) FROM cron.job GROUP BY 1 HAVING count(*) > 1;
 -- ---------------------------------------------------------------------------
 
 -- Stale task recovery: every 5 minutes, reset stuck tasks
 SELECT cron.schedule('qms-recover-stale', '*/5 * * * *', 'SELECT recover_stale_tasks(15)');
+
+-- pg_cron log retention: daily at 4am UTC, drop run history older than 7 days.
+-- cron.job_run_details is never purged by pg_cron itself. With ~20 jobs (several
+-- on */1 and */5 schedules) this accumulates ~4k rows/day; left alone it reached
+-- 767k rows / 296MB (35% of the whole database) before being caught.
+SELECT cron.schedule('qms-cron-log-retention', '0 4 * * *',
+    $$DELETE FROM cron.job_run_details WHERE start_time < now() - interval '7 days'$$);
 
 -- Dreaming enqueue: every 12 hours (6am and 6pm UTC)
 SELECT cron.schedule('qms-dreaming-enqueue', '0 6,18 * * *', 'SELECT enqueue_dreaming_tasks()');
