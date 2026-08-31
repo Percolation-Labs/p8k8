@@ -115,6 +115,11 @@ jobs:
           kubectl set image deployment/p8-api p8-api=percolationlabs/p8k8:sha-${{ github.sha }} -n p8
           kubectl rollout status deployment/p8-api -n p8 --timeout=180s
 
+      - name: Roll out p8-worker-micro
+        run: |
+          kubectl set image deployment/p8-worker-micro worker=percolationlabs/p8k8:sha-${{ github.sha }} -n p8
+          kubectl rollout status deployment/p8-worker-micro -n p8 --timeout=180s
+
       - name: Post-deploy summary
         if: always()
         run: |
