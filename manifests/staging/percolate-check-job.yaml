@@ -45,6 +45,8 @@ spec:
           env:
             - name: BRANCH_REF
               value: "main"
+            - name: RUN_SMOKE_TEST
+              value: "auto"
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -172,35 +174,48 @@ spec:
               # not the worker deployments) -- calling `p8 percolate ingest`
               # directly, in-process, bypasses this whole path and can't catch
               # that class of bug. Never do that again here.
-              echo "=== Enqueueing percolate ingest tasks (real cron function) ==="
-              PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "SELECT enqueue_percolate_ingest_tasks();"
+              #
+              # This is also the most expensive part of the check (~57% of
+              # total wall time -- real calls to Wikidata/OpenAI/HN/arXiv/SEC/
+              # Federal Register) and most commits don't touch anything it
+              # would catch. staging-verify.yml sets RUN_SMOKE_TEST based on
+              # whether the diff touches a dispatch/ingest-critical path (or
+              # is always "true" for manual/batch runs); mypy/unit/integration
+              # above always run regardless.
+              if [ "$RUN_SMOKE_TEST" = "true" ]; then
+                echo "=== Enqueueing percolate ingest tasks (real cron function) ==="
+                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "SELECT enqueue_percolate_ingest_tasks();"
 
-              echo "=== Running the real worker to drain the queue (real external APIs) ==="
-              if ! uv run python -m p8.workers.processor --tier small --exit-when-idle --poll-interval 1; then
-                echo "RESULT: worker process FAILED"
-                OVERALL_STATUS=1
-              fi
+                echo "=== Running the real worker to drain the queue (real external APIs) ==="
+                if ! uv run python -m p8.workers.processor --tier small --exit-when-idle --poll-interval 1; then
+                  echo "RESULT: worker process FAILED"
+                  OVERALL_STATUS=1
+                fi
 
-              echo "=== Checking for failed tasks (e.g. unregistered handlers) ==="
-              FAILED_TASKS=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
-                SELECT count(*) FROM task_queue WHERE task_type = 'percolate_ingest' AND status = 'failed';
-              ")
-              if [ "$FAILED_TASKS" != "0" ]; then
-                echo "::error::$FAILED_TASKS percolate_ingest task(s) failed via the real worker dispatch path:"
+                echo "=== Checking for failed tasks (e.g. unregistered handlers) ==="
+                FAILED_TASKS=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
+                  SELECT count(*) FROM task_queue WHERE task_type = 'percolate_ingest' AND status = 'failed';
+                ")
+                if [ "$FAILED_TASKS" != "0" ]; then
+                  echo "::error::$FAILED_TASKS percolate_ingest task(s) failed via the real worker dispatch path:"
+                  PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
+                    SELECT payload->>'source_key' AS source, error FROM task_queue
+                    WHERE task_type = 'percolate_ingest' AND status = 'failed';
+                  "
+                  OVERALL_STATUS=1
+                fi
+
+                echo "=== Acceptance check: querying real DB state ==="
                 PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
-                  SELECT payload->>'source_key' AS source, error FROM task_queue
-                  WHERE task_type = 'percolate_ingest' AND status = 'failed';
-                "
-                OVERALL_STATUS=1
+                  SELECT count(*) AS total_events,
+                         count(*) FILTER (WHERE primary_source_url IS NOT NULL AND primary_source_url != '') AS with_primary_source,
+                         count(*) FILTER (WHERE status = 'interpreted') AS interpreted
+                  FROM percolate_events;
+                " || OVERALL_STATUS=1
+              else
+                echo "=== Skipping live-ingest smoke test (RUN_SMOKE_TEST=$RUN_SMOKE_TEST) ==="
+                echo "No dispatch/ingest-critical paths changed. Add the 'full-check' label to a PR to force this."
               fi
-
-              echo "=== Acceptance check: querying real DB state ==="
-              PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
-                SELECT count(*) AS total_events,
-                       count(*) FILTER (WHERE primary_source_url IS NOT NULL AND primary_source_url != '') AS with_primary_source,
-                       count(*) FILTER (WHERE status = 'interpreted') AS interpreted
-                FROM percolate_events;
-              " || OVERALL_STATUS=1
 
               echo "=== STAGING CHECK COMPLETE: overall_status=$OVERALL_STATUS  test_phase_seconds=$TEST_TOTAL_SECONDS ==="
               exit $OVERALL_STATUS

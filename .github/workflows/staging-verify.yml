@@ -25,8 +25,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Determine skip / target ref
+      - name: Determine skip / target ref / check depth
         id: plan
         env:
           # toJSON of an absent/null value renders as the literal string
@@ -35,6 +37,7 @@ jobs:
           # null-safety on a missing pull_request context isn't worth
           # trusting without testing.
           PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Batch-PR mode: label a PR "skip-staging" to opt it out of its own
           # check, then trigger this workflow manually (workflow_dispatch)
@@ -49,10 +52,38 @@ jobs:
             fi
             echo "target_ref=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
             echo "job_name=staging-check-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+            # Check depth: the live-ingest smoke test (real worker dispatch
+            # against real external APIs) is by far the most expensive part
+            # of the check (~57% of total time) and most commits don't touch
+            # anything it would catch. Run it only when the diff touches a
+            # path that could plausibly break dispatch/ingest, or when the
+            # PR is explicitly labeled `full-check`. Everything else still
+            # gets mypy + unit + integration tests (never skipped here) --
+            # this only trims the smoke sub-phase, not the whole check.
+            CHANGED_FILES=$(git diff --name-only "${BASE_SHA}" HEAD)
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+            CRITICAL_REGEX='^p8/workers/|^p8/services/queue\.py$|^p8/services/percolate/|^p8/ontology/types\.py$|^sql/|^manifests/staging/percolate-check-job\.yaml$|^\.github/workflows/(staging-verify|deploy)\.yml$|^pyproject\.toml$|^uv\.lock$'
+            if echo "$PR_LABELS_JSON" | grep -q '"name":[[:space:]]*"full-check"'; then
+              echo "run_smoke=true" >> "$GITHUB_OUTPUT"
+              echo "smoke_reason=full-check label" >> "$GITHUB_OUTPUT"
+            elif echo "$CHANGED_FILES" | grep -qE "$CRITICAL_REGEX"; then
+              echo "run_smoke=true" >> "$GITHUB_OUTPUT"
+              echo "smoke_reason=diff touches a dispatch/ingest-critical path" >> "$GITHUB_OUTPUT"
+            else
+              echo "run_smoke=false" >> "$GITHUB_OUTPUT"
+              echo "smoke_reason=no dispatch/ingest-critical paths changed" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "target_ref=${{ github.event.inputs.ref || 'main' }}" >> "$GITHUB_OUTPUT"
             echo "job_name=staging-check-manual-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+            # Manual/batch runs verify a consolidated set of changes (often
+            # after several skip-staging PRs merged) -- always run the full
+            # check rather than trying to diff against an ambiguous base.
+            echo "run_smoke=true" >> "$GITHUB_OUTPUT"
+            echo "smoke_reason=manual/batch run" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post skip comment
@@ -86,6 +117,7 @@ jobs:
           sed \
             -e "s|name: staging-check|name: ${JOB_NAME}|" \
             -e "s|value: \"main\"|value: \"${{ steps.plan.outputs.target_ref }}\"|" \
+            -e "s|value: \"auto\"|value: \"${{ steps.plan.outputs.run_smoke }}\"|" \
             manifests/staging/percolate-check-job.yaml | kubectl apply -f -
 
           echo "Waiting for pod to appear..."
@@ -146,12 +178,20 @@ jobs:
             fi
           fi
 
+          if [ "${{ steps.plan.outputs.run_smoke }}" = "true" ]; then
+            DEPTH_LINE="**Depth:** full (mypy + unit + integration + live-ingest smoke test) — ${{ steps.plan.outputs.smoke_reason }}"
+          else
+            DEPTH_LINE="**Depth:** fast (mypy + unit + integration, smoke test skipped) — ${{ steps.plan.outputs.smoke_reason }}. Add the \`full-check\` label and re-run to force the smoke test."
+          fi
+
           {
             echo "## $BADGE"
             echo ""
-            echo "Real migration + mypy + unit + integration tests + a live ingest against real external APIs, run on p8-arm."
+            echo "Real migration + mypy + unit + integration tests, run on p8-arm. Depth-gated: the live-ingest smoke test only runs when warranted (see below)."
             echo ""
             echo "**Ref:** \`${{ steps.plan.outputs.target_ref }}\`"
+            echo ""
+            echo "$DEPTH_LINE"
             [ -n "$DURATION_LINE" ] && echo "" && echo "$DURATION_LINE"
             echo ""
             echo "<details><summary>Last 150 lines of output</summary>"
