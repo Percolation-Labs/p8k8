@@ -130,8 +130,10 @@ spec:
               TEST_BUDGET_SECONDS=300
 
               T0=$(date +%s)
-              echo "=== Running unit tests ==="
-              if ! uv run pytest tests/unit -q; then
+              echo "=== Running unit tests (parallel: -n auto) ==="
+              # tests/unit is fully mocked (no DB), so it's safe to fan out across
+              # all available cores. See tests/README.md#parallel-execution.
+              if ! uv run pytest tests/unit -q -n auto; then
                 echo "RESULT: unit tests FAILED"
                 OVERALL_STATUS=1
               fi
@@ -139,7 +141,13 @@ spec:
               UNIT_SECONDS=$((T1 - T0))
               echo "unit tests: ${UNIT_SECONDS}s"
 
-              echo "=== Running integration tests ==="
+              echo "=== Running integration tests (serial) ==="
+              # NOT parallelized: tests/integration hits one shared Postgres instance
+              # and several tests share fixed/deterministic IDs (e.g. the seeded
+              # default test user, tests/integration/dreaming/fixtures.py::TEST_USER_ID)
+              # with no per-test transaction rollback or namespacing. Running these
+              # concurrently under pytest-xdist would risk cross-test row interference.
+              # See tests/README.md#parallel-execution for the full analysis.
               if ! uv run pytest tests/integration -q; then
                 echo "RESULT: integration tests FAILED"
                 OVERALL_STATUS=1
