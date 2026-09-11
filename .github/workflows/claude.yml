@@ -12,11 +12,18 @@ on:
 
 jobs:
   claude:
+    # The repository is public, so anyone can write the text that triggers
+    # this, and the job holds a read-only kubeconfig for the production
+    # cluster. Only people who can already push may start it.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     env:
       KUBECONFIG: /home/runner/.kube/config-readonly
@@ -46,5 +53,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # No curl. Claude reads issue and PR text that anyone can write, and
+          # with curl beside a kubeconfig an instruction planted in that text
+          # could send cluster output anywhere. kubectl alone can only read.
           claude_args: |
-            --allowedTools "Bash(curl:*),Bash(kubectl get:*),Bash(kubectl describe:*),Bash(kubectl logs:*)"
+            --allowedTools "Bash(kubectl get:*),Bash(kubectl describe:*),Bash(kubectl logs:*)"

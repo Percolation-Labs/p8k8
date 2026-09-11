@@ -168,53 +168,77 @@ spec:
 
               # Smoke test the REAL production dispatch path, not a CLI shortcut:
               # cron's own enqueue function -> task_queue row -> a real worker
-              # process claims it -> dispatches to a registered handler. This is
-              # what actually broke in production (percolate_ingest tasks failed
-              # with "No handler registered" because only p8-api got redeployed,
-              # not the worker deployments) -- calling `p8 percolate ingest`
-              # directly, in-process, bypasses this whole path and can't catch
-              # that class of bug. Never do that again here.
+              # process claims it -> dispatches to a registered handler. That
+              # path is what broke in production once (tasks failed with "No
+              # handler registered" because only p8-api got redeployed, not the
+              # worker deployments), and calling a handler in-process bypasses
+              # it entirely. Never do that here.
               #
-              # This is also the most expensive part of the check (~57% of
-              # total wall time -- real calls to Wikidata/OpenAI/HN/arXiv/SEC/
-              # Federal Register) and most commits don't touch anything it
-              # would catch. staging-verify.yml sets RUN_SMOKE_TEST based on
-              # whether the diff touches a dispatch/ingest-critical path (or
-              # is always "true" for manual/batch runs); mypy/unit/integration
+              # It runs through the daily news task: one seeded user with one
+              # feed, enqueue_news_tasks() exactly as pg_cron calls it, and the
+              # worker drains it against the real feed and the real model. It
+              # used to run the event-detection ingest, which is retired.
+              #
+              # This is the expensive part of the check and most commits do not
+              # touch anything it would catch. staging-verify.yml sets
+              # RUN_SMOKE_TEST from whether the diff touches a dispatch-critical
+              # path (always "true" for manual/batch runs); mypy/unit/integration
               # above always run regardless.
               if [ "$RUN_SMOKE_TEST" = "true" ]; then
-                echo "=== Enqueueing percolate ingest tasks (real cron function) ==="
-                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "SELECT enqueue_percolate_ingest_tasks();"
+                echo "=== Seeding one user with one feed ==="
+                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -v ON_ERROR_STOP=1 -c "
+                  INSERT INTO users (id, name, email, metadata)
+                  VALUES ('00000000-0000-0000-0000-00000000cafe', 'staging-smoke', 'smoke@example.com',
+                          '{\"feeds\": [{\"url\": \"https://hnrss.org/frontpage\", \"name\": \"HN\"}]}')
+                  ON CONFLICT (id) DO NOTHING;" || OVERALL_STATUS=1
 
-                echo "=== Running the real worker to drain the queue (real external APIs) ==="
-                if ! uv run python -m p8.workers.processor --tier small --exit-when-idle --poll-interval 1; then
+                echo "=== Enqueueing news tasks (real cron function) ==="
+                ENQUEUED=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "SELECT enqueue_news_tasks();")
+                echo "enqueued: $ENQUEUED"
+                if [ "${ENQUEUED:-0}" -lt 1 ]; then
+                  echo "::error::enqueue_news_tasks() queued nothing for a user with a feed"
+                  OVERALL_STATUS=1
+                fi
+                # The integration tests leave users with interests behind, and
+                # the cron function queues a task for each of them too -- ten
+                # of them made this step take eight minutes, fetching feeds for
+                # fixtures. Only the seeded user's task is kept; the function
+                # that queued it is still the one pg_cron runs.
+                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -qc "
+                  DELETE FROM task_queue WHERE task_type = 'news' AND status = 'pending'
+                     AND user_id <> '00000000-0000-0000-0000-00000000cafe';"
+
+                echo "=== Running the real worker to drain the queue (real feed, real model) ==="
+                # --extra platoon, as the production image installs it: the news
+                # handler reads feeds through it, and a worker without it fails
+                # every task with "No module named 'platoon'".
+                if ! uv run --extra platoon python -m p8.workers.processor --tier small --exit-when-idle --poll-interval 1; then
                   echo "RESULT: worker process FAILED"
                   OVERALL_STATUS=1
                 fi
 
-                echo "=== Checking for failed tasks (e.g. unregistered handlers) ==="
-                FAILED_TASKS=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
-                  SELECT count(*) FROM task_queue WHERE task_type = 'percolate_ingest' AND status = 'failed';
-                ")
-                if [ "$FAILED_TASKS" != "0" ]; then
-                  echo "::error::$FAILED_TASKS percolate_ingest task(s) failed via the real worker dispatch path:"
-                  PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
-                    SELECT payload->>'source_key' AS source, error FROM task_queue
-                    WHERE task_type = 'percolate_ingest' AND status = 'failed';
-                  "
+                echo "=== Checking the task finished through the dispatch path ==="
+                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
+                  SELECT status, error FROM task_queue
+                   WHERE task_type = 'news' AND user_id = '00000000-0000-0000-0000-00000000cafe';"
+                DONE=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
+                  SELECT count(*) FROM task_queue
+                   WHERE task_type = 'news' AND user_id = '00000000-0000-0000-0000-00000000cafe'
+                     AND status = 'completed';")
+                if [ "$DONE" != "1" ]; then
+                  echo "::error::the smoke user's news task did not complete via the real worker dispatch path"
                   OVERALL_STATUS=1
                 fi
 
-                echo "=== Acceptance check: querying real DB state ==="
-                PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -c "
-                  SELECT count(*) AS total_events,
-                         count(*) FILTER (WHERE primary_source_url IS NOT NULL AND primary_source_url != '') AS with_primary_source,
-                         count(*) FILTER (WHERE status = 'interpreted') AS interpreted
-                  FROM percolate_events;
-                " || OVERALL_STATUS=1
+                echo "=== Acceptance check: the feed became resources ==="
+                RESOURCES=$(PGPASSWORD=p8_dev psql -h localhost -U p8 -d p8 -tAc "
+                  SELECT count(*) FROM resources
+                   WHERE user_id = '00000000-0000-0000-0000-00000000cafe' AND deleted_at IS NULL;")
+                echo "resources for the smoke user: $RESOURCES"
+                [ "${RESOURCES:-0}" -ge 1 ] || { echo "::error::the news task completed and wrote no resources"; OVERALL_STATUS=1; }
               else
-                echo "=== Skipping live-ingest smoke test (RUN_SMOKE_TEST=$RUN_SMOKE_TEST) ==="
-                echo "No dispatch/ingest-critical paths changed. Add the 'full-check' label to a PR to force this."
+                echo "=== Skipping the dispatch smoke test (RUN_SMOKE_TEST=$RUN_SMOKE_TEST) ==="
+                echo "No dispatch-critical paths changed. Add the 'full-check' label to a PR to force this."
               fi
 
               echo "=== STAGING CHECK COMPLETE: overall_status=$OVERALL_STATUS  test_phase_seconds=$TEST_TOTAL_SECONDS ==="

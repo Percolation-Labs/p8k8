@@ -64,7 +64,7 @@ jobs:
             CHANGED_FILES=$(git diff --name-only "${BASE_SHA}" HEAD)
             echo "Changed files:"
             echo "$CHANGED_FILES"
-            CRITICAL_REGEX='^p8/workers/|^p8/services/queue\.py$|^p8/services/percolate/|^p8/ontology/types\.py$|^sql/|^manifests/staging/percolate-check-job\.yaml$|^\.github/workflows/(staging-verify|deploy)\.yml$|^pyproject\.toml$|^uv\.lock$'
+            CRITICAL_REGEX='^p8/workers/|^p8/services/queue\.py$|^p8/ontology/types\.py$|^sql/|^manifests/staging/staging-check-job\.yaml$|^\.github/workflows/(staging-verify|deploy)\.yml$|^pyproject\.toml$|^uv\.lock$'
             if echo "$PR_LABELS_JSON" | grep -q '"name":[[:space:]]*"full-check"'; then
               echo "run_smoke=true" >> "$GITHUB_OUTPUT"
               echo "smoke_reason=full-check label" >> "$GITHUB_OUTPUT"
@@ -118,7 +118,7 @@ jobs:
             -e "s|name: staging-check|name: ${JOB_NAME}|" \
             -e "s|value: \"main\"|value: \"${{ steps.plan.outputs.target_ref }}\"|" \
             -e "s|value: \"auto\"|value: \"${{ steps.plan.outputs.run_smoke }}\"|" \
-            manifests/staging/percolate-check-job.yaml | kubectl apply -f -
+            manifests/staging/staging-check-job.yaml | kubectl apply -f -
 
           echo "Waiting for pod to appear..."
           for i in $(seq 1 30); do

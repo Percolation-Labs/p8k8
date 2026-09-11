@@ -173,7 +173,7 @@ def create_app() -> FastAPI:
     # Trust X-Forwarded-Proto/For from reverse proxy so request.url uses https://
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
-    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, percolate, query, resources, schemas, share, slack, whoami
+    from p8.api.routers import admin, auth, chat, content, embeddings, moments, notifications, payments, query, resources, schemas, share, slack, whoami
 
     # Protected routers — require API key when P8_API_KEY is set
     api_key_dep = [Depends(require_api_key)]
@@ -187,7 +187,6 @@ def create_app() -> FastAPI:
     app.include_router(share.router, prefix="/share", tags=["share"], dependencies=api_key_dep)
     app.include_router(resources.router, prefix="/resources", tags=["resources"], dependencies=api_key_dep)
     app.include_router(notifications.router, prefix="/notifications", tags=["notifications"], dependencies=api_key_dep)
-    app.include_router(percolate.router, prefix="/percolate", tags=["percolate"], dependencies=api_key_dep)
     # Billing — JWT-only auth (mobile clients), no API key dep
     app.include_router(payments.router, prefix="/billing", tags=["billing"])
     app.include_router(payments.webhook_router, prefix="/billing", tags=["billing"])
