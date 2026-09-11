@@ -52,10 +52,9 @@ async def user_profile() -> str:
     db = get_db()
     encryption = get_encryption()
     repo = Repository(User, db, encryption)
-    results = await repo.find(user_id=user_id, limit=1)
-    if not results:
+    user = await repo.get(user_id)
+    if not user:
         return json.dumps({"error": "User not found"})
-    user = results[0]
     profile = {
         "user_id": str(user_id),
         "name": user.name,
