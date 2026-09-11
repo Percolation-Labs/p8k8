@@ -65,6 +65,3 @@ from p8.api.cli.dreaming import register_dream_command  # noqa: E402
 
 register_dream_command(app)
 
-from p8.api.cli.percolate import percolate_app  # noqa: E402
-
-app.add_typer(percolate_app, name="percolate")
